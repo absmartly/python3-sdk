@@ -40,14 +40,5 @@ class VariantAssigner:
 
 
 
-if __name__ == '__main__':
-    has = hashlib.md5("bleh@absmartly.com".encode('utf-8'))
-    dig = has.digest()
-    res = base64.urlsafe_b64encode(dig).rstrip(b'=')
-    variant = VariantAssigner(bytearray(res))
-    res = variant.assign([0.5, 0.5], 0x00000000, 0x00000001)
-    print(res)
-
-
 
 

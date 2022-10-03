@@ -11,6 +11,6 @@ class MatchOperator(BinaryOperator):
             pattern = evaluator.string_convert(rhs)
             if pattern is not None:
                 compiled = re.compile(pattern)
-                return compiled.match(text)
+                return bool(compiled.match(text))
         return None
     

@@ -1,3 +1,4 @@
+import decimal
 from decimal import Decimal
 
 from sdk.jsonexpr.evaluator import Evaluator
@@ -23,9 +24,12 @@ class ExprEvaluator(Evaluator):
             return self.operators["and"].evaluate(self, expr)
         elif type(expr) is dict:
             for key, value in expr.items():
+                if key not in self.operators:
+                    return None
                 op = self.operators[key]
                 if op is not None:
-                    return op.evaluate(self, value)
+                    res = op.evaluate(self, value)
+                    return res
                 break
         return None
 
@@ -33,7 +37,7 @@ class ExprEvaluator(Evaluator):
         if type(x) is bool:
             return x
         elif type(x) is str:
-            return x != "false" and x != "0" and x != ""
+            return x != "False" and x != "0" and x != ""
         elif type(x) is int or type(x) is float or type(x) is complex:
             return x != 0
         return x is not None
@@ -44,7 +48,10 @@ class ExprEvaluator(Evaluator):
         elif type(x) is bool:
             return 1.0 if x is True else 0.0
         elif type(x) is str:
-            return Decimal(x)
+            try:
+                return Decimal(x)
+            except decimal.InvalidOperation:
+                return None
         return None
 
     def string_convert(self, x: object):
@@ -53,20 +60,24 @@ class ExprEvaluator(Evaluator):
         elif type(x) is bool:
             return str(x)
         elif type(x) is int or type(x) is float or type(x) is complex:
-            return '{0:.15g}'.format(x)
+            return str(x)
         return None
 
     def extract_var(self, path: str):
         frags = path.split("/")
 
         target = self.vars if self.vars is not None else {}
-        value = None
         for frag in frags:
+            value = None
             if type(target) is list:
-                value = target[int(frag)]
+                try:
+                    value = target[int(frag)]
+                except:
+                    print("")
             elif type(target) is dict:
-                value = map[frag]
-
+                if frag not in target:
+                    return None
+                value = target[frag]
             if value is not None:
                 target = value
                 continue
@@ -79,7 +90,6 @@ class ExprEvaluator(Evaluator):
             return 0 if rhs is None else None
         elif rhs is None:
             return None
-
         if type(lhs) is int or type(lhs) is float or type(lhs) is complex:
             rvalue = self.number_convert(rhs)
             if rvalue is not None:
@@ -95,4 +105,3 @@ class ExprEvaluator(Evaluator):
         elif type(lhs) == type(rhs) and lhs == rhs:
             return 0
         return None
-

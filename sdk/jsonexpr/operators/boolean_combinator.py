@@ -8,7 +8,7 @@ class BooleanCombinator(Operator):
 
     def evaluate(self, evaluator: Evaluator, args: object):
         if type(args) is list:
-            self.combine(evaluator, args)
+            return self.combine(evaluator, args)
         else:
             return None
 

@@ -11,7 +11,7 @@ from sdk.jsonexpr.operators.not_operator import NotOperator
 from sdk.jsonexpr.operators.null_operator import NullOperator
 from sdk.jsonexpr.operators.or_combinator import OrCombinator
 from sdk.jsonexpr.operators.value_operator import ValueOperator
-from sdk.jsonexpr.operators.var_opeator import VarOperator
+from sdk.jsonexpr.operators.var_operator import VarOperator
 
 
 class JsonExpr:

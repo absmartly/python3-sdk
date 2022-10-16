@@ -2,7 +2,7 @@ import unittest
 
 from sdk.jsonexpr.expr_evaluator import ExprEvaluator
 from sdk.jsonexpr.json_expr import JsonExpr
-from sdk.jsonexpr.operators.var_opeator import VarOperator
+from sdk.jsonexpr.operators.var_operator import VarOperator
 
 
 class VarOperatorTest(unittest.TestCase):

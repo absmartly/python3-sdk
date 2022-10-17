@@ -23,11 +23,11 @@ class ClientTest(unittest.TestCase):
         config.application = "website"
         config.environment = "dev"
 
-        data_bytes = bytearray("{}", "utf-8")
+        data_bytes = bytes("{}", "utf-8")
         expected = ContextData()
 
         event = PublishEvent()
-        publish_bytes = bytearray(0)
+        publish_bytes = bytes(0)
 
         expected_query = {"application": "website", "environment": "dev"}
 
@@ -62,11 +62,11 @@ class ClientTest(unittest.TestCase):
         config.application = "website"
         config.environment = "dev"
 
-        data_bytes = bytearray("{}", "utf-8")
+        data_bytes = bytes("{}", "utf-8")
         expected = ContextData()
 
         event = PublishEvent()
-        publish_bytes = bytearray(0)
+        publish_bytes = bytes(0)
 
         expected_query = {"application": "website", "environment": "dev"}
 
@@ -85,7 +85,7 @@ class ClientTest(unittest.TestCase):
 
         response = Response()
         response.status_code = 200
-        response._content = "{}"
+        response._content = bytes("{}", encoding="utf-8")
         http_client.get = MagicMock(return_value=response)
         http_client.put = Mock(return_value="test")
 
@@ -105,11 +105,11 @@ class ClientTest(unittest.TestCase):
         config.application = "website"
         config.environment = "dev"
 
-        data_bytes = bytearray("{}", "utf-8")
+        data_bytes = bytes("{}", "utf-8")
         expected = ContextData()
 
         event = PublishEvent()
-        publish_bytes = bytearray(0)
+        publish_bytes = bytes(0)
 
         expected_query = {"application": "website", "environment": "dev"}
 
@@ -128,7 +128,7 @@ class ClientTest(unittest.TestCase):
 
         response = Response()
         response.status_code = 200
-        response._content = "{}"
+        response._content =  bytes("{}", encoding="utf-8")
         http_client.put = Mock(return_value=response)
 
         client = Client(config, http_client)

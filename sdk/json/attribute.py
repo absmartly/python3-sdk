@@ -1,6 +1,7 @@
+import typing
+
 
 class Attribute:
-    def __init__(self):
-        self.name: str
-        self.value: object
-        self.set_at = int
+    name: typing.Optional[str]
+    value: {}
+    set_at: typing.Optional[int]

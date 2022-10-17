@@ -1,5 +1,6 @@
+import typing
+
 
 class Unit:
-    def __init__(self):
-        self.type: str
-        self.uid: str
+    type: typing.Optional[str]
+    uid: typing.Optional[str]

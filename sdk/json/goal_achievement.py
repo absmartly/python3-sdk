@@ -1,6 +1,7 @@
+import typing
+
 
 class GoalAchievement:
-    def __init__(self):
-        self.name: str
-        self.achieved_at: int
-        self.properties: dict[str, object]
+    name: typing.Optional[str]
+    achieved_at: typing.Optional[int]
+    properties: {}

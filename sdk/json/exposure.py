@@ -1,14 +1,15 @@
+import typing
+
 
 class Exposure:
-    def __init__(self):
-        self.id: int
-        self.name: str
-        self.unit: str
-        self.variant: int
-        self.exposed_at: int
-        self.assigned: bool
-        self.eligible: bool
-        self.overridden: bool
-        self.full_on: bool
-        self.custom: bool
-        self.audience_mismatch: bool
+    id: typing.Optional[int]
+    name: typing.Optional[str]
+    unit: typing.Optional[str]
+    variant: typing.Optional[int]
+    exposed_at: typing.Optional[int]
+    assigned: typing.Optional[bool]
+    eligible: typing.Optional[bool]
+    overridden: typing.Optional[bool]
+    full_on: typing.Optional[bool]
+    custom: typing.Optional[bool]
+    audience_mismatch: typing.Optional[bool]

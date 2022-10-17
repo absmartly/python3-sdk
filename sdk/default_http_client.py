@@ -2,7 +2,7 @@ import requests as req
 from requests.adapters import HTTPAdapter, Response
 from urllib3 import Retry
 
-from default_http_client_config import DefaultHTTPClientConfig
+from sdk.default_http_client_config import DefaultHTTPClientConfig
 from sdk.http_client import HTTPClient
 
 
@@ -13,7 +13,7 @@ class DefaultHTTPClient(HTTPClient):
         retry = Retry(total=config.max_retries, read=config.max_retries, connect=config.max_retries,
                       backoff_factor=config.retry_interval,
                       status_forcelist=(502, 503),
-                      method_whitelist=frozenset(['GET', 'POST']))
+                      allowed_methods=frozenset(['GET', 'POST']))
         self.http_client.mount(
             'http://',HTTPAdapter(max_retries=retry, pool_maxsize=200, pool_connections=20))
         self.http_client.mount(

@@ -1,5 +1,7 @@
+import typing
+from dataclasses import dataclass
+
 
 class ExperimentVariant:
-    def __init__(self, name: str, config: str):
-        self.name = name
-        self.config = config
+    name: typing.Optional[str]
+    config: typing.Optional[str]

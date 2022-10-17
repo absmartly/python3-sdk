@@ -1,4 +1,6 @@
+import typing
+
 
 class ExperimentApplication:
-    def __init__(self, name: str):
-        self.name = name
+    name: typing.Optional[str]
+

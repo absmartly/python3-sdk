@@ -8,6 +8,6 @@ from sdk.json.context_data import ContextData
 class DefaultContextDataDeserializer(ContextDataDeserializer):
     def deserialize(self, bytes_: bytearray, offset: int, length: int) -> ContextData | None:
         try:
-            return jsons.load(bytes(bytes_), ContextData)
-        except DeserializationError:
+            return jsons.loadb(bytes(bytes_), ContextData)
+        except DeserializationError as err:
             return None

@@ -47,7 +47,3 @@ class Client:
             content = response.content
             return self.deserializer.deserialize(content, 0, len(content))
         return response.raise_for_status()
-
-
-
-

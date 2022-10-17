@@ -1,3 +1,5 @@
+from typing import Optional
+
 import jsons
 from jsons import DeserializationError
 
@@ -6,8 +8,8 @@ from sdk.json.context_data import ContextData
 
 
 class DefaultContextDataDeserializer(ContextDataDeserializer):
-    def deserialize(self, bytes_: bytes, offset: int, length: int) -> ContextData | None:
+    def deserialize(self, bytes_: bytes, offset: int, length: int) -> Optional[ContextData]:
         try:
             return jsons.loadb(bytes_, ContextData)
-        except DeserializationError as err:
+        except DeserializationError:
             return None

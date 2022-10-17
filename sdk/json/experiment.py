@@ -1,5 +1,4 @@
 import typing
-from dataclasses import dataclass
 
 from sdk.json.experiement_application import ExperimentApplication
 from sdk.json.experiment_variant import ExperimentVariant

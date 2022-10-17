@@ -1,4 +1,4 @@
-import jsons as jsons
+import jsons
 
 from sdk.context_event_serializer import ContextEventSerializer
 from sdk.json.publish_event import PublishEvent

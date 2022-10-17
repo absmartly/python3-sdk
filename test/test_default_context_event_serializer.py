@@ -1,12 +1,7 @@
 import unittest
 
-from sdk.default_context_data_deserializer import DefaultContextDataDeserializer
 from sdk.default_context_event_serializer import DefaultContextEventSerializer
 from sdk.json.attribute import Attribute
-from sdk.json.context_data import ContextData
-from sdk.json.experiement_application import ExperimentApplication
-from sdk.json.experiment import Experiment
-from sdk.json.experiment_variant import ExperimentVariant
 from sdk.json.exposure import Exposure
 from sdk.json.goal_achievement import GoalAchievement
 from sdk.json.publish_event import PublishEvent

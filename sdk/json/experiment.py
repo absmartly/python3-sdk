@@ -6,7 +6,7 @@ from sdk.json.experiment_variant import ExperimentVariant
 
 class Experiment:
     id: typing.Optional[int]
-    name: typing.Optional[str]
+    name: typing.Optional[str] = None #TODO: add None to all variables
     unit_type: typing.Optional[str]
     iteration: typing.Optional[int]
     seed_hi: typing.Optional[int]

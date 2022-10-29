@@ -1,4 +1,4 @@
-from asyncio import Future
+from concurrent.futures import Future
 from typing import Optional
 
 from sdk.client import Client

@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from asyncio import Future
+from concurrent.futures import Future
 from typing import Optional
 
 from sdk.json.context_data import ContextData

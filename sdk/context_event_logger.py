@@ -15,5 +15,5 @@ class EventType(Enum):
 class ContextEventLogger:
 
     @abstractmethod
-    def handle_event(self):
+    def handle_event(self, event_type: EventType, data: object):
         raise NotImplementedError

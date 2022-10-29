@@ -18,6 +18,8 @@ from sdk.internal.variant_assigner import VariantAssigner
 from sdk.json.attribute import Attribute
 from sdk.json.context_data import ContextData
 from sdk.json.experiment import Experiment
+from sdk.json.exposure import Exposure
+from sdk.json.goal_achievement import GoalAchievement
 from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
@@ -93,6 +95,7 @@ class Context:
         self.event_lock = ReadWriteLock()
 
         self.refresh_future: Optional[Future] = None
+        self.closing_future: Optional[Future] = None
 
         self.refresh_timer: Optional[threading.Timer] = None
         self.timeout: Optional[threading.Timer] = None
@@ -257,7 +260,9 @@ class Context:
         if self.refresh_future is not None:
             return self.refresh_future
         else:
-            return Future()
+            result = Future()
+            result.set_result(None)
+            return result
 
     def set_data_failed(self, exception):
         try:
@@ -341,6 +346,61 @@ class Context:
             finally:
                 self.event_lock.release_write()
 
+        result = Future()
+        result.set_result(None)
+        return result
+
+    def close(self):
+        self.close_async().result()
+        
+    def refresh(self):
+        self.refresh_async().result()
+
+    def publish(self):
+        self.publish_async().result()
+
+    def publish_async(self):
+        self.check_not_closed()
+        return self.flush()
+
+    def track(self, goal_name: str, properties: dict):
+        self.check_not_closed()
+
+        achievement = GoalAchievement()
+        achievement.achieved_at = self.clock.millis()
+        achievement.name = goal_name
+        if properties is None:
+            achievement.properties = None
+        else:
+            achievement.properties = dict(properties)
+
+        try:
+            self.event_lock.acquire_write()
+            self.pending_count.increment_and_get()
+            self.achievements.append(achievement)
+        finally:
+            self.event_lock.release_write()
+
+        self.log_event(EventType.GOAL, achievement)
+        self.set_timeout()
+
+    def wait_until_ready(self):
+        if self.data is None:
+            if self.ready_future is not None and self.ready_future.running():
+                self.ready_future.result()
+        return self
+
+    def wait_until_ready_async(self):
+        if self.data is not None:
+            result = Future()
+            result.set_result(self)
+            return result
+        else:
+            def apply(fut: Future):
+                return self
+            self.ready_future.add_done_callback(apply)
+            return self.ready_future
+
     def clear_timeout(self):
         if self.timeout is not None:
             try:
@@ -351,12 +411,63 @@ class Context:
             finally:
                 self.timeout_lock.release_write()
 
+    def clear_refresh_timer(self):
+        if self.refresh_timer is not None:
+            self.refresh_timer.cancel()
+            self.refresh_timer = None
+
+    def get_variable_value(self, key: str, default_value: object):
+        self.check_ready(True)
+
+        assignment = self.get_variable_assignment(key)
+        if assignment is not None:
+            if assignment.variables is not None:
+                if not assignment.exposed.value:
+                    self.queue_exposure(assignment)
+
+                if key in assignment.variables:
+                    return assignment.variables[key]
+        return default_value
+
+    def peek_variable_value(self, key: str, default_value: object):
+        self.check_ready(True)
+
+        assignment = self.get_variable_assignment(key)
+        if assignment is not None:
+            if assignment.variables is not None:
+                if key in assignment.variables:
+                    return assignment.variables[key]
+        return default_value
+
+
     def get_unit_hash(self, unit_type: str, unit_uid: str):
         def computer(key: str):
             dig = hashlib.md5(unit_uid.encode('utf-8')).digest()
             unithash = base64.urlsafe_b64encode(dig).rstrip(b'=')
             return unithash
         return Concurrency.compute_if_absent_rw(self.context_lock, self.hashed_units, unit_type, computer)
+
+    def get_treatment(self, experiment_name: str):
+        self.check_ready(True)
+
+        assignment = self.get_assignment(experiment_name)
+        if not assignment.exposed.value:
+            self.queue_exposure(assignment)
+        return assignment.variant
+
+    def get_variable_keys(self):
+        self.check_ready(True)
+
+        variable_keys = {}
+        try:
+            self.data_lock.acquire_read()
+            for key, value in self.index_variables:
+                expr_var: ExperimentVariables = value
+                variable_keys[key] = expr_var.data.name
+        finally:
+            self.data_lock.release_write()
+
+        return variable_keys
 
     def get_assignment(self, experiment_name: str):
         try:
@@ -453,6 +564,12 @@ class Context:
         finally:
             self.context_lock.release_write()
 
+    def check_ready(self, expect_not_closed: bool):
+        if not self.is_ready():
+            raise RuntimeError('ABSmartly Context is not yet ready')
+        elif expect_not_closed:
+            self.check_not_closed()
+
     def get_experiment(self, experiment_name: str):
         try:
             self.data_lock.acquire_read()
@@ -465,3 +582,70 @@ class Context:
             return VariantAssigner(bytearray(unit_hash))
         return Concurrency.compute_if_absent_rw(self.context_lock, self.assigners, unit_type, apply)
 
+    def get_variable_experiment(self, key: str):
+        return Concurrency.get_rw(self.data_lock, self.index_variables, key)
+
+    def get_variable_assignment(self, key: str):
+        experiment: ExperimentVariables = self.get_variable_experiment(key)
+        if experiment is not None:
+            return self.get_assignment(experiment.data.name)
+        return None
+
+    def close_async(self):
+        if not self.closed.value:
+            if self.closing.compare_and_set(False, True):
+                self.clear_refresh_timer()
+
+                if self.pending_count.value > 0:
+                    self.closing_future = Future()
+
+                    def accept(res: Future):
+                        if res.done() and res.cancelled() is False and res.exception() is None:
+                            self.closed.set(True)
+                            self.closing.set(False)
+                            self.closing_future.set_result(None)
+                            self.log_event(EventType.CLOSE, None)
+                        elif res.cancelled() is False and res.exception() is not None:
+                            self.closed.set(True)
+                            self.closing.set(False)
+                            self.closing_future.exception(res.exception())
+
+                    self.flush().add_done_callback(accept)
+                    return self.closing_future
+
+                else:
+                    self.closed.set(True)
+                    self.closing.set(False)
+                    self.log_event(EventType.CLOSE, None)
+
+            if self.closing_future is not None:
+                return self.closing_future
+
+        result = Future()
+        result.set_result(None)
+        return result
+
+    def queue_exposure(self, assignment: Assignment):
+        if assignment.exposed.compare_and_set(False, True):
+            exposure = Exposure()
+            exposure.id = assignment.id
+            exposure.name = assignment.name
+            exposure.unit = assignment.unit_type
+            exposure.variant = assignment.variant
+            exposure.exposed_at = self.clock.millis()
+            exposure.assigned = assignment.assigned
+            exposure.eligible = assignment.eligible
+            exposure.overridden = assignment.overridden
+            exposure.full_on = assignment.full_on
+            exposure.custom = assignment.custom
+            exposure.audience_mismatch = assignment.audience_mismatch
+
+            try:
+                self.event_lock.acquire_write()
+                self.pending_count.increment_and_get()
+                self.exposures.append(exposure)
+            finally:
+                self.event_lock.release_write()
+
+            self.log_event(EventType.EXPOSURE, exposure)
+            self.set_timeout()

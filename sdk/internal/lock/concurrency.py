@@ -12,23 +12,21 @@ class Concurrency:
             lock.release_write()
 
     @staticmethod
-    def compute_if_absent_rw(self, lock: ReadWriteLock, map: dict, key: object, computer):
+    def compute_if_absent_rw(lock: ReadWriteLock, mp: dict, key: object, computer):
         try:
             lock.acquire_read()
-            value = map[key]
-            if value is not None:
-                return value
+            if key in mp:
+                return mp[key]
         finally:
             lock.release_read()
 
         try:
             lock.acquire_write()
-            value = map[key]
-            if value is not None:
-                return value
+            if key in mp:
+                return mp[key]
 
             new_value = computer(key)
-            map[key] = new_value
+            mp[key] = new_value
             return new_value
         finally:
             lock.release_write()

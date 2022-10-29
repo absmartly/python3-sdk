@@ -1,4 +1,5 @@
 import base64
+import collections
 import hashlib
 import threading
 from concurrent.futures import Future
@@ -13,6 +14,7 @@ from sdk.internal.lock.atomic_bool import AtomicBool
 from sdk.internal.lock.atomic_int import AtomicInt
 from sdk.internal.lock.concurrency import Concurrency
 from sdk.internal.lock.read_write_lock import ReadWriteLock
+from sdk.internal.variant_assigner import VariantAssigner
 from sdk.json.attribute import Attribute
 from sdk.json.context_data import ContextData
 from sdk.json.experiment import Experiment
@@ -20,6 +22,37 @@ from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
 from sdk.variable_parser import VariableParser
+
+
+class Assignment:
+    id: int
+    iteration: int
+    full_on_variant: int
+    name: str
+    unit_type: str
+    traffic_split: list[int]
+    variant: int
+    assigned: bool
+    overridden: bool
+    eligible: bool
+    full_on: bool
+    custom: bool
+    audience_mismatch: bool
+    variables: dict = {}
+    exposed = AtomicBool()
+
+
+class ExperimentVariables:
+    data: Optional[Experiment]
+    variables: Optional[list[dict]]
+
+
+def experiment_matches(experiment: Experiment, assignment: Assignment):
+    return experiment.id == assignment.id and \
+           experiment.unit_type == assignment.unit_type and \
+           experiment.iteration == assignment.iteration and \
+           experiment.full_on_variant == assignment.full_on_variant and \
+           collections.Counter(experiment.traffic_split) == collections.Counter(assignment.traffic_split)
 
 
 class Context:
@@ -38,6 +71,9 @@ class Context:
         self.units = {}
         self.index = {}
         self.index_variables = {}
+        self.assignment_cache = {}
+        self.cassignments = {}
+        self.overrides = {}
 
         self.exposures = []
         self.achievements = []
@@ -56,10 +92,10 @@ class Context:
         self.timeout_lock = ReadWriteLock()
         self.event_lock = ReadWriteLock()
 
-        self.refresh_future = Optional[Future()]
+        self.refresh_future: Optional[Future] = None
 
-        self.refresh_timer = Optional[threading.Timer]
-        self.timeout = Optional[threading.Timer]
+        self.refresh_timer: Optional[threading.Timer] = None
+        self.timeout: Optional[threading.Timer] = None
 
         if config.units is not None:
             self.set_units(config.units)
@@ -67,7 +103,7 @@ class Context:
         self.assigners = dict.fromkeys((range(len(self.units))))
         self.hashed_units = dict.fromkeys((range(len(self.units))))
 
-        self.attributes = []
+        self.attributes: list[Attribute] = []
 
         if config.attributes is not None:
             self.set_attributes(config.attributes)
@@ -115,8 +151,7 @@ class Context:
         try:
             self.context_lock.acquire_write()
 
-            previous = self.units[unit_type]
-            if previous is not None and previous != uid:
+            if unit_type in self.units.keys() and self.units[unit_type] != uid:
                 raise ValueError("Unit already set.")
 
             trimmed = uid.strip()
@@ -323,7 +358,110 @@ class Context:
             return unithash
         return Concurrency.compute_if_absent_rw(self.context_lock, self.hashed_units, unit_type, computer)
 
+    def get_assignment(self, experiment_name: str):
+        try:
+            self.context_lock.acquire_read()
 
-class ExperimentVariables:
-    data: Optional[Experiment]
-    variables: Optional[list[dict]]
+            if experiment_name in self.assignment_cache:
+                assignment: Assignment = self.assignment_cache[experiment_name]
+
+                experiment: ExperimentVariables = self.get_experiment(experiment_name)
+
+                if experiment_name in self.overrides:
+                    override = self.overrides[experiment_name]
+                    if assignment.overridden and assignment.variant == override:
+                        return assignment
+                    elif experiment is None:
+                        if assignment.assigned is False:
+                            return assignment
+                    elif experiment_name not in self.cassignments or self.cassignments[experiment_name] == assignment.variant:
+                        if experiment_matches(experiment.data, assignment):
+                            return assignment
+        finally:
+            self.context_lock.release_read()
+
+        try:
+            self.context_lock.acquire_write()
+
+            experiment: ExperimentVariables = self.get_experiment(experiment_name)
+            assignment = Assignment()
+            assignment.name = experiment_name
+            assignment.eligible = True
+
+            if experiment_name in self.overrides:
+                if experiment is not None:
+                    assignment.id = experiment.data.id
+                    assignment.unit_type = experiment.data.unit_type
+
+                assignment.overridden = True
+                assignment.variant = self.overrides[experiment_name]
+            else:
+                if experiment is not None:
+                    unit_type = experiment.data.unit_type
+
+                    if experiment.data.audience is not None and len(experiment.data.audience) > 0:
+                        attrs = {}
+                        for attr in self.attributes:
+                            attrs[attr.name] = attr.value
+
+                        match = self.audience_matcher.evaluate(experiment.data.audience, attrs)
+                        if match is not None:
+                            assignment.audience_mismatch = not match.result
+
+                    if experiment.data.audience_strict and assignment.audience_mismatch:
+                        assignment.variant = 0
+                    elif experiment.data.full_on_variant == 0:
+                        if experiment.data.unit_type in self.units:
+                            uid = self.units[experiment.data.unit_type]
+                            unit_hash = self.get_unit_hash(unit_type, uid)
+
+                            assigner: VariantAssigner = self.get_variant_assigner(unit_type, unit_hash)
+                            eligible = assigner.assign(experiment.data.traffic_split,
+                                                       experiment.data.traffic_seed_hi,
+                                                       experiment.data.traffic_seed_lo) == 1
+                            if eligible:
+                                if experiment_name in self.cassignments:
+                                    custom = self.cassignments[experiment_name]
+                                    assignment.variant = custom
+                                    assignment.custom = True
+                                else:
+                                    assignment.variant = assigner.assign(experiment.data.split,
+                                                                         experiment.data.seed_hi,
+                                                                         experiment.data.seed_lo)
+                            else:
+                                assignment.eligible = False
+                                assignment.variant = 0
+
+                            assignment.assigned = True
+
+                    else:
+                        assignment.assigned = True
+                        assignment.variant = experiment.data.full_on_variant
+                        assignment.full_on = True
+
+                    assignment.unit_type = unit_type
+                    assignment.id = experiment.data.id
+                    assignment.iteration = experiment.data.iteration
+                    assignment.traffic_split = experiment.data.traffic_split
+                    assignment.full_on_variant = experiment.data.full_on_variant
+
+            if experiment is not None and (assignment.variant < len(experiment.data.variants)):
+                assignment.variables = experiment.variables[assignment.variant]
+
+            self.assignment_cache[experiment_name] = assignment
+            return assignment
+        finally:
+            self.context_lock.release_write()
+
+    def get_experiment(self, experiment_name: str):
+        try:
+            self.data_lock.acquire_read()
+            return self.index.get(experiment_name, None)
+        finally:
+            self.data_lock.release_read()
+
+    def get_variant_assigner(self, unit_type: str, unit_hash: bytes):
+        def apply(key: str):
+            return VariantAssigner(bytearray(unit_hash))
+        return Concurrency.compute_if_absent_rw(self.context_lock, self.assigners, unit_type, apply)
+

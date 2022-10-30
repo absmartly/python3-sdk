@@ -11,9 +11,9 @@ It provides both a blocking and an asynchronous interfaces.
 ## Installation
 
 ### Python Modules
-setuptools~=60.2.0
-requests~=2.28.1
-urllib3~=1.26.12
+setuptools~=60.2.0  
+requests~=2.28.1  
+urllib3~=1.26.12  
 jsons~=1.6.3
 
 ### Dependencies

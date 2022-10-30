@@ -4,7 +4,7 @@ setup(
     name='absmartly',
     version='0.1.0',
     description='A Python SDK lib',
-    url='https://github.com/shuds13/pyexample',
+    url='https://github.com/absmartly/python-sdk',
     author='ABSmartly',
     author_email='pram@gmail.com',
     license='BSD 2-clause',

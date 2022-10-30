@@ -1,3 +1,4 @@
+import os
 import threading
 import time
 import unittest
@@ -113,11 +114,11 @@ class ContextTest(unittest.TestCase):
     audience_matcher: AudienceMatcher
 
     def set_up(self):
-        with open('./res/context.json', 'r') as file:
+        with open(os.path.join(os.path.dirname(__file__), 'res/context.json'), 'r') as file:
             content = file.read()
-        with open('./res/context-strict.json', 'r') as file:
+        with open(os.path.join(os.path.dirname(__file__), 'res/context-strict.json'), 'r') as file:
             content_strict = file.read()
-        with open('./res/refreshed.json', 'r') as file:
+        with open(os.path.join(os.path.dirname(__file__), 'res/refreshed.json'), 'r') as file:
             refreshed = file.read()
         self.data = self.deser.deserialize(bytes(content, encoding="utf-8"), 0, len(content))
         self.audience_strict_data = self.deser.deserialize(bytes(content_strict, encoding="utf-8"), 0, len(content_strict))

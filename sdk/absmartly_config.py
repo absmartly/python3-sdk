@@ -9,11 +9,11 @@ from sdk.variable_parser import VariableParser
 
 
 class ABSmartlyConfig:
-    context_data_provider: Optional[ContextDataProvider]
-    context_event_handler: Optional[ContextEventHandler]
-    context_event_logger: Optional[ContextEventLogger]
-    audience_deserializer: Optional[AudienceDeserializer]
-    client: Optional[Client]
-    variable_parser: Optional[VariableParser]
+    context_data_provider: Optional[ContextDataProvider] = None
+    context_event_handler: Optional[ContextEventHandler] = None
+    context_event_logger: Optional[ContextEventLogger] = None
+    audience_deserializer: Optional[AudienceDeserializer] = None
+    client: Optional[Client] = None
+    variable_parser: Optional[VariableParser] = None
 
 

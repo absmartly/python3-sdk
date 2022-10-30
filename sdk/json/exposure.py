@@ -2,14 +2,14 @@ import typing
 
 
 class Exposure:
-    id: typing.Optional[int]
-    name: typing.Optional[str]
-    unit: typing.Optional[str]
-    variant: typing.Optional[int]
-    exposed_at: typing.Optional[int]
-    assigned: typing.Optional[bool]
-    eligible: typing.Optional[bool]
-    overridden: typing.Optional[bool]
-    full_on: typing.Optional[bool]
-    custom: typing.Optional[bool]
-    audience_mismatch: typing.Optional[bool]
+    id: typing.Optional[int] = 0
+    name: typing.Optional[str] = None
+    unit: typing.Optional[str] = None
+    variant: typing.Optional[int] = 0
+    exposed_at: typing.Optional[int] = 0
+    assigned: typing.Optional[bool] = False
+    eligible: typing.Optional[bool] = False
+    overridden: typing.Optional[bool] = False
+    full_on: typing.Optional[bool] = False
+    custom: typing.Optional[bool] = False
+    audience_mismatch: typing.Optional[bool] = False

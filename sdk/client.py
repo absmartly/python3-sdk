@@ -20,7 +20,7 @@ class Client:
         self.headers = {"X-API-Key": api_key,
                         "X-Application": application,
                         "X-Environment": environment,
-                        "X-Application-Version": 0,
+                        "X-Application-Version": "0",
                         "X-Agent": "absmartly-python-sdk"}
         self.query = {"application": application,
                       "environment": environment}
@@ -30,7 +30,6 @@ class Client:
 
     def send_get(self, url: str, query: dict, headers: dict):
         response = self.http_client.get(url, query, headers)
-
         if response.status_code / 100 == 2:
             content = response.content
             return self.deserializer.deserialize(content, 0, len(content))

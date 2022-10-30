@@ -27,19 +27,19 @@ from sdk.variable_parser import VariableParser
 
 
 class Assignment:
-    id: int
-    iteration: int
-    full_on_variant: int
-    name: str
-    unit_type: str
-    traffic_split: list[int]
-    variant: int
-    assigned: bool
-    overridden: bool
-    eligible: bool
-    full_on: bool
-    custom: bool
-    audience_mismatch: bool
+    id: Optional[int] = 0
+    iteration: Optional[int] = 0
+    full_on_variant: Optional[int] = 0
+    name: Optional[str] = None
+    unit_type: Optional[str] = None
+    traffic_split: list[int] = []
+    variant: Optional[int] = 0
+    assigned: Optional[bool] = False
+    overridden: Optional[bool] = False
+    eligible: Optional[bool] = False
+    full_on: Optional[bool] = False
+    custom: Optional[bool] = False
+    audience_mismatch: Optional[bool] = False
     variables: dict = {}
     exposed = AtomicBool()
 
@@ -145,7 +145,7 @@ class Context:
             data_future.add_done_callback(when_finished)
 
     def set_units(self, units: dict):
-        for key, value in units:
+        for key, value in units.items():
             self.set_unit(key, value)
 
     def set_unit(self, unit_type: str, uid: str):
@@ -166,7 +166,7 @@ class Context:
             self.context_lock.release_write()
 
     def set_attributes(self, attributes: dict):
-        for key, value in attributes:
+        for key, value in attributes.items():
             self.set_attribute(key, value)
 
     def set_attribute(self, name: str, value: object):
@@ -195,7 +195,7 @@ class Context:
             for variant in experiment.variants:
                 if variant.config is not None and len(variant.config) > 0:
                     variables = self.variable_parser.parse(self, experiment.name, variant.name, variant.config)
-                    for key, value in variables:
+                    for key, value in variables.items():
                         index_variables[key] = experiment_variables
                     experiment_variables.variables.append(variables)
                 else:
@@ -207,7 +207,7 @@ class Context:
 
             self.index = index
             self.index_variables = index_variables
-            self.data = ContextData()
+            self.data = data
 
             self.set_refresh_timer()
         finally:
@@ -231,6 +231,7 @@ class Context:
 
                     def flush():
                         self.flush()
+
                     self.timeout = threading.Timer(self.publish_delay, flush)
                     self.timeout.start()
                 finally:
@@ -238,6 +239,15 @@ class Context:
 
     def is_ready(self):
         return self.data is not None
+
+    def is_failed(self):
+        return self.failed
+
+    def is_closed(self):
+        return self.closed.value
+
+    def is_closing(self):
+        return not self.closed.value and self.closing.value
 
     def refresh_async(self):
         self.check_not_closed()
@@ -314,7 +324,7 @@ class Context:
                     event.hashed = True
                     event.published_at = self.clock.millis()
                     event.units = []
-                    for key, value in self.units:
+                    for key, value in self.units.items():
                         unit = Unit()
                         unit.type = key
                         unit.uid = str(self.get_unit_hash(key, value), 'ascii')
@@ -386,7 +396,7 @@ class Context:
 
     def wait_until_ready(self):
         if self.data is None:
-            if self.ready_future is not None and self.ready_future.running():
+            if self.ready_future is not None and not self.ready_future.done():
                 self.ready_future.result()
         return self
 
@@ -439,6 +449,10 @@ class Context:
                     return assignment.variables[key]
         return default_value
 
+    def peek_treatment(self, experiment_name: str):
+        self.check_ready(True)
+
+        return self.get_assignment(experiment_name).variant
 
     def get_unit_hash(self, unit_type: str, unit_uid: str):
         def computer(key: str):
@@ -449,7 +463,6 @@ class Context:
 
     def get_treatment(self, experiment_name: str):
         self.check_ready(True)
-
         assignment = self.get_assignment(experiment_name)
         if not assignment.exposed.value:
             self.queue_exposure(assignment)
@@ -461,7 +474,7 @@ class Context:
         variable_keys = {}
         try:
             self.data_lock.acquire_read()
-            for key, value in self.index_variables:
+            for key, value in self.index_variables.items():
                 expr_var: ExperimentVariables = value
                 variable_keys[key] = expr_var.data.name
         finally:
@@ -576,6 +589,54 @@ class Context:
             return self.index.get(experiment_name, None)
         finally:
             self.data_lock.release_read()
+
+    def get_experiments(self):
+        self.check_ready(True)
+
+        try:
+            self.data_lock.acquire_read()
+            experiment_names = []
+            index = 0
+
+            for experiment in self.data.experiments:
+                experiment_names.append(experiment.name)
+
+            return experiment_names
+        finally:
+            self.data_lock.release_read()
+
+    def get_data(self):
+        self.check_ready(True)
+
+        try:
+            self.data_lock.acquire_read()
+            return self.data
+        finally:
+            self.data_lock.release_read()
+
+    def set_override(self, experiment_name: str, variant: int):
+        self.check_not_closed()
+
+        return Concurrency.put_rw(self.context_lock, self.overrides, experiment_name, variant)
+
+    def get_override(self, experiment_name: str):
+        return Concurrency.get_rw(self.context_lock, self.overrides, experiment_name)
+
+    def set_overrides(self, overrides: dict):
+        for key, value in overrides.items():
+            self.set_override(key, value)
+
+    def set_custom_assignment(self, experiment_name: str, variant: int):
+        self.check_not_closed()
+
+        Concurrency.put_rw(self.context_lock, self.cassignments, experiment_name, variant)
+
+    def get_custom_assignment(self, experiment_name: str):
+        return Concurrency.get_rw(self.context_lock, self.cassignments, experiment_name)
+
+    def set_custom_assignments(self, custom_assignments: dict):
+        for key, value in custom_assignments.items():
+            self.set_custom_assignment(key, value)
 
     def get_variant_assigner(self, unit_type: str, unit_hash: bytes):
         def apply(key: str):

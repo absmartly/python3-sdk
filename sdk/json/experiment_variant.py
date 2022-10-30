@@ -2,5 +2,5 @@ import typing
 
 
 class ExperimentVariant:
-    name: typing.Optional[str]
-    config: typing.Optional[str]
+    name: typing.Optional[str] = None
+    config: typing.Optional[str] = None

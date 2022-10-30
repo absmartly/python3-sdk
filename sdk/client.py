@@ -20,7 +20,7 @@ class Client:
         self.headers = {"X-API-Key": api_key,
                         "X-Application": application,
                         "X-Environment": environment,
-                        "X-Application-Version": "0",
+                        "X-Application-Version": 0,
                         "X-Agent": "absmartly-python-sdk"}
         self.query = {"application": application,
                       "environment": environment}

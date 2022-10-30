@@ -3,7 +3,7 @@ from sdk.time.clock import Clock
 
 class FixedClock(Clock):
     def __init__(self, millis: int):
-        self.millis = millis
+        self.value = millis
 
     def millis(self):
-        return self.millis
+        return self.value

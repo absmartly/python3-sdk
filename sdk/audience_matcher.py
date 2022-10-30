@@ -19,8 +19,9 @@ class AudienceMatcher:
         bytes_arr = bytes(audience, encoding="utf-8")
         audience_map = self.deserializer.deserialize(bytes_arr, 0, len(bytes_arr))
         if audience_map is not None:
-            fl = audience_map["filter"]
-            if type(fl) is dict or type(fl) is list:
-                return Result(self.json_expr.evaluate_boolean_expr(fl, attributes))
+            if "filter" in audience_map:
+                fl = audience_map["filter"]
+                if type(fl) is dict or type(fl) is list:
+                    return Result(self.json_expr.evaluate_boolean_expr(fl, attributes))
 
         return None

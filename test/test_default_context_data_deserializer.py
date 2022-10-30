@@ -10,7 +10,7 @@ from sdk.json.experiment_variant import ExperimentVariant
 class ContextDataDeserializerTest(unittest.TestCase):
 
     def test_deserialize(self):
-        with open('test/res/context.json', 'r') as file:
+        with open('./res/context.json', 'r') as file:
             data = file.read()
         deser = DefaultContextDataDeserializer()
         result = deser.deserialize(bytes(data, encoding="utf-8"), 0, len(data))

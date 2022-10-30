@@ -35,7 +35,7 @@ class ClientTest(unittest.TestCase):
                             "X-Application": "website",
                             "X-Environment": "dev",
                             "X-Application-Version": "0",
-                            "X-Agent": "absmartly-java-sdk"}
+                            "X-Agent": "absmartly-python-sdk"}
 
         deserializer = DefaultContextDataDeserializer()
         deserializer.deserialize = MagicMock(return_value=expected)
@@ -74,7 +74,7 @@ class ClientTest(unittest.TestCase):
                             "X-Application": "website",
                             "X-Environment": "dev",
                             "X-Application-Version": "0",
-                            "X-Agent": "absmartly-java-sdk"}
+                            "X-Agent": "absmartly-python-sdk"}
 
         deserializer = DefaultContextDataDeserializer()
         deserializer.deserialize = MagicMock(return_value=expected)

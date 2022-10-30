@@ -9,7 +9,7 @@ from sdk.json.unit import Unit
 class PublishEvent:
     hashed: typing.Optional[bool] = False
     units: typing.Optional[list[Unit]] = None
-    published_at: typing.Optional[int] = 0
+    publishedAt: typing.Optional[int] = 0
     exposures: typing.Optional[list[Exposure]] = None
     goals: typing.Optional[list[GoalAchievement]] = None
     attributes: typing.Optional[list[Attribute]] = None

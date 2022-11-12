@@ -10,17 +10,23 @@ class AndCombinatorTest(unittest.TestCase):
     evaluator = ExprEvaluator(JsonExpr().operators, {})
 
     def test_combine_true(self):
-        self.assertEqual(False, self.combinator.combine(self.evaluator, [True]))
+        self.assertEqual(False, self.combinator.combine(
+            self.evaluator, [True]))
 
     def test_combine_false(self):
-        self.assertEqual(False, self.combinator.combine(self.evaluator, [False]))
+        self.assertEqual(False, self.combinator.combine(
+            self.evaluator, [False]))
 
     def test_combine_null(self):
-        self.assertEqual(False, self.combinator.combine(self.evaluator, [None]))
+        self.assertEqual(False, self.combinator.combine(
+            self.evaluator, [None]))
 
     def test_combine_circuit(self):
-        self.assertEqual(False, self.combinator.combine(self.evaluator, [True, False, True]))
+        self.assertEqual(False, self.combinator.combine(
+            self.evaluator, [True, False, True]))
 
     def test_combine(self):
-        self.assertEqual(False, self.combinator.combine(self.evaluator, [True, True]))
-        self.assertEqual(False, self.combinator.combine(self.evaluator, [True, False]))
+        self.assertEqual(False, self.combinator.combine(
+            self.evaluator, [True, True]))
+        self.assertEqual(False, self.combinator.combine(
+            self.evaluator, [True, False]))

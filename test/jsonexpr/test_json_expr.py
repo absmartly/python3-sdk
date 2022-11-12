@@ -36,11 +36,11 @@ class JsonExprTest(unittest.TestCase):
     }]
 
     returning = [{"var": {
-            "path": "returning"
+        "path": "returning"
     }}]
 
     returning_and_age_twenty_and_us_or_age_over_fifty = [{"var": {
-            "path": "returning"
+        "path": "returning"
     }}, age_twenty_and_us_or_age_over_fifty]
 
     not_returning_and_spanish = [{"not": {
@@ -48,46 +48,77 @@ class JsonExprTest(unittest.TestCase):
             "path": "returning"
         }
     }},
-    {"eq": [{"var": {
-        "path": "language"
-    }}, {
-        "value": "es-ES"
-    }]}
+        {"eq": [{"var": {
+            "path": "language"
+        }}, {
+            "value": "es-ES"
+        }]}
     ]
 
     def test_age_twenty_as_us_english(self):
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.age_twenty_and_us, self.john))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.age_twenty_and_us, self.terry))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.age_twenty_and_us, self.kate))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.age_twenty_and_us, self.maria))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.age_twenty_and_us, self.john))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.age_twenty_and_us, self.terry))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.age_twenty_and_us, self.kate))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.age_twenty_and_us, self.maria))
 
     def test_age_over_fifty(self):
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.age_over_fifty, self.john))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.age_over_fifty, self.terry))
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.age_over_fifty, self.kate))
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.age_over_fifty, self.maria))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.age_over_fifty, self.john))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.age_over_fifty, self.terry))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.age_over_fifty, self.kate))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.age_over_fifty, self.maria))
 
     def test_age_twenty_and_us_or_age_over_fifty(self):
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.age_twenty_and_us_or_age_over_fifty, self.john))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.age_twenty_and_us_or_age_over_fifty, self.terry))
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.age_twenty_and_us_or_age_over_fifty, self.kate))
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.age_twenty_and_us_or_age_over_fifty, self.maria))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.age_twenty_and_us_or_age_over_fifty, self.john))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.age_twenty_and_us_or_age_over_fifty, self.terry))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.age_twenty_and_us_or_age_over_fifty, self.kate))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.age_twenty_and_us_or_age_over_fifty, self.maria))
 
     def test_returning(self):
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.returning, self.john))
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.returning, self.terry))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.returning, self.kate))
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.returning, self.maria))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.returning, self.john))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.returning, self.terry))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.returning, self.kate))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.returning, self.maria))
 
     def test_returning_and_test_age_twenty_and_us_or_age_over_fifty(self):
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.returning_and_age_twenty_and_us_or_age_over_fifty, self.john))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.returning_and_age_twenty_and_us_or_age_over_fifty, self.terry))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.returning_and_age_twenty_and_us_or_age_over_fifty, self.kate))
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.returning_and_age_twenty_and_us_or_age_over_fifty, self.maria))
+        self.assertFalse(
+            self.json_expr.evaluate_boolean_expr(
+                self.returning_and_age_twenty_and_us_or_age_over_fifty,
+                self.john))
+        self.assertFalse(
+            self.json_expr.evaluate_boolean_expr(
+                self.returning_and_age_twenty_and_us_or_age_over_fifty,
+                self.terry))
+        self.assertFalse(
+            self.json_expr.evaluate_boolean_expr(
+                self.returning_and_age_twenty_and_us_or_age_over_fifty,
+                self.kate))
+        self.assertTrue(
+            self.json_expr.evaluate_boolean_expr(
+                self.returning_and_age_twenty_and_us_or_age_over_fifty,
+                self.maria))
 
     def test_not_returning_and_spanish(self):
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.not_returning_and_spanish, self.john))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.not_returning_and_spanish, self.terry))
-        self.assertTrue(self.json_expr.evaluate_boolean_expr(self.not_returning_and_spanish, self.kate))
-        self.assertFalse(self.json_expr.evaluate_boolean_expr(self.not_returning_and_spanish, self.maria))
-        
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.not_returning_and_spanish, self.john))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.not_returning_and_spanish, self.terry))
+        self.assertTrue(self.json_expr.evaluate_boolean_expr(
+            self.not_returning_and_spanish, self.kate))
+        self.assertFalse(self.json_expr.evaluate_boolean_expr(
+            self.not_returning_and_spanish, self.maria))

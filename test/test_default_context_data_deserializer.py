@@ -1,7 +1,8 @@
 import os
 import unittest
 
-from sdk.default_context_data_deserializer import DefaultContextDataDeserializer
+from sdk.default_context_data_deserializer import \
+    DefaultContextDataDeserializer
 from sdk.json.context_data import ContextData
 from sdk.json.experiement_application import ExperimentApplication
 from sdk.json.experiment import Experiment
@@ -11,20 +12,23 @@ from sdk.json.experiment_variant import ExperimentVariant
 class ContextDataDeserializerTest(unittest.TestCase):
 
     def test_deserialize(self):
-        with open(os.path.join(os.path.dirname(__file__), 'res/context.json'), 'r') as file:
+        with open(os.path.join(
+                os.path.dirname(__file__),
+                'res/context.json'),
+                'r') as file:
             data = file.read()
         deser = DefaultContextDataDeserializer()
         result = deser.deserialize(bytes(data, encoding="utf-8"), 0, len(data))
         exp_appl = ExperimentApplication()
         exp_appl.name = "website"
-        
+
         varone = ExperimentVariant()
         varone.name = "A"
         varone.config = None
         vartwo = ExperimentVariant()
         vartwo.name = "0"
         vartwo.config = "{\"banner.border\":1,\"banner.size\":\"large\"}"
-        
+
         experiment0 = Experiment()
         experiment0.id = 1
         experiment0.name = "exp_test_ab"
@@ -104,15 +108,18 @@ class ContextDataDeserializerTest(unittest.TestCase):
 
         vartwottab = ExperimentVariant()
         vartwottab.name = "B"
-        vartwottab.config = "{\"submit.color\":\"red\",\"submit.shape\":\"circle\"}"
+        vartwottab.config = \
+            "{\"submit.color\":\"red\",\"submit.shape\":\"circle\"}"
 
         vartwottabc = ExperimentVariant()
         vartwottabc.name = "C"
-        vartwottabc.config = "{\"submit.color\":\"blue\",\"submit.shape\":\"rect\"}"
+        vartwottabc.config = \
+            "{\"submit.color\":\"blue\",\"submit.shape\":\"rect\"}"
 
         vartwottabb = ExperimentVariant()
         vartwottabb.name = "D"
-        vartwottabb.config = "{\"submit.color\":\"green\",\"submit.shape\":\"square\"}"
+        vartwottabb.config = \
+            "{\"submit.color\":\"green\",\"submit.shape\":\"square\"}"
 
         experiment3 = Experiment()
         experiment3.id = 4
@@ -137,8 +144,13 @@ class ContextDataDeserializerTest(unittest.TestCase):
         experiment3.audience = "null"
 
         expected = ContextData()
-        expected.experiments = [experiment0, experiment1, experiment2, experiment3]
+        expected.experiments = [experiment0,
+                                experiment1,
+                                experiment2,
+                                experiment3]
 
         self.assertIsNotNone(result)
-        self.assertEqual(len(result.experiments), len(expected.experiments))
-        self.assertEqual(result.experiments[3].variants[3].config, expected.experiments[3].variants[3].config)
+        self.assertEqual(len(result.experiments),
+                         len(expected.experiments))
+        self.assertEqual(result.experiments[3].variants[3].config,
+                         expected.experiments[3].variants[3].config)

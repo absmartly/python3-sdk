@@ -72,8 +72,8 @@ class ExprEvaluator(Evaluator):
             if type(target) is list:
                 try:
                     value = target[int(frag)]
-                except:
-                    print("")
+                except BaseException as err:
+                    print(err)
             elif type(target) is dict:
                 if frag not in target:
                     return None

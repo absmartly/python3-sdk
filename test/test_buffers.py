@@ -28,15 +28,20 @@ class BuffersTest(unittest.TestCase):
         byte = bytearray([97, 226, 134, 147, 98, 196, 0])
         i = 0
         while i < len(byte) - 3:
-            self.assertEqual((byte[i] & 0xff) | ((byte[i + 1] & 0xff) << 8) | ((byte[i + 2] & 0xff) << 16) | (
-                        (byte[i + 3] & 0xff) << 24), buffers.get_uint32(byte, i))
+            self.assertEqual((byte[i] & 0xff) |
+                             ((byte[i + 1] & 0xff) << 8) |
+                             ((byte[i + 2] & 0xff) << 16) | (
+                        (byte[i + 3] & 0xff) << 24),
+                             buffers.get_uint32(byte, i))
             i += 1
 
     def test_get_uint24(self):
         byte = bytearray([97, 226, 134, 147, 98, 0])
         i = 0
         while i < len(byte) - 2:
-            self.assertEqual((byte[i] & 0xff) | ((byte[i + 1] & 0xff) << 8) | ((byte[i + 2] & 0xff) << 16),
+            self.assertEqual((byte[i] & 0xff) |
+                             ((byte[i + 1] & 0xff) << 8) |
+                             ((byte[i + 2] & 0xff) << 16),
                              buffers.get_uint24(byte, i))
             i += 1
 
@@ -44,7 +49,9 @@ class BuffersTest(unittest.TestCase):
         byte = bytearray([97, 226, 134, 147, 98, 0])
         i = 0
         while i < len(byte) - 1:
-            self.assertEqual((byte[i] & 0xff) | ((byte[i + 1] & 0xff) << 8), buffers.get_uint16(byte, i))
+            self.assertEqual((byte[i] & 0xff) |
+                             ((byte[i + 1] & 0xff) << 8),
+                             buffers.get_uint16(byte, i))
             i += 1
 
     def test_get_uint8(self):

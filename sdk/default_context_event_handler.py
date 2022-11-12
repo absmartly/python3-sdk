@@ -13,6 +13,7 @@ class DefaultContextEventHandler(ContextEventHandler):
     def __init__(self, client: Client):
         self.client = client
 
-    def publish(self, context: Context, event: PublishEvent) -> Future[Optional[ContextData]]:
+    def publish(self,
+                context: Context,
+                event: PublishEvent) -> Future[Optional[ContextData]]:
         return self.client.publish(event)
-

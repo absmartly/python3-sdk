@@ -1,8 +1,10 @@
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from sdk.default_context_data_deserializer import DefaultContextDataDeserializer
-from sdk.default_context_event_serializer import DefaultContextEventSerializer
+from sdk.default_context_data_deserializer import \
+    DefaultContextDataDeserializer
+from sdk.default_context_event_serializer import \
+    DefaultContextEventSerializer
 
 
 class ClientConfig:

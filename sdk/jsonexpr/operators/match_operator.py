@@ -13,4 +13,3 @@ class MatchOperator(BinaryOperator):
                 compiled = re.compile(pattern)
                 return bool(compiled.match(text))
         return None
-    

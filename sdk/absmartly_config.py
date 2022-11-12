@@ -15,5 +15,3 @@ class ABSmartlyConfig:
     audience_deserializer: Optional[AudienceDeserializer] = None
     client: Optional[Client] = None
     variable_parser: Optional[VariableParser] = None
-
-

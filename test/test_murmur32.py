@@ -14,8 +14,10 @@ class Murmur32Test(unittest.TestCase):
                       ["testy1", 0x00000000, 0x8a1a243a],
                       ["testy12", 0x00000000, 0x845461b9],
                       ["testy123", 0x00000000, 0x47628ac4],
-                      ["special characters açb↓c", 0x00000000, 0xbe83b140],
-                      ["The quick brown fox jumps over the lazy dog", 0x00000000, 0x2e4ff723],
+                      ["special characters açb↓c",
+                       0x00000000, 0xbe83b140],
+                      ["The quick brown fox jumps over the lazy dog",
+                       0x00000000, 0x2e4ff723],
                       ["", 0xdeadbeef, 0x0de5c6a9],
                       [" ", 0xdeadbeef, 0x25acce43],
                       ["t", 0xdeadbeef, 0x3b15dcf8],
@@ -26,8 +28,10 @@ class Murmur32Test(unittest.TestCase):
                       ["testy1", 0xdeadbeef, 0x09ed28e9],
                       ["testy12", 0xdeadbeef, 0x22467835],
                       ["testy123", 0xdeadbeef, 0xd633060d],
-                      ["special characters açb↓c", 0xdeadbeef, 0xf7fdd8a2],
-                      ["The quick brown fox jumps over the lazy dog", 0xdeadbeef, 0x3a7b3f4d],
+                      ["special characters açb↓c",
+                       0xdeadbeef, 0xf7fdd8a2],
+                      ["The quick brown fox jumps over the lazy dog",
+                       0xdeadbeef, 0x3a7b3f4d],
                       ["", 0x00000001, 0x514e28b7],
                       [" ", 0x00000001, 0x4f0f7132],
                       ["t", 0x00000001, 0x5db1831e],
@@ -38,15 +42,13 @@ class Murmur32Test(unittest.TestCase):
                       ["testy1", 0x00000001, 0x33925ceb],
                       ["testy12", 0x00000001, 0xd92c9f23],
                       ["testy123", 0x00000001, 0x3bc1712d],
-                      ["special characters açb↓c", 0x00000001, 0x293327b5],
-                      ["The quick brown fox jumps over the lazy dog", 0x00000001, 0x78e69e27]]
+                      ["special characters açb↓c",
+                       0x00000001, 0x293327b5],
+                      ["The quick brown fox jumps over the lazy dog",
+                       0x00000001, 0x78e69e27]]
 
         for case in test_cases:
             key = bytearray(case[0].encode('utf-8'))
             actual = murmur.digest(key, int(case[1]))
             expected = murmur.to_signed32(case[2])
             self.assertEqual(expected, actual)
-
-
-
-

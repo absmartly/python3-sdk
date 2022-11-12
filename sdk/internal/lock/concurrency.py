@@ -12,7 +12,9 @@ class Concurrency:
             lock.release_write()
 
     @staticmethod
-    def compute_if_absent_rw(lock: ReadWriteLock, mp: dict, key: object, computer):
+    def compute_if_absent_rw(lock: ReadWriteLock,
+                             mp: dict,
+                             key: object, computer):
         try:
             lock.acquire_read()
             if key in mp:

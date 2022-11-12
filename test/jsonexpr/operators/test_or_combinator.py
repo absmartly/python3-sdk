@@ -10,6 +10,9 @@ class NullOperatorTest(unittest.TestCase):
     evaluator = ExprEvaluator(JsonExpr().operators, {})
 
     def test_match(self):
-        self.assertFalse(self.operator.combine(self.evaluator, [None]))
-        self.assertFalse(self.operator.combine(self.evaluator, [True]))
-        self.assertFalse(self.operator.combine(self.evaluator, [True, False, True]))
+        self.assertFalse(self.operator.combine(
+            self.evaluator, [None]))
+        self.assertFalse(self.operator.combine(
+            self.evaluator, [True]))
+        self.assertFalse(self.operator.combine(
+            self.evaluator, [True, False, True]))

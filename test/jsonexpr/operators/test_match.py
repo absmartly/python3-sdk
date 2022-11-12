@@ -10,5 +10,7 @@ class MatchOperatorTest(unittest.TestCase):
     evaluator = ExprEvaluator(JsonExpr().operators, {})
 
     def test_match(self):
-        self.assertFalse(self.operator.binary(self.evaluator, ",l5abcdefghijk", "ijk$"))
-        self.assertTrue(self.operator.binary(self.evaluator, "abcdefghijk", "abc"))
+        self.assertFalse(self.operator.binary(
+            self.evaluator, ",l5abcdefghijk", "ijk$"))
+        self.assertTrue(self.operator.binary(
+            self.evaluator, "abcdefghijk", "abc"))

@@ -34,9 +34,3 @@ class VariantAssigner:
         return (hashing & 0xffffffff) * VariantAssigner.__normalizer
 
     __normalizer = 1.0 / 0xffffffff
-
-
-
-
-
-

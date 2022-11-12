@@ -9,6 +9,7 @@ It provides both a blocking and an asynchronous interfaces.
 
 
 ## Installation
+pip install absmartly==0.1.2
 
 ### Python Modules
 setuptools~=60.2.0  

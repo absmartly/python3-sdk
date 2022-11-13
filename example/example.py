@@ -15,11 +15,11 @@ from sdk.default_http_client_config import DefaultHTTPClientConfig
 
 def main():
     client_config = ClientConfig()
-    client_config.endpoint = "https://sandbox.absmartly.io/v1"
+    client_config.endpoint = "https://test.absmartly.io/v1"
     client_config.api_key = \
-        "R54OsOwR9wwtWYhDXwdtp4iuD3pvtIUoHz4BakCuBl0t3E9kA0R6jzTW6cffQC9O"
-    client_config.application = "www"
-    client_config.environment = "prod"
+        "test"
+    client_config.application = "test"
+    client_config.environment = "test"
 
     default_client_config = DefaultHTTPClientConfig()
     default_client = DefaultHTTPClient(default_client_config)

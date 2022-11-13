@@ -1,6 +1,7 @@
 import os
 import threading
 import time
+import typing
 import unittest
 from concurrent.futures import Future
 
@@ -20,7 +21,7 @@ from sdk.default_http_client_config import DefaultHTTPClientConfig
 
 from sdk.default_variable_parser import DefaultVariableParser
 
-from sdk.context_event_logger import ContextEventLogger
+from sdk.context_event_logger import ContextEventLogger, EventType
 
 from sdk.context_event_handler import ContextEventHandler
 
@@ -38,6 +39,15 @@ from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
 from sdk.time.fixed_clock import FixedClock
+
+
+class ContextEventLoggerTest(ContextEventLogger):
+    logger_data: typing.Optional[object] = None
+    logger_type: typing.Optional[EventType] = None
+
+    def handle_event(self, event_type: EventType, data: object):
+        self.logger_data = data
+        self.logger_type = event_type
 
 
 class ClientContextMock(Client):
@@ -109,7 +119,7 @@ class ContextTest(unittest.TestCase):
     clock: Clock
     data_provider: ContextDataProvider
     event_handler: ContextEventHandler
-    event_logger: ContextEventLogger = None
+    event_logger: ContextEventLogger = ContextEventLoggerTest()
     variable_parser: DefaultVariableParser
     audience_matcher: AudienceMatcher
 
@@ -1003,3 +1013,53 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(2, res)
         self.assertEqual(2, context.get_pending_count())
         context.close()
+
+    def test_logger_called(self):
+        self.assertIsNone(self.event_logger.logger_data)
+        self.assertIsNone(self.event_logger.logger_type)
+
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(self.event_logger.logger_type, EventType.READY)
+        self.assertEqual(type(self.event_logger.logger_data), type(ContextData()))
+        self.assertEqual(True, context.is_ready())
+
+        res = context.get_treatment("exp_test_new")
+        self.assertEqual(0, res)
+        self.assertEqual(1, context.get_pending_count())
+        self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
+        self.assertEqual(type(self.event_logger.logger_data), type(Exposure()))
+
+        def sl():
+            future = Future()
+
+            def set_result():
+                future.set_result(self.data)
+            th = threading.Thread(target=set_result)
+            th.start()
+            return future
+        self.client.get_context_data = sl
+        self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
+        self.assertEqual(type(self.event_logger.logger_data), type(Exposure()))
+
+        context.refresh()
+        self.assertEqual(self.event_logger.logger_type, EventType.REFRESH)
+        self.assertEqual(type(self.event_logger.logger_data), type(ContextData()))
+        res = context.get_experiments()
+        self.assertEqual(self.event_logger.logger_type, EventType.REFRESH)
+        self.assertEqual(type(self.event_logger.logger_data), type(ContextData()))
+        self.assertEqual("exp_test_ab", res[0])
+        self.assertEqual("exp_test_fullon", res[3])
+        self.assertEqual(4, len(res))
+        res = context.get_treatment("exp_test_fullon")
+        self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
+        self.assertEqual(type(self.event_logger.logger_data), type(Exposure()))
+        self.assertEqual(2, res)
+        self.assertEqual(2, context.get_pending_count())
+        self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
+        self.assertEqual(type(self.event_logger.logger_data), type(Exposure()))
+        context.close()
+        self.assertEqual(self.event_logger.logger_type, EventType.CLOSE)
+        self.assertIsNone(self.event_logger.logger_data)

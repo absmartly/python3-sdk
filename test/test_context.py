@@ -1015,6 +1015,8 @@ class ContextTest(unittest.TestCase):
         context.close()
 
     def test_logger_called(self):
+        self.event_logger.logger_data = None
+        self.event_logger.logger_type = None
         self.assertIsNone(self.event_logger.logger_data)
         self.assertIsNone(self.event_logger.logger_type)
 
@@ -1023,14 +1025,16 @@ class ContextTest(unittest.TestCase):
         config.units = self.units
         context = self.create_test_context(config, self.data_future_ready)
         self.assertEqual(self.event_logger.logger_type, EventType.READY)
-        self.assertEqual(type(self.event_logger.logger_data), type(ContextData()))
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(ContextData()))
         self.assertEqual(True, context.is_ready())
 
         res = context.get_treatment("exp_test_new")
         self.assertEqual(0, res)
         self.assertEqual(1, context.get_pending_count())
         self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
-        self.assertEqual(type(self.event_logger.logger_data), type(Exposure()))
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(Exposure()))
 
         def sl():
             future = Future()
@@ -1042,24 +1046,29 @@ class ContextTest(unittest.TestCase):
             return future
         self.client.get_context_data = sl
         self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
-        self.assertEqual(type(self.event_logger.logger_data), type(Exposure()))
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(Exposure()))
 
         context.refresh()
         self.assertEqual(self.event_logger.logger_type, EventType.REFRESH)
-        self.assertEqual(type(self.event_logger.logger_data), type(ContextData()))
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(ContextData()))
         res = context.get_experiments()
         self.assertEqual(self.event_logger.logger_type, EventType.REFRESH)
-        self.assertEqual(type(self.event_logger.logger_data), type(ContextData()))
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(ContextData()))
         self.assertEqual("exp_test_ab", res[0])
         self.assertEqual("exp_test_fullon", res[3])
         self.assertEqual(4, len(res))
         res = context.get_treatment("exp_test_fullon")
         self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
-        self.assertEqual(type(self.event_logger.logger_data), type(Exposure()))
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(Exposure()))
         self.assertEqual(2, res)
         self.assertEqual(2, context.get_pending_count())
         self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
-        self.assertEqual(type(self.event_logger.logger_data), type(Exposure()))
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(Exposure()))
         context.close()
         self.assertEqual(self.event_logger.logger_type, EventType.CLOSE)
         self.assertIsNone(self.event_logger.logger_data)

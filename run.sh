@@ -1,3 +1,4 @@
 pip3 install .
-python3 setup.py check
+pip3 install flake8
+flake8 .
 python3 -m unittest

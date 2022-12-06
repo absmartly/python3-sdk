@@ -6,8 +6,10 @@ from requests import Response
 
 from sdk.client import Client
 from sdk.client_config import ClientConfig
-from sdk.default_context_data_deserializer import DefaultContextDataDeserializer
-from sdk.default_context_event_serializer import DefaultContextEventSerializer
+from sdk.default_context_data_deserializer import \
+    DefaultContextDataDeserializer
+from sdk.default_context_event_serializer import \
+    DefaultContextEventSerializer
 from sdk.default_http_client import DefaultHTTPClient
 from sdk.default_http_client_config import DefaultHTTPClientConfig
 from sdk.json.context_data import ContextData
@@ -23,19 +25,11 @@ class ClientTest(unittest.TestCase):
         config.application = "website"
         config.environment = "dev"
 
-        data_bytes = bytes("{}", "utf-8")
         expected = ContextData()
-
         event = PublishEvent()
         publish_bytes = bytes(0)
 
         expected_query = {"application": "website", "environment": "dev"}
-
-        expected_headers = {"X-API-Key": "test-api-key",
-                            "X-Application": "website",
-                            "X-Environment": "dev",
-                            "X-Application-Version": "0",
-                            "X-Agent": "absmartly-python-sdk"}
 
         deserializer = DefaultContextDataDeserializer()
         deserializer.deserialize = MagicMock(return_value=expected)
@@ -49,7 +43,10 @@ class ClientTest(unittest.TestCase):
         client = Client(config, http_client)
         client.get_context_data()
 
-        http_client.get.assert_called_once_with("https://localhost/v1/context", expected_query, {})
+        http_client.get.assert_called_once_with(
+            "https://localhost/v1/context",
+            expected_query,
+            {})
         http_client.get.reset_mock()
         client.publish(event)
         time.sleep(0.1)
@@ -62,19 +59,9 @@ class ClientTest(unittest.TestCase):
         config.application = "website"
         config.environment = "dev"
 
-        data_bytes = bytes("{}", "utf-8")
         expected = ContextData()
-
-        event = PublishEvent()
         publish_bytes = bytes(0)
-
         expected_query = {"application": "website", "environment": "dev"}
-
-        expected_headers = {"X-API-Key": "test-api-key",
-                            "X-Application": "website",
-                            "X-Environment": "dev",
-                            "X-Application-Version": "0",
-                            "X-Agent": "absmartly-python-sdk"}
 
         deserializer = DefaultContextDataDeserializer()
         deserializer.deserialize = MagicMock(return_value=expected)
@@ -92,7 +79,10 @@ class ClientTest(unittest.TestCase):
         client = Client(config, http_client)
         future = client.get_context_data()
 
-        http_client.get.assert_called_once_with("https://localhost/v1/context", expected_query, {})
+        http_client.get.assert_called_once_with(
+            "https://localhost/v1/context",
+            expected_query,
+            {})
         http_client.get.reset_mock()
 
         result = future.result()
@@ -105,18 +95,15 @@ class ClientTest(unittest.TestCase):
         config.application = "website"
         config.environment = "dev"
 
-        data_bytes = bytes("{}", "utf-8")
         expected = ContextData()
 
         event = PublishEvent()
         publish_bytes = bytes(0)
 
-        expected_query = {"application": "website", "environment": "dev"}
-
         expected_headers = {"X-API-Key": "test-api-key",
                             "X-Application": "website",
                             "X-Environment": "dev",
-                            "X-Application-Version": 0,
+                            "X-Application-Version": '0',
                             "X-Agent": "absmartly-python-sdk"}
 
         deserializer = DefaultContextDataDeserializer()
@@ -128,13 +115,16 @@ class ClientTest(unittest.TestCase):
 
         response = Response()
         response.status_code = 200
-        response._content =  bytes("{}", encoding="utf-8")
+        response._content = bytes("{}", encoding="utf-8")
         http_client.put = Mock(return_value=response)
 
         client = Client(config, http_client)
         client.serializer = serializer
-        future = client.publish(event)
+        client.publish(event)
 
-        http_client.put.assert_called_once_with("https://localhost/v1/context", {}, expected_headers, publish_bytes)
+        http_client.put.assert_called_once_with("https://localhost/v1/context",
+                                                {},
+                                                expected_headers,
+                                                publish_bytes)
         http_client.put.reset_mock()
         serializer.serialize.assert_called_once()

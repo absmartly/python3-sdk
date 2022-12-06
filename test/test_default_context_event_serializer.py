@@ -11,7 +11,6 @@ from sdk.json.unit import Unit
 class ContextDataDeserializerTest(unittest.TestCase):
 
     def test_serialize(self):
-        expected = "{\"hashed\":true,\"units\":[{\"type\":\"session_id\",\"uid\":\"pAE3a1i5Drs5mKRNq56adA\"},{\"type\":\"user_id\",\"uid\":\"JfnnlDI7RTiF9RgfG2JNCw\"}],\"publishedAt\":123456789,\"exposures\":[{\"id\":1,\"name\":\"exp_test_ab\",\"unit\":\"session_id\",\"variant\":1,\"exposedAt\":123470000,\"assigned\":true,\"eligible\":true,\"overridden\":false,\"fullOn\":false,\"custom\":false,\"audienceMismatch\":true}],\"goals\":[{\"name\":\"goal1\",\"achievedAt\":123456000,\"properties\":{\"amount\":6,\"nested\":{\"value\":5},\"nested_arr\":{\"nested\":[1,2,\"test\"]},\"tries\":1,\"value\":5.0}},{\"name\":\"goal2\",\"achievedAt\":123456789}],\"attributes\":[{\"name\":\"attr1\",\"value\":\"value1\",\"setAt\":123456000},{\"name\":\"attr2\",\"value\":\"value2\",\"setAt\":123456789},{\"name\":\"attr2\",\"setAt\":123450000},{\"name\":\"attr3\",\"value\":{\"nested\":{\"value\":5}},\"setAt\":123470000},{\"name\":\"attr4\",\"value\":{\"nested\":[1,2,\"test\"]},\"setAt\":123480000}]}"
         event = PublishEvent()
         event.publishedAt = 123456789
         event.hashed = True
@@ -80,7 +79,11 @@ class ContextDataDeserializerTest(unittest.TestCase):
         attribute4.value = {"nested": {"nested": [1, 2, "test"]}}
         attribute4.setAt = 123480000
 
-        event.attributes = [attribute, attribute1, attribute2, attribute3, attribute4]
+        event.attributes = [attribute,
+                            attribute1,
+                            attribute2,
+                            attribute3,
+                            attribute4]
 
         serializer = DefaultContextEventSerializer()
         result = serializer.serialize(event)

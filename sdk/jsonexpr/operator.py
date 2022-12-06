@@ -8,4 +8,3 @@ class Operator:
     @abstractmethod
     def evaluate(self, evaluator: Evaluator, args: object):
         raise NotImplementedError
-

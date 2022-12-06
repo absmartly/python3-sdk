@@ -2,7 +2,8 @@ import unittest
 
 from sdk.jsonexpr.expr_evaluator import ExprEvaluator
 from sdk.jsonexpr.json_expr import JsonExpr
-from sdk.jsonexpr.operators.greater_than_or_equal_operator import GreaterThanOrEqualOperator
+from sdk.jsonexpr.operators.greater_than_or_equal_operator import \
+    GreaterThanOrEqualOperator
 
 
 class GreaterThanOrEqOperatorTest(unittest.TestCase):

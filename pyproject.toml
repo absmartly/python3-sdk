@@ -1,0 +1,32 @@
+# pyproject.toml
+
+[build-system]
+requires      = ["setuptools>=61.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ABSmartly"
+version = "0.1.3"
+description = "ABSmartly Python SDK lib"
+readme = "README.MD"
+authors = [{ name = "ABSmartly", email = "info@ABSmartly.com" }]
+license = { file = "LICENSE" }
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3",
+]
+keywords = ["ABSmartly", "SDK", "Testing"]
+dependencies = [
+    'requests >= 2.28.1',
+    "urllib3 >= 1.26.12",
+    "jsons >= 1.6.3"
+]
+requires-python = ">=3.9"
+
+
+[project.optional-dependencies]
+dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]
+
+[project.urls]
+Homepage = "https://github.com/absmartly/python3-sdk"

@@ -23,7 +23,8 @@ class Evaluator:
     def extract_var(self, path: str):
         raise NotImplementedError
 
-    # returns -1 -> lesser, 0 -> equals, 1 -> greater, null -> undefined comparison
+    # returns
+    # -1 -> lesser, 0 -> equals, 1 -> greater, null -> undefined comparison
     @abstractmethod
-    def compare(self,lhs: object, rhs: object):
+    def compare(self, lhs: object, rhs: object):
         raise NotImplementedError

@@ -7,35 +7,61 @@ import sdk.internal.variant_assigner as assigner
 
 class VariantAssignerTest(unittest.TestCase):
     def test_choose_variant(self):
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.0, 1.0], 0.0))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.0, 1.0], 0.5))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.0, 1.0], 1.0))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.0, 1.0], 0.0))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.0, 1.0], 0.5))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.0, 1.0], 1.0))
 
-        self.assertEqual(0, assigner.VariantAssigner.choose_variant([1.0, 0.0], 0.0))
-        self.assertEqual(0, assigner.VariantAssigner.choose_variant([1.0, 0.0], 0.5))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([1.0, 0.0], 1.0))
+        self.assertEqual(0, assigner.VariantAssigner.choose_variant(
+            [1.0, 0.0], 0.0))
+        self.assertEqual(0, assigner.VariantAssigner.choose_variant(
+            [1.0, 0.0], 0.5))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [1.0, 0.0], 1.0))
 
-        self.assertEqual(0, assigner.VariantAssigner.choose_variant([0.5, 0.5], 0.0))
-        self.assertEqual(0, assigner.VariantAssigner.choose_variant([0.5, 0.5], 0.25))
-        self.assertEqual(0, assigner.VariantAssigner.choose_variant([0.5, 0.5], 0.49999999))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.5, 0.5], 0.5))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.5, 0.5], 0.50000001))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.5, 0.5], 0.75))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.5, 0.5], 1.0))
+        self.assertEqual(0, assigner.VariantAssigner.choose_variant(
+            [0.5, 0.5], 0.0))
+        self.assertEqual(0, assigner.VariantAssigner.choose_variant(
+            [0.5, 0.5], 0.25))
+        self.assertEqual(0, assigner.VariantAssigner.choose_variant(
+            [0.5, 0.5], 0.49999999))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.5, 0.5], 0.5))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.5, 0.5], 0.50000001))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.5, 0.5], 0.75))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.5, 0.5], 1.0))
 
-        self.assertEqual(0, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.0))
-        self.assertEqual(0, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.25))
-        self.assertEqual(0, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.33299999))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.333))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.33300001))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.5))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.66599999))
-        self.assertEqual(2, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.666))
-        self.assertEqual(2, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.66600001))
-        self.assertEqual(2, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 0.75))
-        self.assertEqual(2, assigner.VariantAssigner.choose_variant([0.333, 0.333, 0.334], 1.0))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.0, 1.0], 0.0))
-        self.assertEqual(1, assigner.VariantAssigner.choose_variant([0.0, 1.0], 1.0))
+        self.assertEqual(0, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.0))
+        self.assertEqual(0, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.25))
+        self.assertEqual(0, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.33299999))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.333))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.33300001))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.5))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.66599999))
+        self.assertEqual(2, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.666))
+        self.assertEqual(2, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.66600001))
+        self.assertEqual(2, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 0.75))
+        self.assertEqual(2, assigner.VariantAssigner.choose_variant(
+            [0.333, 0.333, 0.334], 1.0))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.0, 1.0], 0.0))
+        self.assertEqual(1, assigner.VariantAssigner.choose_variant(
+            [0.0, 1.0], 1.0))
 
     def test_assignments_match(self):
         splits = [[0.5, 0.5],
@@ -98,5 +124,3 @@ class VariantAssignerTest(unittest.TestCase):
             split = splits[index]
             variant = var_assigner.assign(split, frags[0], frags[1])
             self.assertEqual(expected_variants[index], variant)
-
-

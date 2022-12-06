@@ -1,9 +1,9 @@
 import os
 import threading
 import time
+import typing
 import unittest
 from concurrent.futures import Future
-from unittest.mock import MagicMock
 
 from sdk.context_config import ContextConfig
 
@@ -21,7 +21,7 @@ from sdk.default_http_client_config import DefaultHTTPClientConfig
 
 from sdk.default_variable_parser import DefaultVariableParser
 
-from sdk.context_event_logger import ContextEventLogger
+from sdk.context_event_logger import ContextEventLogger, EventType
 
 from sdk.context_event_handler import ContextEventHandler
 
@@ -29,7 +29,8 @@ from sdk.context_data_provider import ContextDataProvider
 
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 
-from sdk.default_context_data_deserializer import DefaultContextDataDeserializer
+from sdk.default_context_data_deserializer import \
+    DefaultContextDataDeserializer
 from sdk.json.attribute import Attribute
 from sdk.json.context_data import ContextData
 from sdk.json.exposure import Exposure
@@ -38,6 +39,15 @@ from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
 from sdk.time.fixed_clock import FixedClock
+
+
+class ContextEventLoggerTest(ContextEventLogger):
+    logger_data: typing.Optional[object] = None
+    logger_type: typing.Optional[EventType] = None
+
+    def handle_event(self, event_type: EventType, data: object):
+        self.logger_data = data
+        self.logger_type = event_type
 
 
 class ClientContextMock(Client):
@@ -109,20 +119,35 @@ class ContextTest(unittest.TestCase):
     clock: Clock
     data_provider: ContextDataProvider
     event_handler: ContextEventHandler
-    event_logger: ContextEventLogger = None
+    event_logger: ContextEventLogger = ContextEventLoggerTest()
     variable_parser: DefaultVariableParser
     audience_matcher: AudienceMatcher
 
     def set_up(self):
-        with open(os.path.join(os.path.dirname(__file__), 'res/context.json'), 'r') as file:
+        with open(os.path.join(os.path.dirname(__file__),
+                               'res/context.json'),
+                  'r') as file:
             content = file.read()
-        with open(os.path.join(os.path.dirname(__file__), 'res/context-strict.json'), 'r') as file:
+        with open(os.path.join(os.path.dirname(__file__),
+                               'res/context-strict.json'),
+                  'r') as file:
             content_strict = file.read()
-        with open(os.path.join(os.path.dirname(__file__), 'res/refreshed.json'), 'r') as file:
+        with open(os.path.join(os.path.dirname(__file__),
+                               'res/refreshed.json'),
+                  'r') as file:
             refreshed = file.read()
-        self.data = self.deser.deserialize(bytes(content, encoding="utf-8"), 0, len(content))
-        self.audience_strict_data = self.deser.deserialize(bytes(content_strict, encoding="utf-8"), 0, len(content_strict))
-        self.refresh_data = self.deser.deserialize(bytes(refreshed, encoding="utf-8"), 0, len(refreshed))
+        self.data = self.deser.deserialize(
+            bytes(content, encoding="utf-8"),
+            0,
+            len(content))
+        self.audience_strict_data = self.deser.deserialize(
+            bytes(content_strict, encoding="utf-8"),
+            0,
+            len(content_strict))
+        self.refresh_data = self.deser.deserialize(
+            bytes(refreshed, encoding="utf-8"),
+            0,
+            len(refreshed))
         self.data_future_ready = Future()
         self.data_future_ready.set_result(self.data)
         self.data_future = Future()
@@ -148,9 +173,13 @@ class ContextTest(unittest.TestCase):
         self.audience_matcher = AudienceMatcher(self.audeser)
 
     def create_test_context(self, config, data_future):
-        return Context(self.clock, config, data_future,
-                       self.data_provider, self.event_handler, self.event_logger,
-                       self.variable_parser, self.audience_matcher)
+        return Context(self.clock,
+                       config, data_future,
+                       self.data_provider,
+                       self.event_handler,
+                       self.event_logger,
+                       self.variable_parser,
+                       self.audience_matcher)
 
     def test_constructor_sets_overrides(self):
         self.set_up()
@@ -330,6 +359,7 @@ class ContextTest(unittest.TestCase):
 
         def sl(event):
             future = Future()
+
             def set_result():
                 time.sleep(0.2)
                 future.set_result(None)
@@ -369,6 +399,7 @@ class ContextTest(unittest.TestCase):
 
         def sl(event):
             future = Future()
+
             def set_result():
                 time.sleep(0.2)
                 future.set_result(None)
@@ -491,7 +522,6 @@ class ContextTest(unittest.TestCase):
 
         context.close()
 
-
     def test_set_overrides_ready(self):
         self.set_up()
         config = ContextConfig()
@@ -515,7 +545,7 @@ class ContextTest(unittest.TestCase):
         self.assertIsNone(context.get_override("db_user_id3"))
         context.close()
 
-    def test_custom_assignment_does_not_override_full_on_or_not_eligible_assignments(self):
+    def test_assignment_does_not_override_full_on_or_not_assignments(self):
         self.set_up()
         config = ContextConfig()
         config.units = self.units
@@ -533,7 +563,9 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(2, context.get_pending_count())
         self.assertEqual(3, context.get_custom_assignment("exp_test_fullon"))
 
-        self.assertEqual(3, context.get_custom_assignment("exp_test_not_eligible"))
+        self.assertEqual(
+            3,
+            context.get_custom_assignment("exp_test_not_eligible"))
         self.assertIsNone(context.get_custom_assignment("db_user_id3"))
         context.close()
 
@@ -656,7 +688,8 @@ class ContextTest(unittest.TestCase):
 
         for key, value in self.variableExperiments.items():
             res = context.peek_variable_value(key, 17)
-            if value != "exp_test_not_eligible" and string_in_list(value, self.data.experiments):
+            if value != "exp_test_not_eligible" and \
+                    string_in_list(value, self.data.experiments):
                 self.assertEqual(self.expectedVariables[key], res)
             else:
                 self.assertEqual(17, res)
@@ -688,7 +721,8 @@ class ContextTest(unittest.TestCase):
 
         for key, value in self.variableExperiments.items():
             res = context.get_variable_value(key, 17)
-            if value != "exp_test_not_eligible" and string_in_list(value, self.data.experiments):
+            if value != "exp_test_not_eligible" and \
+                    string_in_list(value, self.data.experiments):
                 self.assertEqual(self.expectedVariables[key], res)
             else:
                 self.assertEqual(17, res)
@@ -775,7 +809,7 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(False, context.is_ready())
         self.assertEqual(True, context.is_closed())
 
-    def test_publish_resets_internal_queue_and_keeps_attribuetes_overrides_and_custom_assignments(self):
+    def test_publish_resets_queue_and_keeps_attr_over_and_assignments(self):
         self.set_up()
         config = ContextConfig()
         config.units = self.units
@@ -878,17 +912,28 @@ class ContextTest(unittest.TestCase):
         event.attributes.append(attribute)
 
         def pubka(pub):
-            self.assertEqual(event.goals[0].properties, pub.goals[0].properties)
-            self.assertEqual(event.goals[0].name, pub.goals[0].name)
-            self.assertEqual(event.attributes[0].name, pub.attributes[0].name)
-            self.assertEqual(event.attributes[0].value, pub.attributes[0].value)
-            self.assertEqual(event.exposures[0].name, pub.exposures[0].name)
-            self.assertEqual(event.exposures[0].variant, pub.exposures[0].variant)
-            self.assertEqual(event.units[0].uid, pub.units[0].uid)
-            self.assertEqual(len(event.exposures), len(pub.exposures))
-            self.assertEqual(len(event.goals), len(pub.goals))
-            self.assertEqual(len(event.units), len(pub.units))
-            self.assertEqual(len(event.attributes), len(pub.attributes))
+            self.assertEqual(event.goals[0].properties,
+                             pub.goals[0].properties)
+            self.assertEqual(event.goals[0].name,
+                             pub.goals[0].name)
+            self.assertEqual(event.attributes[0].name,
+                             pub.attributes[0].name)
+            self.assertEqual(event.attributes[0].value,
+                             pub.attributes[0].value)
+            self.assertEqual(event.exposures[0].name,
+                             pub.exposures[0].name)
+            self.assertEqual(event.exposures[0].variant,
+                             pub.exposures[0].variant)
+            self.assertEqual(event.units[0].uid,
+                             pub.units[0].uid)
+            self.assertEqual(len(event.exposures),
+                             len(pub.exposures))
+            self.assertEqual(len(event.goals),
+                             len(pub.goals))
+            self.assertEqual(len(event.units),
+                             len(pub.units))
+            self.assertEqual(len(event.attributes),
+                             len(pub.attributes))
             future = Future()
             future.set_result(None)
             return future
@@ -901,11 +946,14 @@ class ContextTest(unittest.TestCase):
 
     def test_flush_mapper(self):
         result = "pAE3a1i5Drs5mKRNq56adA"
-        force = result.encode('ascii', errors='ignore').decode()
+        force = result.encode('ascii', errors='ignore')\
+            .decode()
         self.assertEqual(result, force)
 
         result = "pAE3a1i5Drs5%KRNq56adA"
-        force = "pAE3a1i5Drs5%паKRNq56adA".encode('ascii', errors='ignore').decode()
+        force = "pAE3a1i5Drs5%паKRNq56adA"\
+            .encode('ascii', errors='ignore')\
+            .decode()
         self.assertEqual(result, force)
 
     def test_refresh_async(self):
@@ -966,11 +1014,61 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(2, context.get_pending_count())
         context.close()
 
+    def test_logger_called(self):
+        self.event_logger.logger_data = None
+        self.event_logger.logger_type = None
+        self.assertIsNone(self.event_logger.logger_data)
+        self.assertIsNone(self.event_logger.logger_type)
 
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(self.event_logger.logger_type, EventType.READY)
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(ContextData()))
+        self.assertEqual(True, context.is_ready())
 
+        res = context.get_treatment("exp_test_new")
+        self.assertEqual(0, res)
+        self.assertEqual(1, context.get_pending_count())
+        self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(Exposure()))
 
+        def sl():
+            future = Future()
 
+            def set_result():
+                future.set_result(self.data)
+            th = threading.Thread(target=set_result)
+            th.start()
+            return future
+        self.client.get_context_data = sl
+        self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(Exposure()))
 
-
-
-
+        context.refresh()
+        self.assertEqual(self.event_logger.logger_type, EventType.REFRESH)
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(ContextData()))
+        res = context.get_experiments()
+        self.assertEqual(self.event_logger.logger_type, EventType.REFRESH)
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(ContextData()))
+        self.assertEqual("exp_test_ab", res[0])
+        self.assertEqual("exp_test_fullon", res[3])
+        self.assertEqual(4, len(res))
+        res = context.get_treatment("exp_test_fullon")
+        self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(Exposure()))
+        self.assertEqual(2, res)
+        self.assertEqual(2, context.get_pending_count())
+        self.assertEqual(self.event_logger.logger_type, EventType.EXPOSURE)
+        self.assertEqual(type(self.event_logger.logger_data),
+                         type(Exposure()))
+        context.close()
+        self.assertEqual(self.event_logger.logger_type, EventType.CLOSE)
+        self.assertIsNone(self.event_logger.logger_data)

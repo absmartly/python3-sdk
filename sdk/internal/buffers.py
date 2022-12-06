@@ -26,6 +26,3 @@ def get_uint16(buf: bytearray, offset: int):
 
 def get_uint8(buf: bytearray, offset: int):
     return buf[offset] & 0xff
-
-
-

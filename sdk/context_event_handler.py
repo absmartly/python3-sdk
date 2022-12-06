@@ -9,5 +9,6 @@ from sdk.json.publish_event import PublishEvent
 class ContextEventHandler:
 
     @abstractmethod
-    def publish(self, context, event: PublishEvent) -> Future[Optional[ContextData]]:
+    def publish(self, context, event: PublishEvent) -> \
+            Future[Optional[ContextData]]:
         raise NotImplementedError

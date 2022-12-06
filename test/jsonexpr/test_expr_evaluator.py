@@ -9,7 +9,8 @@ class ExprEvalTest(unittest.TestCase):
 
     def test_evaluate_considers_list_as_and_combinator(self):
         evaluator = ExprEvaluator(self.json_expr.operators, {})
-        self.assertIsNotNone(evaluator.evaluate([{"value": True}, {"value": False}]))
+        self.assertIsNotNone(evaluator.evaluate(
+            [{"value": True}, {"value": False}]))
 
     def test_evaluate_returns_null_if_operator_not_found(self):
         evaluator = ExprEvaluator(self.json_expr.operators, {})
@@ -61,8 +62,10 @@ class ExprEvalTest(unittest.TestCase):
         self.assertEqual(1.0, evaluator.number_convert(1))
         self.assertEqual(2.0, evaluator.number_convert(2))
         self.assertEqual(3.0, evaluator.number_convert(3))
-        self.assertEqual(9007199254740991.0, evaluator.number_convert(9007199254740991))
-        self.assertEqual(-9007199254740991.0, evaluator.number_convert(-9007199254740991))
+        self.assertEqual(9007199254740991.0,
+                         evaluator.number_convert(9007199254740991))
+        self.assertEqual(-9007199254740991.0,
+                         evaluator.number_convert(-9007199254740991))
 
         self.assertEqual(-1.0, evaluator.number_convert("-1"))
         self.assertEqual(0.0, evaluator.number_convert("0"))
@@ -89,30 +92,40 @@ class ExprEvalTest(unittest.TestCase):
         self.assertEqual("1.5", evaluator.string_convert(1.5))
         self.assertEqual("2.0", evaluator.string_convert(2.0))
         self.assertEqual("3.0", evaluator.string_convert(3.0))
-        self.assertEqual("2147483647.0", evaluator.string_convert(2147483647.0))
-        self.assertEqual("-2147483647.0", evaluator.string_convert(-2147483647.0))
-        self.assertEqual("9007199254740991.0", evaluator.string_convert(9007199254740991.0))
-        self.assertEqual("-9007199254740991.0", evaluator.string_convert(-9007199254740991.0))
-        self.assertEqual("0.9007199254740991", evaluator.string_convert(0.9007199254740991))
-        self.assertEqual("-0.9007199254740991", evaluator.string_convert(-0.9007199254740991))
+        self.assertEqual("2147483647.0",
+                         evaluator.string_convert(2147483647.0))
+        self.assertEqual("-2147483647.0",
+                         evaluator.string_convert(-2147483647.0))
+        self.assertEqual("9007199254740991.0",
+                         evaluator.string_convert(9007199254740991.0))
+        self.assertEqual("-9007199254740991.0",
+                         evaluator.string_convert(-9007199254740991.0))
+        self.assertEqual("0.9007199254740991",
+                         evaluator.string_convert(0.9007199254740991))
+        self.assertEqual("-0.9007199254740991",
+                         evaluator.string_convert(-0.9007199254740991))
 
         self.assertEqual("-1", evaluator.string_convert(-1))
         self.assertEqual("0", evaluator.string_convert(0))
         self.assertEqual("1", evaluator.string_convert(1))
         self.assertEqual("2", evaluator.string_convert(2))
         self.assertEqual("3", evaluator.string_convert(3))
-        self.assertEqual("2147483647", evaluator.string_convert(2147483647))
-        self.assertEqual("-2147483647", evaluator.string_convert(-2147483647))
-        self.assertEqual("9007199254740991", evaluator.string_convert(9007199254740991))
-        self.assertEqual("-9007199254740991", evaluator.string_convert(-9007199254740991))
+        self.assertEqual("2147483647",
+                         evaluator.string_convert(2147483647))
+        self.assertEqual("-2147483647",
+                         evaluator.string_convert(-2147483647))
+        self.assertEqual("9007199254740991",
+                         evaluator.string_convert(9007199254740991))
+        self.assertEqual("-9007199254740991",
+                         evaluator.string_convert(-9007199254740991))
 
     def test_extract_var(self):
         vars = {
             "a": 1,
             "b": True,
             "c": False,
-            "d": [1,2,3],
-            "e": [1, {"z":2},3],
+            "d": [1, 2, 3],
+            "e": [1, {"z": 2}, 3],
             "f": {"y": {"x": 3, "0": 10}}
         }
 
@@ -160,7 +173,7 @@ class ExprEvalTest(unittest.TestCase):
 
     def test_compare_objects(self):
         evaluator = ExprEvaluator({}, {})
-        
+
         self.assertIsNone(evaluator.compare({}, 0))
         self.assertIsNone(evaluator.compare({}, 1))
         self.assertIsNone(evaluator.compare({}, True))
@@ -235,11 +248,13 @@ class ExprEvalTest(unittest.TestCase):
         self.assertEqual(-1, evaluator.compare(1, 2.0))
         self.assertEqual(-1, evaluator.compare(1, 3.0))
 
-        self.assertEqual(0, evaluator.compare(9007199254740991, 9007199254740991))
+        self.assertEqual(0, evaluator.compare(9007199254740991,
+                                              9007199254740991))
         self.assertEqual(-1, evaluator.compare(0, 9007199254740991))
         self.assertEqual(1, evaluator.compare(9007199254740991, 0))
 
-        self.assertEqual(0, evaluator.compare(9007199254740991.0, 9007199254740991.0))
+        self.assertEqual(0, evaluator.compare(9007199254740991.0,
+                                              9007199254740991.0))
         self.assertEqual(-1, evaluator.compare(0.0, 9007199254740991.0))
         self.assertEqual(1, evaluator.compare(9007199254740991.0, 0.0))
 

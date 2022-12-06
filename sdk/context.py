@@ -45,7 +45,6 @@ class Assignment:
         self.exposed = AtomicBool()
 
 
-
 class ExperimentVariables:
     data: Optional[Experiment]
     variables: Optional[list[dict]]
@@ -56,12 +55,17 @@ def experiment_matches(experiment: Experiment, assignment: Assignment):
            experiment.unitType == assignment.unit_type and \
            experiment.iteration == assignment.iteration and \
            experiment.fullOnVariant == assignment.full_on_variant and \
-           collections.Counter(experiment.trafficSplit) == collections.Counter(assignment.traffic_split)
+           collections.Counter(experiment.trafficSplit) == \
+           collections.Counter(assignment.traffic_split)
 
 
 class Context:
-    def __init__(self, clock: Clock, config: ContextConfig, data_future: Future, data_provider: ContextDataProvider,
-                 event_handler: ContextEventHandler, event_logger: ContextEventLogger, variable_parser: VariableParser,
+    def __init__(self,
+                 clock: Clock, config: ContextConfig,
+                 data_future: Future, data_provider: ContextDataProvider,
+                 event_handler: ContextEventHandler,
+                 event_logger: ContextEventLogger,
+                 variable_parser: VariableParser,
                  audience_matcher: AudienceMatcher):
         self.clock = clock
         self.publish_delay = config.publish_delay
@@ -125,10 +129,12 @@ class Context:
 
         if data_future.done():
             def when_finished(data: Future):
-                if data.done() and data.cancelled() is False and data.exception() is None:
+                if data.done() and data.cancelled() is False and \
+                        data.exception() is None:
                     self.set_data(data.result())
                     self.log_event(EventType.READY, data.result())
-                elif data.cancelled() is False and data.exception() is not None:
+                elif data.cancelled() is False and \
+                        data.exception() is not None:
                     self.set_data_failed(data.exception())
                     self.log_error(data.exception())
 
@@ -137,7 +143,8 @@ class Context:
             self.ready_future = Future()
 
             def when_finished(data: Future):
-                if data.done() and data.cancelled() is False and data.exception() is None:
+                if data.done() and data.cancelled() is False and \
+                        data.exception() is None:
                     self.set_data(data.result())
                     self.ready_future.set_result(None)
                     self.ready_future = None
@@ -145,7 +152,8 @@ class Context:
 
                     if self.get_pending_count() > 0:
                         self.set_timeout()
-                elif data.cancelled() is False and data.exception() is not None:
+                elif data.cancelled() is False and \
+                        data.exception() is not None:
                     self.set_data_failed(data.exception())
                     self.ready_future.set_result(None)
                     self.ready_future = None
@@ -203,7 +211,11 @@ class Context:
 
             for variant in experiment.variants:
                 if variant.config is not None and len(variant.config) > 0:
-                    variables = self.variable_parser.parse(self, experiment.name, variant.name, variant.config)
+                    variables = self.variable_parser.parse(
+                        self,
+                        experiment.name,
+                        variant.name,
+                        variant.config)
                     for key, value in variables.items():
                         index_variables[key] = experiment_variables
                     experiment_variables.variables.append(variables)
@@ -226,10 +238,14 @@ class Context:
         if self.refresh_interval > 0 and self.refresh_timer is None:
             def refresh():
                 self.refresh_async()
-                self.refresh_timer = threading.Timer(self.refresh_interval, refresh)
+                self.refresh_timer = threading.Timer(
+                    self.refresh_interval,
+                    refresh)
                 self.refresh_timer.start()
 
-            self.refresh_timer = threading.Timer(self.refresh_interval, refresh)
+            self.refresh_timer = threading.Timer(
+                self.refresh_interval,
+                refresh)
             self.refresh_timer.start()
 
     def set_timeout(self):
@@ -265,17 +281,21 @@ class Context:
             self.refresh_future = Future()
 
             def when_ready(data):
-                if data.done() and data.cancelled() is False and data.exception() is None:
+                if data.done() and data.cancelled() is False and \
+                        data.exception() is None:
                     self.set_data(data.result())
                     self.refreshing.set(False)
                     self.refresh_future.set_result(None)
                     self.log_event(EventType.REFRESH, data.result())
-                elif data.cancelled() is False and data.exception() is not None:
+                elif data.cancelled() is False and \
+                        data.exception() is not None:
                     self.refreshing.set(False)
                     self.refresh_future.set_exception(data.exception())
                     self.log_error(data.exception())
 
-            self.data_provider.get_context_data().add_done_callback(when_ready)
+            self.data_provider\
+                .get_context_data()\
+                .add_done_callback(when_ready)
 
         if self.refresh_future is not None:
             return self.refresh_future
@@ -337,7 +357,9 @@ class Context:
                     for key, value in self.units.items():
                         unit = Unit()
                         unit.type = key
-                        unit.uid = str(self.get_unit_hash(key, value), encoding='ascii')\
+                        unit.uid = str(
+                            self.get_unit_hash(key, value),
+                            encoding='ascii')\
                             .encode('ascii', errors='ignore')\
                             .decode()
                         event.units.append(unit)
@@ -351,14 +373,19 @@ class Context:
                     result = Future()
 
                     def run(data):
-                        if data.done() and data.cancelled() is False and data.exception() is None:
+                        if data.done() and \
+                                data.cancelled() is False and \
+                                data.exception() is None:
                             self.log_event(EventType.PUBLISH, event)
                             result.set_result(None)
-                        elif data.cancelled() is False and data.exception() is not None:
+                        elif data.cancelled() is False and \
+                                data.exception() is not None:
                             self.log_error(data.exception())
                             result.set_exception(data.exception())
 
-                    self.event_handler.publish(self, event).add_done_callback(run)
+                    self.event_handler\
+                        .publish(self, event)\
+                        .add_done_callback(run)
                     return result
         else:
             try:
@@ -474,7 +501,11 @@ class Context:
             unithash = base64.urlsafe_b64encode(dig).rstrip(b'=')
             return unithash
 
-        return Concurrency.compute_if_absent_rw(self.context_lock, self.hashed_units, unit_type, computer)
+        return Concurrency.compute_if_absent_rw(
+            self.context_lock,
+            self.hashed_units,
+            unit_type,
+            computer)
 
     def get_treatment(self, experiment_name: str):
         self.check_ready(True)
@@ -504,16 +535,20 @@ class Context:
             if experiment_name in self.assignment_cache:
                 assignment: Assignment = self.assignment_cache[experiment_name]
 
-                experiment: ExperimentVariables = self.get_experiment(experiment_name)
+                experiment: ExperimentVariables = \
+                    self.get_experiment(experiment_name)
 
                 if experiment_name in self.overrides:
                     override = self.overrides[experiment_name]
-                    if assignment.overridden and assignment.variant == override:
+                    if assignment.overridden and \
+                            assignment.variant == override:
                         return assignment
                 elif experiment is None:
                     if assignment.assigned is False:
                         return assignment
-                elif experiment_name not in self.cassignments or self.cassignments[experiment_name] == assignment.variant:
+                elif experiment_name not in self.cassignments or \
+                        self.cassignments[experiment_name] == \
+                        assignment.variant:
                     if experiment_matches(experiment.data, assignment):
                         return assignment
         finally:
@@ -521,7 +556,8 @@ class Context:
 
         try:
             self.context_lock.acquire_write()
-            experiment: ExperimentVariables = self.get_experiment(experiment_name)
+            experiment: ExperimentVariables = \
+                self.get_experiment(experiment_name)
             assignment = Assignment()
             assignment.name = experiment_name
             assignment.eligible = True
@@ -537,32 +573,41 @@ class Context:
                 if experiment is not None:
                     unit_type = experiment.data.unitType
 
-                    if experiment.data.audience is not None and len(experiment.data.audience) > 0:
+                    if experiment.data.audience is not None and \
+                            len(experiment.data.audience) > 0:
                         attrs = {}
                         for attr in self.attributes:
                             attrs[attr.name] = attr.value
-                        match = self.audience_matcher.evaluate(experiment.data.audience, attrs)
+                        match = self.audience_matcher.evaluate(
+                            experiment.data.audience,
+                            attrs)
                         if match is not None:
                             assignment.audience_mismatch = not match.result
-                    if experiment.data.audienceStrict and assignment.audience_mismatch:
+                    if experiment.data.audienceStrict and \
+                            assignment.audience_mismatch:
                         assignment.variant = 0
                     elif experiment.data.fullOnVariant == 0:
                         if experiment.data.unitType in self.units:
                             uid = self.units[experiment.data.unitType]
                             unit_hash = self.get_unit_hash(unit_type, uid)
-                            assigner: VariantAssigner = self.get_variant_assigner(unit_type, unit_hash)
-                            eligible = assigner.assign(experiment.data.trafficSplit,
-                                                       experiment.data.trafficSeedHi,
-                                                       experiment.data.trafficSeedLo) == 1
+                            assigner: VariantAssigner = \
+                                self.get_variant_assigner(unit_type,
+                                                          unit_hash)
+                            eligible = \
+                                assigner.assign(
+                                    experiment.data.trafficSplit,
+                                    experiment.data.trafficSeedHi,
+                                    experiment.data.trafficSeedLo) == 1
                             if eligible:
                                 if experiment_name in self.cassignments:
                                     custom = self.cassignments[experiment_name]
                                     assignment.variant = custom
                                     assignment.custom = True
                                 else:
-                                    assignment.variant = assigner.assign(experiment.data.split,
-                                                                         experiment.data.seedHi,
-                                                                         experiment.data.seedLo)
+                                    assignment.variant = \
+                                        assigner.assign(experiment.data.split,
+                                                        experiment.data.seedHi,
+                                                        experiment.data.seedLo)
                             else:
                                 assignment.eligible = False
                                 assignment.variant = 0
@@ -580,7 +625,8 @@ class Context:
                     assignment.traffic_split = experiment.data.trafficSplit
                     assignment.full_on_variant = experiment.data.fullOnVariant
 
-            if experiment is not None and (assignment.variant < len(experiment.data.variants)):
+            if experiment is not None and \
+                    (assignment.variant < len(experiment.data.variants)):
                 assignment.variables = experiment.variables[assignment.variant]
 
             self.assignment_cache[experiment_name] = assignment
@@ -607,7 +653,6 @@ class Context:
         try:
             self.data_lock.acquire_read()
             experiment_names = []
-            index = 0
             for experiment in self.data.experiments:
                 experiment_names.append(experiment.name)
 
@@ -627,10 +672,14 @@ class Context:
     def set_override(self, experiment_name: str, variant: int):
         self.check_not_closed()
 
-        return Concurrency.put_rw(self.context_lock, self.overrides, experiment_name, variant)
+        return Concurrency.put_rw(self.context_lock,
+                                  self.overrides,
+                                  experiment_name, variant)
 
     def get_override(self, experiment_name: str):
-        return Concurrency.get_rw(self.context_lock, self.overrides, experiment_name)
+        return Concurrency.get_rw(self.context_lock,
+                                  self.overrides,
+                                  experiment_name)
 
     def set_overrides(self, overrides: dict):
         for key, value in overrides.items():
@@ -639,10 +688,14 @@ class Context:
     def set_custom_assignment(self, experiment_name: str, variant: int):
         self.check_not_closed()
 
-        Concurrency.put_rw(self.context_lock, self.cassignments, experiment_name, variant)
+        Concurrency.put_rw(self.context_lock,
+                           self.cassignments,
+                           experiment_name, variant)
 
     def get_custom_assignment(self, experiment_name: str):
-        return Concurrency.get_rw(self.context_lock, self.cassignments, experiment_name)
+        return Concurrency.get_rw(self.context_lock,
+                                  self.cassignments,
+                                  experiment_name)
 
     def set_custom_assignments(self, custom_assignments: dict):
         for key, value in custom_assignments.items():
@@ -652,7 +705,9 @@ class Context:
         def apply(key: str):
             return VariantAssigner(bytearray(unit_hash))
 
-        return Concurrency.compute_if_absent_rw(self.context_lock, self.assigners, unit_type, apply)
+        return Concurrency.compute_if_absent_rw(self.context_lock,
+                                                self.assigners,
+                                                unit_type, apply)
 
     def get_variable_experiment(self, key: str):
         return Concurrency.get_rw(self.data_lock, self.index_variables, key)
@@ -672,12 +727,14 @@ class Context:
                     self.closing_future = Future()
 
                     def accept(res: Future):
-                        if res.done() and res.cancelled() is False and res.exception() is None:
+                        if res.done() and res.cancelled() is False \
+                                and res.exception() is None:
                             self.closed.set(True)
                             self.closing.set(False)
                             self.closing_future.set_result(None)
                             self.log_event(EventType.CLOSE, None)
-                        elif res.cancelled() is False and res.exception() is not None:
+                        elif res.cancelled() is False \
+                                and res.exception() is not None:
                             self.closed.set(True)
                             self.closing.set(False)
                             self.closing_future.exception(res.exception())

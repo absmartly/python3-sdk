@@ -1,8 +1,8 @@
 import sys as _sys
 
 if _sys.version_info > (3, 0):
-    def xrange( a, b, c):
-        return range( a, b, c)
+    def xrange(a, b, c):
+        return range(a, b, c)
 
     def xencode(x):
         if isinstance(x, bytes) or isinstance(x, bytearray):

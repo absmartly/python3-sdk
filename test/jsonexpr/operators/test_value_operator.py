@@ -10,8 +10,13 @@ class ValueOperatorTest(unittest.TestCase):
     evaluator = ExprEvaluator(JsonExpr().operators, {})
 
     def test_match(self):
-        self.assertEqual([None], self.operator.evaluate(self.evaluator, [None]))
-        self.assertEqual(True, self.operator.evaluate(self.evaluator, True))
-        self.assertEqual("ba", self.operator.evaluate(self.evaluator, "ba"))
-        self.assertEqual({}, self.operator.evaluate(self.evaluator, {}))
-        self.assertEqual([], self.operator.evaluate(self.evaluator, []))
+        self.assertEqual([None], self.operator.evaluate(
+                             self.evaluator, [None]))
+        self.assertEqual(True, self.operator.evaluate(
+                             self.evaluator, True))
+        self.assertEqual("ba", self.operator.evaluate(
+                             self.evaluator, "ba"))
+        self.assertEqual({}, self.operator.evaluate(
+                             self.evaluator, {}))
+        self.assertEqual([], self.operator.evaluate(
+                             self.evaluator, []))

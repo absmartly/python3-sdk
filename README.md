@@ -28,21 +28,21 @@ jsons~=1.6.3
 
 Once the SDK is installed, it can be initialized in your project.
 ```python
-def main():
-    client_config = ClientConfig()
-    client_config.endpoint = "https://sandbox.test.io/v1"
-    client_config.api_key = "test"
-    client_config.application = "www"
-    client_config.environment = "prod"
-
-    default_client_config = DefaultHTTPClientConfig()
-    default_client = DefaultHTTPClient(default_client_config)
-    sdk_config = ABSmartlyConfig()
-    sdk_config.client = Client(client_config, default_client)
-    sdk = ABSmartly(sdk_config)
-
-    context_config = ContextConfig()
-    ctx = sdk.create_context(context_config)
+    def main():
+        client_config = ClientConfig()
+        client_config.endpoint = "https://sandbox.test.io/v1"
+        client_config.api_key = "test"
+        client_config.application = "www"
+        client_config.environment = "prod"
+    
+        default_client_config = DefaultHTTPClientConfig()
+        default_client = DefaultHTTPClient(default_client_config)
+        sdk_config = ABSmartlyConfig()
+        sdk_config.client = Client(client_config, default_client)
+        sdk = ABSmartly(sdk_config)
+    
+        context_config = ContextConfig()
+        ctx = sdk.create_context(context_config)
 ```
 
 **SDK Options**
@@ -61,21 +61,21 @@ def main():
 The A/B Smartly SDK can be instantiated with an event logger used for all contexts.
 In addition, an event logger can be specified when creating a particular context, in the `ContextConfig`.
 ```python
-class EventType(Enum):
-    ERROR = "error"
-    READY = "ready"
-    REFRESH = "refresh"
-    PUBLISH = "publish"
-    EXPOSURE = "exposure"
-    GOAL = "goal"
-    CLOSE = "close"
-
-
-class ContextEventLogger:
-
-    @abstractmethod
-    def handle_event(self, event_type: EventType, data: object):
-        raise NotImplementedError
+    class EventType(Enum):
+        ERROR = "error"
+        READY = "ready"
+        REFRESH = "refresh"
+        PUBLISH = "publish"
+        EXPOSURE = "exposure"
+        GOAL = "goal"
+        CLOSE = "close"
+    
+    
+    class ContextEventLogger:
+    
+        @abstractmethod
+        def handle_event(self, event_type: EventType, data: object):
+            raise NotImplementedError
 ```
 The data parameter depends on the type of event.
 Currently, the SDK logs the following events:
@@ -130,6 +130,7 @@ Currently, the SDK logs the following events:
     ctx = sdk.create_context(context_config)
     ctx.wait_until_ready_async()
 ```
+
 **Refreshing the Context with Fresh Experiment Data**
 For long-running contexts, the context is usually created once when the application is first started.
 However, any experiments being tracked in your production code, but started after the context was created, will not be triggered.

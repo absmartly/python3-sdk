@@ -235,17 +235,17 @@ class Context:
             self.data_lock.release_write()
 
     def set_refresh_timer(self):
-        if self.refresh_interval > 0 and self.refresh_timer is None:
-            def refresh():
+        if self.refresh_interval > 0 and self.refresh_timer is None and not self.is_closing() and not self.is_closed():
+            def ref():
                 self.refresh_async()
                 self.refresh_timer = threading.Timer(
                     self.refresh_interval,
-                    refresh)
+                    ref)
                 self.refresh_timer.start()
 
             self.refresh_timer = threading.Timer(
                 self.refresh_interval,
-                refresh)
+                ref)
             self.refresh_timer.start()
 
     def set_timeout(self):

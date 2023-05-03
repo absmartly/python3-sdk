@@ -6,9 +6,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ABSmartly"
-version = "0.1.3"
+version = "0.1.4"
 description = "ABSmartly Python SDK lib"
-readme = "README.MD"
+readme = "README.md"
 authors = [{ name = "ABSmartly", email = "info@ABSmartly.com" }]
 license = { file = "LICENSE" }
 classifiers = [

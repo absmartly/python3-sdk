@@ -11,7 +11,7 @@ It provides both a blocking and an asynchronous interfaces.
 
 ### Install the SDK
  ```bash
- pip install absmartly==0.1.2
+ pip install absmartly==0.1.4
  ```
 
 ### Dependencies

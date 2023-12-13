@@ -15,6 +15,8 @@ jobs:
           python-version: '3.9'
 
       - name: Release
+        env:
+          PYPIRC_TOKEN: ${{secrets.PYPIRC_TOKEN}}
         run: |
           python -m venv venv_python3-sdk
           VIRTUAL_ENV_DISABLE_PROMPT=1 source venv_python3-sdk/bin/activate

@@ -1,0 +1,28 @@
+name: Publish Gem
+
+on:
+  push:
+    tags:
+      - v*
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Setup App
+        run: |
+          python -m venv venv_python3-sdk
+          VIRTUAL_ENV_DISABLE_PROMPT=1 source venv_python3-sdk/bin/activate
+          pip install .
+          pip install build
+          python -m build
+
+      - name: Run Tests
+        run: sh run.sh

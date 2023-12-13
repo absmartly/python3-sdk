@@ -16,6 +16,15 @@ jobs:
 
       - name: Release
         run: |
+          python -m venv venv_python3-sdk
+          VIRTUAL_ENV_DISABLE_PROMPT=1 source venv_python3-sdk/bin/activate
+          pip install .
+          pip install build
+          pip install pip-tools
+          python3 -m pip install --upgrade twine
+          sh run.sh
+          python -m build
+          pip-compile pyproject.toml --resolver=backtracking
           echo "${PYPIRC_TOKEN}" > pypirc
-          ls -lh
+          python -m twine upload --config-file pypirc  dist/*
           

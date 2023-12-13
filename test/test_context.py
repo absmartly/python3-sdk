@@ -758,6 +758,53 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(0, context.get_pending_count())
         context.close()
 
+    def test_get_custom_field_keys(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+        self.assertEqual(False, context.is_failed())
+
+        res = context.get_custom_field_keys()
+        self.assertEqual(["country", "languages", "overrides"], res)
+        context.close()
+
+    def test_get_custom_field_values(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+        self.assertEqual(False, context.is_failed())
+
+        self.assertEqual(None, context.get_custom_field_value("not_found", "not_found"))
+        self.assertEqual(None, context.get_custom_field_value("exp_test_ab", "not_found"))
+
+        self.assertEqual("US,PT,ES,DE,FR", context.get_custom_field_value("exp_test_ab", "country"))
+        self.assertEqual({'123': 1, '456': 0}, context.get_custom_field_value("exp_test_ab", "overrides"))
+        self.assertEqual("json", context.get_custom_field_type("exp_test_ab", "overrides"))
+
+        self.assertEqual(None, context.get_custom_field_value("exp_test_ab", "languages"))
+        self.assertEqual(None, context.get_custom_field_type("exp_test_ab", "languages"))
+
+        self.assertEqual(None, context.get_custom_field_value("exp_test_abc", "overrides"))
+        self.assertEqual(None, context.get_custom_field_type("exp_test_abc", "overrides"))
+
+        self.assertEqual("en-US,en-GB,pt-PT,pt-BR,es-ES,es-MX", context.get_custom_field_value("exp_test_abc", "languages"))
+        self.assertEqual("string", context.get_custom_field_type("exp_test_abc", "languages"))
+
+        self.assertEqual(None, context.get_custom_field_value("exp_test_no_custom_fields", "country"))
+        self.assertEqual(None, context.get_custom_field_type("exp_test_no_custom_fields", "country"))
+
+        self.assertEqual(None, context.get_custom_field_value("exp_test_no_custom_fields", "overrides"))
+        self.assertEqual(None, context.get_custom_field_type("exp_test_no_custom_fields", "overrides"))
+
+        self.assertEqual(None, context.get_custom_field_value("exp_test_no_custom_fields", "languages"))
+        self.assertEqual(None, context.get_custom_field_type("exp_test_no_custom_fields", "languages"))
+
+        context.close()
+
     def test_track(self):
         self.set_up()
         config = ContextConfig()

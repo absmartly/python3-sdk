@@ -1,5 +1,6 @@
 import typing
 
+from sdk.json.custom_field_value import CustomFieldValue
 from sdk.json.experiement_application import ExperimentApplication
 from sdk.json.experiment_variant import ExperimentVariant
 
@@ -20,3 +21,4 @@ class Experiment:
     variants: typing.Optional[list[ExperimentVariant]] = None
     audienceStrict: typing.Optional[bool] = False
     audience: typing.Optional[str] = None
+    customFieldValues: typing.Optional[list[CustomFieldValue]] = None

@@ -49,6 +49,9 @@ class ExperimentVariables:
     data: Optional[Experiment]
     variables: Optional[list[dict]]
 
+class ContextCustomFieldValue:
+    type: Optional[str]
+    value: Optional[any]
 
 def experiment_matches(experiment: Experiment, assignment: Assignment):
     return experiment.id == assignment.id and \
@@ -79,6 +82,7 @@ class Context:
         self.units = {}
         self.index = {}
         self.index_variables = {}
+        self.context_custom_fields = {}
         self.assignment_cache = {}
         self.cassignments = {}
         self.overrides = {}
@@ -203,6 +207,7 @@ class Context:
     def set_data(self, data: ContextData):
         index = {}
         index_variables = {}
+        context_custom_fields = {}
 
         for experiment in data.experiments:
             experiment_variables = ExperimentVariables()
@@ -223,11 +228,42 @@ class Context:
                     experiment_variables.variables.append({})
             index[experiment.name] = experiment_variables
 
+            if experiment.customFieldValues is not None:
+                experimentCustomFields = {}
+                for customFieldValue in experiment.customFieldValues:
+                    value = ContextCustomFieldValue()
+                    value.type = customFieldValue.type
+
+                    if customFieldValue.value is not None:
+                        customValue = customFieldValue.value
+
+                        if customFieldValue.type.startswith("json"):
+                            value.value = self.variable_parser.parse(
+                                self,
+                                experiment.name,
+                                customFieldValue.name,
+                                customValue)
+
+                        elif customFieldValue.type.startswith("boolean"):
+                            value.value = bool(customValue)
+
+                        elif customFieldValue.type.startswith("number"):
+                            value.value = int(customValue)
+
+
+                        else:
+                            value.value = customValue
+
+                    experimentCustomFields[customFieldValue.name] = value
+
+                context_custom_fields[experiment.name] = experimentCustomFields
+
         try:
             self.data_lock.acquire_write()
 
             self.index = index
             self.index_variables = index_variables
+            self.context_custom_fields = context_custom_fields
             self.data = data
 
             self.set_refresh_timer()
@@ -527,6 +563,61 @@ class Context:
             self.data_lock.release_write()
 
         return variable_keys
+
+    def get_custom_field_keys(self):
+        self.check_ready(True)
+
+        keys = []
+        try:
+            self.data_lock.acquire_read()
+
+            for experiment in self.data.experiments:
+                customFieldValues = experiment.customFieldValues
+
+                if customFieldValues is not None:
+                    for customFieldValue in customFieldValues:
+                        keys.append(customFieldValue.name)
+        finally:
+            self.data_lock.release_write()
+
+        keys = list(set(keys))
+        keys.sort()
+
+        return keys
+
+    def get_custom_field_value(self, experiment_name: str, key: str):
+        self.check_ready(True)
+
+        value: any = None
+        try:
+            self.data_lock.acquire_read()
+
+            if experiment_name in self.context_custom_fields:
+                custom_field_value = self.context_custom_fields[experiment_name]
+                if key in custom_field_value:
+                    value = custom_field_value[key].value
+
+        finally:
+            self.data_lock.release_read()
+
+        return value
+
+    def get_custom_field_type(self, experiment_name: str, key: str):
+        self.check_ready(True)
+
+        type = None
+        try:
+            self.data_lock.acquire_read()
+
+            if experiment_name in self.context_custom_fields:
+                customFieldValue = self.context_custom_fields[experiment_name]
+                if key in customFieldValue:
+                    type = customFieldValue[key].type
+
+        finally:
+            self.data_lock.release_read()
+
+        return type
 
     def get_assignment(self, experiment_name: str):
         try:

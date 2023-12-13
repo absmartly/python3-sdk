@@ -17,5 +17,5 @@ jobs:
       - name: Release
         run: |
           echo "${PYPIRC_TOKEN}" > ~/.pypirc
-          cat ~/.pypirc
+          ls -lh
           

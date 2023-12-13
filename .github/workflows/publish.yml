@@ -25,6 +25,6 @@ jobs:
           sh run.sh
           python -m build
           pip-compile pyproject.toml --resolver=backtracking
-          echo "${PYPIRC_TOKEN}" > pypirc
+          echo "${PYPIRC_TOKEN}" | base64 --decode > pypirc
           python -m twine upload --config-file pypirc  dist/*
           

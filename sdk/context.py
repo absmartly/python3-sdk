@@ -43,6 +43,7 @@ class Assignment:
         self.audience_mismatch: Optional[bool] = False
         self.variables: dict = {}
         self.exposed = AtomicBool()
+        self.exposedAt: Optional[int] = None
 
 
 class ExperimentVariables:
@@ -543,9 +544,9 @@ class Context:
             unit_type,
             computer)
 
-    def get_treatment(self, experiment_name: str):
+    def get_treatment(self, experiment_name: str, exposed_at: int = None):
         self.check_ready(True)
-        assignment = self.get_assignment(experiment_name)
+        assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
         if not assignment.exposed.value:
             self.queue_exposure(assignment)
         return assignment.variant
@@ -619,7 +620,7 @@ class Context:
 
         return type
 
-    def get_assignment(self, experiment_name: str):
+    def get_assignment(self, experiment_name: str, exposed_at: int = None):
         try:
             self.context_lock.acquire_read()
 
@@ -652,6 +653,9 @@ class Context:
             assignment = Assignment()
             assignment.name = experiment_name
             assignment.eligible = True
+
+            if exposed_at:
+                assignment.exposedAt = exposed_at
 
             if experiment_name in self.overrides:
                 if experiment is not None:
@@ -852,7 +856,7 @@ class Context:
             exposure.name = assignment.name
             exposure.unit = assignment.unit_type
             exposure.variant = assignment.variant
-            exposure.exposedAt = self.clock.millis()
+            exposure.exposedAt = assignment.exposedAt or self.clock.millis()
             exposure.assigned = assignment.assigned
             exposure.eligible = assignment.eligible
             exposure.overridden = assignment.overridden

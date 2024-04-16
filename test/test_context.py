@@ -1119,3 +1119,19 @@ class ContextTest(unittest.TestCase):
         context.close()
         self.assertEqual(self.event_logger.logger_type, EventType.CLOSE)
         self.assertIsNone(self.event_logger.logger_data)
+
+    def test_assignment_with_historical_exposed_at_timestamp(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+        self.assertEqual(False, context.is_failed())
+
+        res = context.get_treatment(
+            "exp_test_historical_timestamp",
+            exposed_at = 1713218400000
+        )
+        exposure = context.exposures[0]
+        self.assertEqual(1713218400000, exposure.exposedAt)
+        context.close()

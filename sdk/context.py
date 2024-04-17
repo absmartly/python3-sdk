@@ -79,6 +79,7 @@ class Context:
         self.data_provider = data_provider
         self.variable_parser = variable_parser
         self.audience_matcher = audience_matcher
+        self.historic = config.historic
 
         self.units = {}
         self.index = {}
@@ -285,16 +286,16 @@ class Context:
                 ref)
             self.refresh_timer.start()
 
-    def set_timeout(self, historic: bool = False):
+    def set_timeout(self):
         if self.is_ready():
             if self.timeout is None:
                 try:
                     self.timeout_lock.acquire_write()
 
-                    def flush(historic: bool = False):
-                        self.flush(historic=historic)
+                    def flush():
+                        self.flush()
 
-                    self.timeout = threading.Timer(self.publish_delay, flush, {"historic": historic})
+                    self.timeout = threading.Timer(self.publish_delay, flush)
                     self.timeout.start()
                 finally:
                     self.timeout_lock.release_write()
@@ -362,7 +363,7 @@ class Context:
     def get_pending_count(self):
         return self.pending_count.get()
 
-    def flush(self, historic: bool = False):
+    def flush(self):
         self.clear_timeout()
 
         if self.failed is False:
@@ -406,7 +407,7 @@ class Context:
                         event.attributes = None
                     event.exposures = exposures
                     event.goals = achievements
-                    if historic:
+                    if self.historic:
                         event.historic = True
 
                     result = Future()
@@ -445,12 +446,12 @@ class Context:
     def refresh(self):
         self.refresh_async().result()
 
-    def publish(self, historic: bool = False):
-        self.publish_async(historic=historic).result()
+    def publish(self):
+        self.publish_async().result()
 
-    def publish_async(self, historic: bool = False):
+    def publish_async(self):
         self.check_not_closed()
-        return self.flush(historic=historic)
+        return self.flush()
 
     def track(self, goal_name: str, properties: dict):
         self.check_not_closed()
@@ -815,7 +816,7 @@ class Context:
             return self.get_assignment(experiment.data.name)
         return None
 
-    def close_async(self, historic: bool = False):
+    def close_async(self):
         if not self.closed.value:
             if self.closing.compare_and_set(False, True):
                 self.clear_refresh_timer()
@@ -836,7 +837,7 @@ class Context:
                             self.closing.set(False)
                             self.closing_future.exception(res.exception())
 
-                    self.flush(historic=historic).add_done_callback(accept)
+                    self.flush().add_done_callback(accept)
                     return self.closing_future
 
                 else:

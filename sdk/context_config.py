@@ -11,4 +11,4 @@ class ContextConfig:
     overrides: {} = None
     attributes: {} = None
     units: {} = None
-    historic: bool = True
+    historic: bool = False

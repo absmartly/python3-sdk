@@ -407,8 +407,7 @@ class Context:
                         event.attributes = None
                     event.exposures = exposures
                     event.goals = achievements
-                    if self.historic:
-                        event.historic = True
+                    event.historic = self.historic
 
                     result = Future()
 

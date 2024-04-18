@@ -13,3 +13,4 @@ class PublishEvent:
     exposures: typing.Optional[list[Exposure]] = None
     goals: typing.Optional[list[GoalAchievement]] = None
     attributes: typing.Optional[list[Attribute]] = None
+    historic: typing.Optional[bool] = False

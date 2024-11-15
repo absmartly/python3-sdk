@@ -452,11 +452,11 @@ class Context:
         self.check_not_closed()
         return self.flush()
 
-    def track(self, goal_name: str, properties: dict):
+    def track(self, goal_name: str, properties: dict, achieved_at: int = None):
         self.check_not_closed()
 
         achievement = GoalAchievement()
-        achievement.achievedAt = self.clock.millis()
+        achievement.achievedAt = achieved_at or self.clock.millis()
         achievement.name = goal_name
         if properties is None:
             achievement.properties = None

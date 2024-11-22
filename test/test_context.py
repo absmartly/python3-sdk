@@ -1135,3 +1135,20 @@ class ContextTest(unittest.TestCase):
         exposure = context.exposures[0]
         self.assertEqual(1713218400000, exposure.exposedAt)
         context.close()
+
+    def test_achievement_with_historical_achieved_at_timestamp(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+        self.assertEqual(False, context.is_failed())
+
+        context.track(
+            "goal_test_historical_timestamp",
+            properties = {},
+            achieved_at = 1713218400000
+        )
+        achievement = context.achievements[0]
+        self.assertEqual(1713218400000, achievement.achievedAt)
+        context.close()

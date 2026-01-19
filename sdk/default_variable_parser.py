@@ -15,6 +15,10 @@ class DefaultVariableParser(VariableParser):
               variant_name: str,
               config: str) -> Optional[dict]:
         try:
-            return jsons.loads(config, dict)
-        except DeserializationError:
+            import json as stdlib_json
+            result = stdlib_json.loads(config)
+            if isinstance(result, dict):
+                return result
+            return result
+        except (DeserializationError, Exception):
             return None

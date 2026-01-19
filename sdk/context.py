@@ -41,9 +41,10 @@ class Assignment:
         self.full_on: Optional[bool] = False
         self.custom: Optional[bool] = False
         self.audience_mismatch: Optional[bool] = False
-        self.variables: dict = {}
+        self.variables: Optional[dict] = None
         self.exposed = AtomicBool()
         self.exposedAt: Optional[int] = None
+        self.attrs_seq: Optional[int] = 0
 
 
 class ExperimentVariables:
@@ -119,6 +120,7 @@ class Context:
         self.hashed_units = dict.fromkeys((range(len(self.units))))
 
         self.attributes: list[Attribute] = []
+        self._attrs_seq = 0
 
         if config.attributes is not None:
             self.set_attributes(config.attributes)
@@ -199,6 +201,7 @@ class Context:
         attribute.value = value
         attribute.setAt = self.clock.millis()
         Concurrency.add_rw(self.context_lock, self.attributes, attribute)
+        self._attrs_seq += 1
 
     def check_not_closed(self):
         if self.closed.value:
@@ -247,7 +250,7 @@ class Context:
                                 customValue)
 
                         elif customFieldValue.type.startswith("boolean"):
-                            value.value = bool(customValue)
+                            value.value = customValue == "true"
 
                         elif customFieldValue.type.startswith("number"):
                             value.value = int(customValue)
@@ -287,7 +290,7 @@ class Context:
             self.refresh_timer.start()
 
     def set_timeout(self):
-        if self.is_ready():
+        if self.is_ready() and self.publish_delay >= 0:
             if self.timeout is None:
                 try:
                     self.timeout_lock.acquire_write()
@@ -622,6 +625,21 @@ class Context:
 
         return type
 
+    def _audience_matches(self, experiment: Experiment, assignment: Assignment):
+        if experiment.audience is not None and len(experiment.audience) > 0:
+            if self._attrs_seq > (assignment.attrs_seq or 0):
+                attrs = {}
+                for attr in self.attributes:
+                    attrs[attr.name] = attr.value
+                match = self.audience_matcher.evaluate(experiment.audience, attrs)
+                new_audience_mismatch = not match.result if match is not None else False
+
+                if new_audience_mismatch != assignment.audience_mismatch:
+                    return False
+
+                assignment.attrs_seq = self._attrs_seq
+        return True
+
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
         try:
             self.context_lock.acquire_read()
@@ -644,7 +662,8 @@ class Context:
                         self.cassignments[experiment_name] == \
                         assignment.variant:
                     if experiment_matches(experiment.data, assignment):
-                        return assignment
+                        if self._audience_matches(experiment.data, assignment):
+                            return assignment
         finally:
             self.context_lock.release_read()
 
@@ -721,8 +740,10 @@ class Context:
                     assignment.iteration = experiment.data.iteration
                     assignment.traffic_split = experiment.data.trafficSplit
                     assignment.full_on_variant = experiment.data.fullOnVariant
+                    assignment.attrs_seq = self._attrs_seq
 
             if experiment is not None and \
+                    assignment.variant >= 0 and \
                     (assignment.variant < len(experiment.data.variants)):
                 assignment.variables = experiment.variables[assignment.variant]
 

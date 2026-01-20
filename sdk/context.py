@@ -636,8 +636,6 @@ class Context:
 
                 if new_audience_mismatch != assignment.audience_mismatch:
                     return False
-
-                assignment.attrs_seq = self._attrs_seq
         return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):

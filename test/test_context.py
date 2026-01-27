@@ -1152,3 +1152,364 @@ class ContextTest(unittest.TestCase):
         achievement = context.achievements[0]
         self.assertEqual(1713218400000, achievement.achievedAt)
         context.close()
+
+    def test_publish_timeout_triggers_auto_publish(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        config.publish_delay = 0.1
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        published = []
+
+        def mock_publish(event):
+            published.append(event)
+            future = Future()
+            future.set_result(None)
+            return future
+
+        self.client.publish = mock_publish
+
+        context.track("goal1", {"amount": 100})
+        self.assertEqual(1, context.get_pending_count())
+        self.assertIsNotNone(context.timeout)
+
+        time.sleep(0.3)
+
+        self.assertEqual(0, context.get_pending_count())
+        self.assertEqual(1, len(published))
+        context.close()
+
+    def test_publish_timeout_reset_on_manual_publish(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        config.publish_delay = 1
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        context.track("goal1", {"amount": 100})
+        self.assertIsNotNone(context.timeout)
+
+        context.publish()
+
+        self.assertIsNone(context.timeout)
+        self.assertEqual(0, context.get_pending_count())
+        context.close()
+
+    def test_publish_timeout_with_multiple_events(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        config.publish_delay = 0.2
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        published_events = []
+
+        def mock_publish(event):
+            published_events.append(event)
+            future = Future()
+            future.set_result(None)
+            return future
+
+        self.client.publish = mock_publish
+
+        context.track("goal1", {"amount": 100})
+        context.track("goal2", {"amount": 200})
+        context.track("goal3", {"amount": 300})
+        context.get_treatment("exp_test_ab")
+
+        self.assertEqual(4, context.get_pending_count())
+
+        time.sleep(0.4)
+
+        self.assertEqual(0, context.get_pending_count())
+        self.assertEqual(1, len(published_events))
+        event = published_events[0]
+        self.assertEqual(3, len(event.goals))
+        self.assertEqual(1, len(event.exposures))
+        context.close()
+
+    def test_publish_timeout_on_close(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        config.publish_delay = 10
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        published_events = []
+
+        def mock_publish(event):
+            published_events.append(event)
+            future = Future()
+            future.set_result(None)
+            return future
+
+        self.client.publish = mock_publish
+
+        context.track("goal1", {"amount": 100})
+        self.assertEqual(1, context.get_pending_count())
+
+        context.close()
+
+        self.assertEqual(0, context.get_pending_count())
+        self.assertEqual(1, len(published_events))
+        self.assertTrue(context.is_closed())
+
+    def test_publish_timeout_edge_cases(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        config.publish_delay = 0
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        context.track("goal1", {"amount": 100})
+        self.assertIsNotNone(context.timeout)
+
+        time.sleep(0.1)
+        self.assertEqual(0, context.get_pending_count())
+        context.close()
+
+    def test_set_attribute_single(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        context.set_attribute("user_age", 25)
+        context.set_attribute("user_country", "US")
+
+        self.assertEqual(2, len(context.attributes))
+
+        names = [attr.name for attr in context.attributes]
+        self.assertIn("user_age", names)
+        self.assertIn("user_country", names)
+        context.close()
+
+    def test_set_attributes_batch(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        attrs = {
+            "user_age": 25,
+            "user_country": "US",
+            "is_premium": True
+        }
+        context.set_attributes(attrs)
+
+        self.assertEqual(3, len(context.attributes))
+
+        names = [attr.name for attr in context.attributes]
+        for key in attrs.keys():
+            self.assertIn(key, names)
+        context.close()
+
+    def test_get_attribute(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        context.set_attribute("user_age", 25)
+
+        found = None
+        for attr in context.attributes:
+            if attr.name == "user_age":
+                found = attr
+                break
+
+        self.assertIsNotNone(found)
+        self.assertEqual(25, found.value)
+        context.close()
+
+    def test_attribute_persistence_across_publish(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        context.set_attribute("user_age", 25)
+        context.track("goal1", {"amount": 100})
+
+        context.publish()
+
+        self.assertEqual(1, len(context.attributes))
+        self.assertEqual("user_age", context.attributes[0].name)
+        self.assertEqual(25, context.attributes[0].value)
+        context.close()
+
+    def test_set_unit_valid(self):
+        self.set_up()
+        config = ContextConfig()
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        context.set_unit("device_id", "device-123")
+
+        self.assertIn("device_id", context.units)
+        self.assertEqual("device-123", context.units["device_id"])
+        context.close()
+
+    def test_set_unit_empty_throws(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        with self.assertRaises(ValueError) as ctx:
+            context.set_unit("device_id", "")
+
+        self.assertEqual("Unit UID must not be blank.", str(ctx.exception))
+        context.close()
+
+    def test_set_unit_duplicate_throws(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        with self.assertRaises(ValueError) as ctx:
+            context.set_unit("user_id", "different-value")
+
+        self.assertEqual("Unit already set.", str(ctx.exception))
+        context.close()
+
+    def test_set_units_batch(self):
+        self.set_up()
+        config = ContextConfig()
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        units = {
+            "device_id": "device-123",
+            "session_id": "session-456"
+        }
+        context.set_units(units)
+
+        self.assertIn("device_id", context.units)
+        self.assertIn("session_id", context.units)
+        self.assertEqual("device-123", context.units["device_id"])
+        self.assertEqual("session-456", context.units["session_id"])
+        context.close()
+
+    def test_recovery_from_failed_publish(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        publish_calls = []
+
+        def failing_publish(event):
+            publish_calls.append(event)
+            future = Future()
+            future.set_exception(RuntimeError("Publish failed"))
+            return future
+
+        self.client.publish = failing_publish
+
+        context.track("goal1", {"amount": 100})
+
+        try:
+            context.publish()
+        except RuntimeError:
+            pass
+
+        self.assertFalse(context.is_closed())
+        self.assertFalse(context.is_failed())
+        context.close()
+
+    def test_recovery_from_failed_refresh(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        def failing_get_context_data():
+            future = Future()
+            future.set_exception(RuntimeError("Refresh failed"))
+            return future
+
+        self.client.get_context_data = failing_get_context_data
+
+        try:
+            context.refresh()
+        except RuntimeError:
+            pass
+
+        self.assertTrue(context.is_ready())
+        self.assertFalse(context.is_closed())
+        context.close()
+
+    def test_graceful_degradation_no_network(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        original_data = context.get_data()
+
+        def network_failure():
+            future = Future()
+            future.set_exception(ConnectionError("No network"))
+            return future
+
+        self.client.get_context_data = network_failure
+
+        try:
+            context.refresh()
+        except Exception:
+            pass
+
+        current_data = context.get_data()
+        self.assertEqual(original_data, current_data)
+
+        treatment = context.get_treatment("exp_test_ab")
+        self.assertEqual(self.expectedVariants["exp_test_ab"], treatment)
+        context.close()
+
+    def test_error_callback_integration(self):
+        self.set_up()
+        error_events = []
+
+        class ErrorTrackingLogger(ContextEventLogger):
+            def handle_event(self, event_type: EventType, data: object):
+                if event_type == EventType.ERROR:
+                    error_events.append(data)
+
+        config = ContextConfig()
+        config.units = self.units
+        self.event_logger = ErrorTrackingLogger()
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertEqual(True, context.is_ready())
+
+        def failing_get_context_data():
+            future = Future()
+            future.set_exception(RuntimeError("Test error"))
+            return future
+
+        self.client.get_context_data = failing_get_context_data
+
+        try:
+            context.refresh()
+        except RuntimeError:
+            pass
+
+        self.assertEqual(1, len(error_events))
+        self.assertIsInstance(error_events[0], RuntimeError)
+        context.close()

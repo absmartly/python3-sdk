@@ -125,22 +125,11 @@ The A/B Smartly SDK can be instantiated with an event logger used for all contex
 In addition, an event logger can be specified when creating a particular context, in the `ContextConfig`.
 
 ```python
-from absmartly import ABsmartly
-from sdk.context_event_logger import ContextEventLogger
-from enum import Enum
-
-class EventType(Enum):
-    ERROR = "error"
-    READY = "ready"
-    REFRESH = "refresh"
-    PUBLISH = "publish"
-    EXPOSURE = "exposure"
-    GOAL = "goal"
-    CLOSE = "close"
+from absmartly import ABsmartly, ContextEventLogger, EventType
 
 
 class CustomEventLogger(ContextEventLogger):
-    def handle_event(self, context, event_type: EventType, data):
+    def handle_event(self, event_type: EventType, data):
         if event_type == EventType.ERROR:
             print(f"Error: {data}")
         elif event_type == EventType.READY:
@@ -183,6 +172,7 @@ The data parameter depends on the type of event.
 | `Exposure` | `Context.get_treatment()` method succeeds on first exposure| `Exposure` enqueued for publishing          |
 | `Goal`     | `Context.track()` method succeeds                          | `GoalAchievement` enqueued for publishing   |
 | `Close`    | `Context.close()` method succeeds the first time           | `None`                                      |
+| `Finalize` | `Context.close()` method succeeds                          | `None`                                      |
 
 
 ## Create a New Context Request
@@ -323,7 +313,7 @@ else:
 #### Peeking at Variables
 
 ```python
-variable = context.peek_variable("my_variable")
+variable = context.peek_variable_value("my_variable", None)
 ```
 
 ### Overriding Treatment Variants
@@ -367,7 +357,7 @@ def index():
     context_config = ContextConfig()
     context_config.units = {
         "session_id": session.get('session_id'),
-        "user_id": session.get('user_id') if 'user_id' in session else None
+        "user_id": session.get('user_id')
     }
 
     ctx = sdk.create_context(context_config)
@@ -420,6 +410,7 @@ def my_view(request):
 ```python
 from fastapi import FastAPI, Request
 from absmartly import ABsmartly, ContextConfig
+import uuid
 
 app = FastAPI()
 
@@ -433,9 +424,11 @@ sdk = ABsmartly.create(
 
 @app.get("/")
 async def root(request: Request):
+    # Note: In production, use session middleware to manage session_id
+    # Example: Starlette SessionMiddleware with a cookie-based session
     context_config = ContextConfig()
     context_config.units = {
-        "session_id": request.session.get("session_id"),
+        "session_id": str(uuid.uuid4()),
     }
 
     ctx = sdk.create_context(context_config)

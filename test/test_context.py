@@ -376,7 +376,7 @@ class ContextTest(unittest.TestCase):
             context.set_attribute("attr1", "value1")
         except RuntimeError as e:
             self.assertIsNotNone(e)
-            self.assertEqual("ABSmartly Context is closing", str(e))
+            self.assertEqual("ABsmartly Context is closing", str(e))
         time.sleep(0.3)
         context.close()
 
@@ -416,7 +416,7 @@ class ContextTest(unittest.TestCase):
             context.set_attribute("attr1", "value1")
         except RuntimeError as e:
             self.assertIsNotNone(e)
-            self.assertEqual("ABSmartly Context is closed", str(e))
+            self.assertEqual("ABsmartly Context is closed", str(e))
         time.sleep(0.3)
         context.close()
 

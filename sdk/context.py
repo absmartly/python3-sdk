@@ -87,7 +87,7 @@ class Context:
         self.index_variables = {}
         self.context_custom_fields = {}
         self.assignment_cache = {}
-        self.cassignments = {}
+        self.custom_assignments = {}
         self.overrides = {}
 
         self.exposures = []
@@ -130,10 +130,11 @@ class Context:
         else:
             self.overrides = {}
 
-        if config.cassigmnents is not None:
-            self.cassignments = dict(config.cassigmnents)
+        cassignments = config.custom_assignments or config.cassigmnents
+        if cassignments is not None:
+            self.custom_assignments = dict(cassignments)
         else:
-            self.cassignments = {}
+            self.custom_assignments = {}
 
         if data_future.done():
             def when_finished(data: Future):
@@ -145,6 +146,9 @@ class Context:
                         data.exception() is not None:
                     self.set_data_failed(data.exception())
                     self.log_error(data.exception())
+                    raise RuntimeError(
+                        "Failed to initialize ABSmartly Context"
+                    ) from data.exception()
 
             data_future.add_done_callback(when_finished)
         else:
@@ -168,6 +172,20 @@ class Context:
                     self.log_error(data.exception())
 
             data_future.add_done_callback(when_finished)
+
+    def _handle_future_callback(self, future: Future, on_success, on_error):
+        """Helper method to reduce duplication in future callback handling."""
+        if future.done() and not future.cancelled() and future.exception() is None:
+            on_success(future.result())
+        elif not future.cancelled() and future.exception() is not None:
+            on_error(future.exception())
+
+    def _build_audience_attributes(self):
+        """Helper method to build audience attributes dictionary."""
+        audience_attributes = {}
+        for key in self.attributes:
+            audience_attributes[key.name] = key.value
+        return audience_attributes
 
     def set_units(self, units: dict):
         for key, value in units.items():
@@ -205,9 +223,9 @@ class Context:
 
     def check_not_closed(self):
         if self.closed.value:
-            raise RuntimeError('ABSmartly Context is closed')
+            raise RuntimeError('ABsmartly Context is closed')
         elif self.closing.value:
-            raise RuntimeError('ABSmartly Context is closing')
+            raise RuntimeError('ABsmartly Context is closing')
 
     def set_data(self, data: ContextData):
         index = {}
@@ -221,14 +239,40 @@ class Context:
 
             for variant in experiment.variants:
                 if variant.config is not None and len(variant.config) > 0:
-                    variables = self.variable_parser.parse(
-                        self,
-                        experiment.name,
-                        variant.name,
-                        variant.config)
-                    for key, value in variables.items():
-                        index_variables[key] = experiment_variables
-                    experiment_variables.variables.append(variables)
+                    try:
+                        variables = self.variable_parser.parse(
+                            self,
+                            experiment.name,
+                            variant.name,
+                            variant.config)
+
+                        if variables is None:
+                            if self.event_logger:
+                                try:
+                                    from sdk.json.event_type import EventType
+                                    self.event_logger.handle_event(
+                                        EventType.ERROR,
+                                        f"Failed to parse variant config for {experiment.name}/{variant.name}"
+                                    )
+                                except Exception:
+                                    pass
+                            experiment_variables.variables.append({})
+                            continue
+
+                        for key, value in variables.items():
+                            index_variables[key] = experiment_variables
+                        experiment_variables.variables.append(variables)
+                    except Exception as e:
+                        if self.event_logger:
+                            try:
+                                from sdk.json.event_type import EventType
+                                self.event_logger.handle_event(
+                                    EventType.ERROR,
+                                    f"Error parsing variant {experiment.name}/{variant.name}: {e}"
+                                )
+                            except Exception:
+                                pass
+                        experiment_variables.variables.append({})
                 else:
                     experiment_variables.variables.append({})
             index[experiment.name] = experiment_variables
@@ -242,22 +286,58 @@ class Context:
                     if customFieldValue.value is not None:
                         customValue = customFieldValue.value
 
-                        if customFieldValue.type.startswith("json"):
-                            value.value = self.variable_parser.parse(
-                                self,
-                                experiment.name,
-                                customFieldValue.name,
-                                customValue)
+                        try:
+                            if customFieldValue.type.startswith("json"):
+                                parsed = self.variable_parser.parse(
+                                    self,
+                                    experiment.name,
+                                    customFieldValue.name,
+                                    customValue)
+                                if parsed is not None:
+                                    value.value = parsed
+                                else:
+                                    if self.event_logger:
+                                        try:
+                                            from sdk.json.event_type import EventType
+                                            self.event_logger.handle_event(
+                                                EventType.ERROR,
+                                                f"Failed to parse JSON custom field {customFieldValue.name}"
+                                            )
+                                        except Exception:
+                                            pass
+                                    continue
 
-                        elif customFieldValue.type.startswith("boolean"):
-                            value.value = customValue == "true"
+                            elif customFieldValue.type.startswith("boolean"):
+                                value.value = customValue == "true"
 
-                        elif customFieldValue.type.startswith("number"):
-                            value.value = int(customValue)
+                            elif customFieldValue.type.startswith("number"):
+                                try:
+                                    value.value = int(customValue)
+                                except (ValueError, TypeError) as e:
+                                    if self.event_logger:
+                                        try:
+                                            from sdk.json.event_type import EventType
+                                            self.event_logger.handle_event(
+                                                EventType.ERROR,
+                                                f"Failed to parse number custom field {customFieldValue.name}: {e}"
+                                            )
+                                        except Exception:
+                                            pass
+                                    continue
 
-
-                        else:
-                            value.value = customValue
+                            else:
+                                value.value = customValue
+                        except Exception as e:
+                            if self.event_logger:
+                                try:
+                                    from sdk.json.event_type import EventType
+                                    self.event_logger.handle_event(
+                                        EventType.ERROR,
+                                        f"Error parsing custom field {customFieldValue.name}: {e}"
+                                    )
+                                except Exception:
+                                    pass
+                            continue
 
                     experimentCustomFields[customFieldValue.name] = value
 
@@ -278,11 +358,13 @@ class Context:
     def set_refresh_timer(self):
         if self.refresh_interval > 0 and self.refresh_timer is None and not self.is_closing() and not self.is_closed():
             def ref():
-                self.refresh_async()
-                self.refresh_timer = threading.Timer(
-                    self.refresh_interval,
-                    ref)
-                self.refresh_timer.start()
+                if not self.is_closed() and not self.is_closing():
+                    self.refresh_async()
+                    if not self.is_closed() and not self.is_closing():
+                        self.refresh_timer = threading.Timer(
+                            self.refresh_interval,
+                            ref)
+                        self.refresh_timer.start()
 
             self.refresh_timer = threading.Timer(
                 self.refresh_interval,
@@ -375,20 +457,17 @@ class Context:
                 achievements = None
                 event_count = 0
                 try:
-                    self.event_lock.acquire_write()
+                    self.event_lock.acquire_read()
                     event_count = self.pending_count.get()
 
                     if event_count > 0:
                         if len(self.exposures) > 0:
                             exposures = list(self.exposures)
-                            self.exposures.clear()
 
                         if len(self.achievements) > 0:
                             achievements = list(self.achievements)
-                            self.achievements.clear()
-                        self.pending_count.set(0)
                 finally:
-                    self.event_lock.release_write()
+                    self.event_lock.release_read()
 
                 if event_count > 0:
                     event = PublishEvent()
@@ -418,6 +497,13 @@ class Context:
                         if data.done() and \
                                 data.cancelled() is False and \
                                 data.exception() is None:
+                            try:
+                                self.event_lock.acquire_write()
+                                self.exposures.clear()
+                                self.achievements.clear()
+                                self.pending_count.set(0)
+                            finally:
+                                self.event_lock.release_write()
                             self.log_event(EventType.PUBLISH, event)
                             result.set_result(None)
                         elif data.cancelled() is False and \
@@ -443,7 +529,10 @@ class Context:
         return result
 
     def close(self):
-        self.close_async().result()
+        try:
+            self.close_async().result()
+        except Exception as e:
+            self.log_error(e)
 
     def refresh(self):
         self.refresh_async().result()
@@ -566,7 +655,7 @@ class Context:
                 expr_var: ExperimentVariables = value
                 variable_keys[key] = expr_var.data.name
         finally:
-            self.data_lock.release_write()
+            self.data_lock.release_read()
 
         return variable_keys
 
@@ -584,53 +673,56 @@ class Context:
                     for customFieldValue in customFieldValues:
                         keys.append(customFieldValue.name)
         finally:
-            self.data_lock.release_write()
+            self.data_lock.release_read()
 
         keys = list(set(keys))
         keys.sort()
 
         return keys
 
-    def get_custom_field_value(self, experiment_name: str, key: str):
+    def _get_custom_field(self, experiment_name: str, key: str, field_attr: str):
+        """Helper method to get custom field value or type."""
+        import copy
         self.check_ready(True)
 
-        value: any = None
+        result = None
         try:
             self.data_lock.acquire_read()
 
             if experiment_name in self.context_custom_fields:
                 custom_field_value = self.context_custom_fields[experiment_name]
                 if key in custom_field_value:
-                    value = custom_field_value[key].value
+                    if field_attr == 'value':
+                        original_value = custom_field_value[key].value
+                        if isinstance(original_value, (dict, list)):
+                            result = copy.deepcopy(original_value)
+                        else:
+                            result = original_value
+                    else:
+                        result = getattr(custom_field_value[key], field_attr)
 
         finally:
             self.data_lock.release_read()
 
-        return value
+        return result
+
+    def get_custom_field_value(self, experiment_name: str, key: str):
+        return self._get_custom_field(experiment_name, key, 'value')
 
     def get_custom_field_type(self, experiment_name: str, key: str):
-        self.check_ready(True)
+        return self._get_custom_field(experiment_name, key, 'type')
 
-        type = None
-        try:
-            self.data_lock.acquire_read()
-
-            if experiment_name in self.context_custom_fields:
-                customFieldValue = self.context_custom_fields[experiment_name]
-                if key in customFieldValue:
-                    type = customFieldValue[key].type
-
-        finally:
-            self.data_lock.release_read()
-
-        return type
+    def _build_audience_attributes(self):
+        """Helper method to build audience attributes map from current attributes."""
+        attrs = {}
+        for attr in self.attributes:
+            attrs[attr.name] = attr.value
+        return attrs
 
     def _audience_matches(self, experiment: Experiment, assignment: Assignment):
         if experiment.audience is not None and len(experiment.audience) > 0:
             if self._attrs_seq > (assignment.attrs_seq or 0):
-                attrs = {}
-                for attr in self.attributes:
-                    attrs[attr.name] = attr.value
+                attrs = self._build_audience_attributes()
                 match = self.audience_matcher.evaluate(experiment.audience, attrs)
                 new_audience_mismatch = not match.result if match is not None else False
 
@@ -656,8 +748,8 @@ class Context:
                 elif experiment is None:
                     if assignment.assigned is False:
                         return assignment
-                elif experiment_name not in self.cassignments or \
-                        self.cassignments[experiment_name] == \
+                elif experiment_name not in self.custom_assignments or \
+                        self.custom_assignments[experiment_name] == \
                         assignment.variant:
                     if experiment_matches(experiment.data, assignment):
                         if self._audience_matches(experiment.data, assignment):
@@ -689,9 +781,7 @@ class Context:
 
                     if experiment.data.audience is not None and \
                             len(experiment.data.audience) > 0:
-                        attrs = {}
-                        for attr in self.attributes:
-                            attrs[attr.name] = attr.value
+                        attrs = self._build_audience_attributes()
                         match = self.audience_matcher.evaluate(
                             experiment.data.audience,
                             attrs)
@@ -713,8 +803,8 @@ class Context:
                                     experiment.data.trafficSeedHi,
                                     experiment.data.trafficSeedLo) == 1
                             if eligible:
-                                if experiment_name in self.cassignments:
-                                    custom = self.cassignments[experiment_name]
+                                if experiment_name in self.custom_assignments:
+                                    custom = self.custom_assignments[experiment_name]
                                     assignment.variant = custom
                                     assignment.custom = True
                                 else:
@@ -752,7 +842,7 @@ class Context:
 
     def check_ready(self, expect_not_closed: bool):
         if not self.is_ready():
-            raise RuntimeError('ABSmartly Context is not yet ready')
+            raise RuntimeError('ABsmartly Context is not yet ready')
         elif expect_not_closed:
             self.check_not_closed()
 
@@ -805,12 +895,12 @@ class Context:
         self.check_not_closed()
 
         Concurrency.put_rw(self.context_lock,
-                           self.cassignments,
+                           self.custom_assignments,
                            experiment_name, variant)
 
     def get_custom_assignment(self, experiment_name: str):
         return Concurrency.get_rw(self.context_lock,
-                                  self.cassignments,
+                                  self.custom_assignments,
                                   experiment_name)
 
     def set_custom_assignments(self, custom_assignments: dict):
@@ -853,7 +943,7 @@ class Context:
                                 and res.exception() is not None:
                             self.closed.set(True)
                             self.closing.set(False)
-                            self.closing_future.exception(res.exception())
+                            self.closing_future.set_exception(res.exception())
 
                     self.flush().add_done_callback(accept)
                     return self.closing_future

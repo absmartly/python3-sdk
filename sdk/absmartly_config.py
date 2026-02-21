@@ -8,10 +8,13 @@ from sdk.context_event_logger import ContextEventLogger
 from sdk.variable_parser import VariableParser
 
 
-class ABSmartlyConfig:
+class ABsmartlyConfig:
     context_data_provider: Optional[ContextDataProvider] = None
     context_event_handler: Optional[ContextEventHandler] = None
     context_event_logger: Optional[ContextEventLogger] = None
     audience_deserializer: Optional[AudienceDeserializer] = None
     client: Optional[Client] = None
     variable_parser: Optional[VariableParser] = None
+
+
+ABSmartlyConfig = ABsmartlyConfig

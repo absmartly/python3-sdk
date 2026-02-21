@@ -1,21 +1,70 @@
 from concurrent.futures import Future
 from typing import Optional
 
-from sdk.absmartly_config import ABSmartlyConfig
+from sdk.absmartly_config import ABsmartlyConfig
 from sdk.audience_matcher import AudienceMatcher
+from sdk.client import Client
+from sdk.client_config import ClientConfig
 from sdk.context import Context
 from sdk.context_config import ContextConfig
+from sdk.context_event_logger import ContextEventLogger
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 from sdk.default_context_data_provider import DefaultContextDataProvider
 from sdk.default_context_event_handler import DefaultContextEventHandler
+from sdk.default_http_client import DefaultHTTPClient
+from sdk.default_http_client_config import DefaultHTTPClientConfig
 from sdk.default_variable_parser import DefaultVariableParser
 from sdk.json.context_data import ContextData
 from sdk.time.system_clock_utc import SystemClockUTC
 
 
-class ABSmartly:
+class ABsmartly:
 
-    def __init__(self, config: ABSmartlyConfig):
+    @classmethod
+    def create(
+        cls,
+        endpoint: str,
+        api_key: str,
+        application: str,
+        environment: str,
+        timeout: int = 3,
+        retries: int = 5,
+        event_logger: Optional[ContextEventLogger] = None
+    ) -> "ABsmartly":
+        if not endpoint:
+            raise ValueError("endpoint is required and cannot be empty")
+        if not api_key:
+            raise ValueError("api_key is required and cannot be empty")
+        if not application:
+            raise ValueError("application is required and cannot be empty")
+        if not environment:
+            raise ValueError("environment is required and cannot be empty")
+        if timeout <= 0:
+            raise ValueError("timeout must be greater than 0")
+        if retries < 0:
+            raise ValueError("retries must be 0 or greater")
+
+        client_config = ClientConfig()
+        client_config.endpoint = endpoint
+        client_config.api_key = api_key
+        client_config.application = application
+        client_config.environment = environment
+
+        http_client_config = DefaultHTTPClientConfig()
+        http_client_config.connection_timeout = timeout
+        http_client_config.max_retries = retries
+
+        http_client = DefaultHTTPClient(http_client_config)
+        client = Client(client_config, http_client)
+
+        sdk_config = ABsmartlyConfig()
+        sdk_config.client = client
+        if event_logger is not None:
+            sdk_config.context_event_logger = event_logger
+
+        return cls(sdk_config)
+
+    def __init__(self, config: ABsmartlyConfig):
         self.context_data_provider = config.context_data_provider
         self.context_event_handler = config.context_event_handler
         self.context_event_logger = config.context_event_logger
@@ -65,3 +114,6 @@ class ABSmartly:
                        self.context_event_logger,
                        self.variable_parser,
                        AudienceMatcher(self.audience_deserializer))
+
+
+ABSmartly = ABsmartly

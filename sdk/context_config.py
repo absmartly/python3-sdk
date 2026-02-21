@@ -7,6 +7,7 @@ class ContextConfig:
     refresh_interval: int = 50
     publish_delay: int = 50  # seconds
     event_logger: Optional[ContextEventLogger] = None
+    custom_assignments: {} = None
     cassigmnents: {} = None
     overrides: {} = None
     attributes: {} = None

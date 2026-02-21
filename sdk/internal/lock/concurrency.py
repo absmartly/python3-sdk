@@ -36,13 +36,13 @@ class Concurrency:
     @staticmethod
     def get_rw(lock: ReadWriteLock, mp: dict, key: object):
         try:
-            lock.acquire_write()
+            lock.acquire_read()
             if key not in mp:
                 return None
             else:
                 return mp[key]
         finally:
-            lock.release_write()
+            lock.release_read()
 
     @staticmethod
     def put_rw(lock: ReadWriteLock, mp: dict, key: object, value: object):

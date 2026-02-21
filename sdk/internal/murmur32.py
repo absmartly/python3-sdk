@@ -1,18 +1,8 @@
-import sys as _sys
-
-if _sys.version_info > (3, 0):
-    def xrange(a, b, c):
-        return range(a, b, c)
-
-    def xencode(x):
-        if isinstance(x, bytes) or isinstance(x, bytearray):
-            return x
-        else:
-            return x.encode()
-else:
-    def xencode(x):
+def xencode(x):
+    if isinstance(x, bytes) or isinstance(x, bytearray):
         return x
-del _sys
+    else:
+        return x.encode()
 
 
 def digest(key, seed):
@@ -26,7 +16,7 @@ def digest(key, seed):
     c1 = 0xcc9e2d51
     c2 = 0x1b873593
 
-    for block_start in xrange(0, nblocks * 4, 4):
+    for block_start in range(0, nblocks * 4, 4):
         k1 = key[block_start + 3] << 24 | \
              key[block_start + 2] << 16 | \
              key[block_start + 1] << 8 | \

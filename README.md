@@ -1,18 +1,18 @@
-# A/B Smartly Python SDK
+# ABsmartly Python SDK
 
 A/B Smartly - Python SDK
 
 ## Compatibility
 
-The A/B Smartly Python SDK is compatible with Python 3.
+The ABsmartly Python SDK is compatible with Python 3.
 It provides both a blocking and an asynchronous interface.
 
-## Getting Started
+## Installation
 
-### Install the SDK
+Install the SDK using pip:
 
 ```bash
-pip install absmartly==0.2.3
+pip install absmartly
 ```
 
 ### Dependencies
@@ -24,17 +24,20 @@ urllib3~=1.26.12
 jsons~=1.6.3
 ```
 
-## Import and Initialize the SDK
+## Getting Started
 
-Once the SDK is installed, it can be initialized in your project.
+Please follow the [installation](#installation) instructions before trying the following code.
 
-### Recommended: Named Parameters (Simple)
+### Initialization
+
+This example assumes an API Key, an Application, and an Environment have been created in the ABsmartly web console.
+
+#### Recommended: Named Parameters
 
 ```python
 from absmartly import ABsmartly, ContextConfig
 
 def main():
-    # Create SDK with named parameters
     sdk = ABsmartly.create(
         endpoint="https://your-company.absmartly.io/v1",
         api_key="YOUR-API-KEY",
@@ -42,14 +45,13 @@ def main():
         environment="production"
     )
 
-    # Create a context
     context_config = ContextConfig()
     context_config.units = {"session_id": "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}
     ctx = sdk.create_context(context_config)
     ctx.wait_until_ready()
 ```
 
-### With Optional Parameters
+#### With Optional Parameters
 
 ```python
 from absmartly import ABsmartly, ContextConfig
@@ -64,7 +66,7 @@ sdk = ABsmartly.create(
 )
 ```
 
-### Advanced: Manual Configuration
+#### Advanced: Manual Configuration
 
 For advanced use cases, you can manually configure all components:
 
@@ -80,32 +82,28 @@ from absmartly import (
 )
 
 def main():
-    # Configure the client
     client_config = ClientConfig()
     client_config.endpoint = "https://your-company.absmartly.io/v1"
     client_config.api_key = "YOUR-API-KEY"
     client_config.application = "website"
     client_config.environment = "production"
 
-    # Create HTTP client with optional configuration
     default_client_config = DefaultHTTPClientConfig()
     default_client_config.max_retries = 5
     default_client_config.connection_timeout = 3
     default_client = DefaultHTTPClient(default_client_config)
 
-    # Configure and create the SDK
     sdk_config = ABsmartlyConfig()
     sdk_config.client = Client(client_config, default_client)
     sdk = ABsmartly(sdk_config)
 
-    # Create a context
     context_config = ContextConfig()
     context_config.units = {"session_id": "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}
     ctx = sdk.create_context(context_config)
     ctx.wait_until_ready()
 ```
 
-### SDK Options
+**SDK Options**
 
 | Config                 | Type                                          | Required? | Default     | Description                                                                                                                                                                   |
 | :--------------------- | :-------------------------------------------- | :-------: | :---------: | :---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -119,68 +117,11 @@ def main():
 | context_data_provider  | `ContextDataProvider`                         | &#10060;  | auto        | Custom provider for context data (advanced usage, manual configuration only)                                                                                                  |
 | context_event_handler  | `ContextEventHandler`                         | &#10060;  | auto        | Custom handler for publishing events (advanced usage, manual configuration only)                                                                                              |
 
-### Using a Custom Event Logger
-
-The A/B Smartly SDK can be instantiated with an event logger used for all contexts.
-In addition, an event logger can be specified when creating a particular context, in the `ContextConfig`.
-
-```python
-from absmartly import ABsmartly, ContextEventLogger, EventType
-
-
-class CustomEventLogger(ContextEventLogger):
-    def handle_event(self, event_type: EventType, data):
-        if event_type == EventType.ERROR:
-            print(f"Error: {data}")
-        elif event_type == EventType.READY:
-            print("Context is ready")
-        elif event_type == EventType.EXPOSURE:
-            print(f"Exposed to experiment: {data.name}")
-        elif event_type == EventType.GOAL:
-            print(f"Goal tracked: {data.name}")
-        elif event_type == EventType.REFRESH:
-            print("Context refreshed")
-        elif event_type == EventType.PUBLISH:
-            print("Events published")
-        elif event_type == EventType.CLOSE:
-            print("Context closed")
-
-
-# Usage with named parameters
-sdk = ABsmartly.create(
-    endpoint="https://your-company.absmartly.io/v1",
-    api_key="YOUR-API-KEY",
-    application="website",
-    environment="production",
-    event_logger=CustomEventLogger()
-)
-
-# Or with advanced configuration
-sdk_config.context_event_logger = CustomEventLogger()
-```
-
-The data parameter depends on the type of event.
-
-**Event Types**
-
-| Event      | When                                                       | Data                                        |
-| :--------- | :--------------------------------------------------------- | :------------------------------------------ |
-| `Error`    | `Context` receives an error                                | Exception object                            |
-| `Ready`    | `Context` turns ready                                      | `ContextData` used to initialize            |
-| `Refresh`  | `Context.refresh()` method succeeds                        | `ContextData` used to refresh               |
-| `Publish`  | `Context.publish()` method succeeds                        | `PublishEvent` sent to collector            |
-| `Exposure` | `Context.get_treatment()` method succeeds on first exposure| `Exposure` enqueued for publishing          |
-| `Goal`     | `Context.track()` method succeeds                          | `GoalAchievement` enqueued for publishing   |
-| `Close`    | `Context.close()` method succeeds the first time           | `None`                                      |
-| `Finalize` | `Context.close()` method succeeds                          | `None`                                      |
-
-
-## Create a New Context Request
+## Creating a New Context
 
 ### Synchronously
 
 ```python
-# Define a new context request
 context_config = ContextConfig()
 context_config.units = {"session_id": "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}
 context_config.publish_delay = 10
@@ -196,7 +137,6 @@ if ctx:
 ### Asynchronously
 
 ```python
-# Define a new context request
 context_config = ContextConfig()
 context_config.units = {"session_id": "5ebf06d8cb5d8137290c4abb64155584fbdb64d8"}
 context_config.publish_delay = 10
@@ -206,14 +146,13 @@ ctx = sdk.create_context(context_config)
 ctx.wait_until_ready_async()
 ```
 
-### With Prefetched Data
+### With Pre-fetched Data
 
-When doing full-stack experimentation with A/B Smartly, we recommend creating a context only once on the server-side.
-Creating a context involves a round-trip to the A/B Smartly event collector.
+When doing full-stack experimentation with ABsmartly, we recommend creating a context only once on the server-side.
+Creating a context involves a round-trip to the ABsmartly event collector.
 We can avoid repeating the round-trip on the client-side by reusing the server-side context data.
 
 ```python
-# Server-side: Create initial context
 context_config = ContextConfig()
 context_config.units = {
     "session_id": "5ebf06d8cb5d8137290c4abb64155584fbdb64d8",
@@ -223,15 +162,12 @@ context_config.units = {
 ctx = sdk.create_context(context_config)
 ctx.wait_until_ready()
 
-# Get the context data to pass to client
 context_data = ctx.get_data()
 
-# Client-side: Create context with prefetched data
 another_config = ContextConfig()
 another_config.units = {"session_id": "another-user-session-id"}
 
 another_ctx = sdk.create_context_with(another_config, context_data)
-# No need to wait - context is ready immediately
 ```
 
 ### Refreshing the Context with Fresh Experiment Data
@@ -249,7 +185,7 @@ ctx = sdk.create_context(context_config)
 ```
 
 Alternatively, the `refresh()` method can be called manually.
-The `refresh()` method pulls updated experiment data from the A/B Smartly collector and will trigger recently started experiments when `get_treatment()` is called again.
+The `refresh()` method pulls updated experiment data from the ABsmartly collector and will trigger recently started experiments when `get_treatment()` is called again.
 
 ```python
 context.refresh()
@@ -290,14 +226,13 @@ else:
 ### Treatment Variables
 
 ```python
-# Get variable value with a default
 button_color = context.get_variable_value("button.color", "red")
 ```
 
 ### Peek at Treatment Variants
 
 Although generally not recommended, it is sometimes necessary to peek at a treatment or variable without triggering an exposure.
-The A/B Smartly SDK provides a `peek_treatment()` method for that.
+The ABsmartly SDK provides a `peek_treatment()` method for that.
 
 ```python
 treatment = context.peek_treatment("exp_test_experiment")
@@ -323,15 +258,134 @@ During development, for example, it is useful to force a treatment for an experi
 The `set_override()` and `set_overrides()` methods can be called before the context is ready.
 
 ```python
-# Force variant 1 of treatment
 context.set_override("exp_test_experiment", 1)
 
-# Set multiple overrides at once
 context.set_overrides({
     "exp_test_experiment": 1,
     "exp_another_experiment": 0
 })
 ```
+
+## Advanced
+
+### Context Attributes
+
+Attributes are used to pass meta-data about the user and/or the request.
+They can be used later in the Web Console to create segments or audiences.
+
+The `set_attribute()` and `set_attributes()` methods can be called before the context is ready.
+
+```python
+context.set_attribute("user_agent", request.headers.get("User-Agent"))
+
+context.set_attributes({
+    "customer_age": "new_customer",
+    "account_type": "premium"
+})
+```
+
+### Custom Assignments
+
+Sometimes it may be necessary to override the automatic selection of a variant. For example, if you wish to have your variant chosen based on data from an API call. This can be accomplished using the `set_custom_assignment()` method.
+
+```python
+context.set_custom_assignment("exp_test_not_eligible", 3)
+```
+
+If you are running multiple experiments and need to choose different custom assignments for each one, you can do so using the `set_custom_assignments()` method.
+
+```python
+context.set_custom_assignments({
+    "exp_test_experiment": 1,
+    "exp_another_experiment": 2
+})
+```
+
+### Tracking Goals
+
+Goals are created in the ABsmartly web console.
+
+```python
+context.track("payment", {
+    "item_count": 1,
+    "total_amount": 1999.99
+})
+```
+
+### Publishing Pending Data
+
+Sometimes it is necessary to ensure all events have been published to the ABsmartly collector, before proceeding.
+You can explicitly call the `publish()` or `publish_async()` methods.
+
+```python
+context.publish()
+
+context.publish_async()
+```
+
+### Finalizing
+
+The `close()` and `close_async()` methods will ensure all events have been published to the ABsmartly collector, like `publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
+
+```python
+context.close()
+
+context.close_async()
+```
+
+### Custom Event Logger
+
+The ABsmartly SDK can be instantiated with an event logger used for all contexts.
+In addition, an event logger can be specified when creating a particular context, in the `ContextConfig`.
+
+```python
+from absmartly import ABsmartly, ContextEventLogger, EventType
+
+
+class CustomEventLogger(ContextEventLogger):
+    def handle_event(self, event_type: EventType, data):
+        if event_type == EventType.ERROR:
+            print(f"Error: {data}")
+        elif event_type == EventType.READY:
+            print("Context is ready")
+        elif event_type == EventType.EXPOSURE:
+            print(f"Exposed to experiment: {data.name}")
+        elif event_type == EventType.GOAL:
+            print(f"Goal tracked: {data.name}")
+        elif event_type == EventType.REFRESH:
+            print("Context refreshed")
+        elif event_type == EventType.PUBLISH:
+            print("Events published")
+        elif event_type == EventType.CLOSE:
+            print("Context closed")
+
+
+sdk = ABsmartly.create(
+    endpoint="https://your-company.absmartly.io/v1",
+    api_key="YOUR-API-KEY",
+    application="website",
+    environment="production",
+    event_logger=CustomEventLogger()
+)
+
+# Or with advanced configuration
+sdk_config.context_event_logger = CustomEventLogger()
+```
+
+The data parameter depends on the type of event.
+
+**Event Types**
+
+| Event      | When                                                       | Data                                        |
+| :--------- | :--------------------------------------------------------- | :------------------------------------------ |
+| `Error`    | `Context` receives an error                                | Exception object                            |
+| `Ready`    | `Context` turns ready                                      | `ContextData` used to initialize            |
+| `Refresh`  | `Context.refresh()` method succeeds                        | `ContextData` used to refresh               |
+| `Publish`  | `Context.publish()` method succeeds                        | `PublishEvent` sent to collector            |
+| `Exposure` | `Context.get_treatment()` method succeeds on first exposure| `Exposure` enqueued for publishing          |
+| `Goal`     | `Context.track()` method succeeds                          | `GoalAchievement` enqueued for publishing   |
+| `Close`    | `Context.close()` method succeeds the first time           | `None`                                      |
+| `Finalize` | `Context.close()` method succeeds                          | `None`                                      |
 
 ## Platform-Specific Examples
 
@@ -343,7 +397,6 @@ from absmartly import ABsmartly, ContextConfig
 
 app = Flask(__name__)
 
-# Initialize SDK once at app startup
 sdk = ABsmartly.create(
     endpoint="https://your-company.absmartly.io/v1",
     api_key="YOUR-API-KEY",
@@ -353,7 +406,6 @@ sdk = ABsmartly.create(
 
 @app.route('/')
 def index():
-    # Create context for this request
     context_config = ContextConfig()
     context_config.units = {
         "session_id": session.get('session_id'),
@@ -365,7 +417,6 @@ def index():
 
     treatment = ctx.get_treatment("exp_test_experiment")
 
-    # Use treatment to render different variants
     if treatment == 0:
         return render_template('control.html')
     else:
@@ -414,7 +465,6 @@ import uuid
 
 app = FastAPI()
 
-# Initialize SDK once at app startup
 sdk = ABsmartly.create(
     endpoint="https://your-company.absmartly.io/v1",
     api_key="YOUR-API-KEY",
@@ -424,8 +474,6 @@ sdk = ABsmartly.create(
 
 @app.get("/")
 async def root(request: Request):
-    # Note: In production, use session middleware to manage session_id
-    # Example: Starlette SessionMiddleware with a cookie-based session
     context_config = ContextConfig()
     context_config.units = {
         "session_id": str(uuid.uuid4()),
@@ -437,124 +485,6 @@ async def root(request: Request):
     treatment = ctx.get_treatment("exp_test_experiment")
 
     return {"treatment": treatment}
-```
-
-## Advanced Request Configuration
-
-### Request Timeout Override
-
-You can override the global timeout for individual context creation requests:
-
-```python
-from absmartly import ABsmartly, ContextConfig, DefaultHTTPClientConfig
-
-# Set timeout for this specific request
-context_config = ContextConfig()
-context_config.units = {"session_id": "abc123"}
-
-# Create HTTP client with custom timeout for this request
-http_config = DefaultHTTPClientConfig()
-http_config.connection_timeout = 1.5  # 1.5 seconds
-
-ctx = sdk.create_context(context_config)
-# Note: Per-request timeout requires custom HTTP client configuration
-```
-
-### Request Cancellation
-
-For long-running requests that need to be cancelled (e.g., user navigating away):
-
-```python
-import asyncio
-from absmartly import ABsmartly, ContextConfig
-
-async def create_context_with_timeout():
-    context_config = ContextConfig()
-    context_config.units = {"session_id": "abc123"}
-
-    ctx = sdk.create_context(context_config)
-
-    try:
-        # Wait for ready with timeout
-        await asyncio.wait_for(ctx.wait_until_ready_async(), timeout=1.5)
-    except asyncio.TimeoutError:
-        print("Context creation timed out")
-        # Context creation cancelled
-
-    return ctx
-```
-
-## Advanced
-
-### Context Attributes
-
-Attributes are used to pass meta-data about the user and/or the request.
-They can be used later in the Web Console to create segments or audiences.
-
-The `set_attribute()` and `set_attributes()` methods can be called before the context is ready.
-
-```python
-# Set a single attribute
-context.set_attribute("user_agent", request.headers.get("User-Agent"))
-
-# Set multiple attributes at once
-context.set_attributes({
-    "customer_age": "new_customer",
-    "account_type": "premium"
-})
-```
-
-### Custom Assignments
-
-Sometimes it may be necessary to override the automatic selection of a variant. For example, if you wish to have your variant chosen based on data from an API call. This can be accomplished using the `set_custom_assignment()` method.
-
-```python
-context.set_custom_assignment("exp_test_not_eligible", 3)
-```
-
-If you are running multiple experiments and need to choose different custom assignments for each one, you can do so using the `set_custom_assignments()` method.
-
-```python
-context.set_custom_assignments({
-    "exp_test_experiment": 1,
-    "exp_another_experiment": 2
-})
-```
-
-### Tracking Goals
-
-Goals are created in the A/B Smartly web console.
-
-```python
-context.track("payment", {
-    "item_count": 1,
-    "total_amount": 1999.99
-})
-```
-
-### Publish
-
-Sometimes it is necessary to ensure all events have been published to the A/B Smartly collector, before proceeding.
-You can explicitly call the `publish()` or `publish_async()` methods.
-
-```python
-# Synchronous
-context.publish()
-
-# Asynchronous
-context.publish_async()
-```
-
-### Finalize
-
-The `close()` and `close_async()` methods will ensure all events have been published to the A/B Smartly collector, like `publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
-
-```python
-# Synchronous
-context.close()
-
-# Asynchronous
-context.close_async()
 ```
 
 ## About A/B Smartly
@@ -576,12 +506,3 @@ A/B Smartly's real-time analytics helps engineering and product teams ensure tha
 - [.NET SDK](https://www.github.com/absmartly/dotnet-sdk)
 - [Dart SDK](https://www.github.com/absmartly/dart-sdk)
 - [Flutter SDK](https://www.github.com/absmartly/flutter-sdk)
-
-## Documentation
-
-- [Full Documentation](https://docs.absmartly.com/)
-- [Web Console](https://absmartly.com/)
-
-## License
-
-MIT License - see LICENSE for details.

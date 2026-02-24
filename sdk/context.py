@@ -223,7 +223,7 @@ class Context:
 
     def check_not_closed(self):
         if self.closed.value:
-            raise RuntimeError('ABsmartly Context is closed')
+            raise RuntimeError('ABsmartly Context is finalized')
         elif self.closing.value:
             raise RuntimeError('ABsmartly Context is closing')
 

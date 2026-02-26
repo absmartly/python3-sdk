@@ -130,7 +130,7 @@ class Context:
         else:
             self.overrides = {}
 
-        cassignments = config.custom_assignments or config.cassigmnents
+        cassignments = config.custom_assignments
         if cassignments is not None:
             self.custom_assignments = dict(cassignments)
         else:

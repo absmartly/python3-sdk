@@ -66,9 +66,9 @@ sdk = ABsmartly.create(
 )
 ```
 
-#### Advanced: Manual Configuration
+#### Alternative: Manual Configuration
 
-For advanced use cases, you can manually configure all components:
+For use cases where you need to manually configure all components:
 
 ```python
 from absmartly import (

@@ -1,5 +1,6 @@
 import base64
 import collections
+import copy
 import hashlib
 import threading
 from concurrent.futures import Future
@@ -96,6 +97,7 @@ class Context:
         self.data: Optional[ContextData] = None
 
         self.failed = False
+        self.close_error = None
 
         self.closed = AtomicBool()
         self.closing = AtomicBool()
@@ -159,7 +161,6 @@ class Context:
                         data.exception() is None:
                     self.set_data(data.result())
                     self.ready_future.set_result(None)
-                    self.ready_future = None
                     self.log_event(EventType.READY, data.result())
 
                     if self.get_pending_count() > 0:
@@ -168,24 +169,9 @@ class Context:
                         data.exception() is not None:
                     self.set_data_failed(data.exception())
                     self.ready_future.set_result(None)
-                    self.ready_future = None
                     self.log_error(data.exception())
 
             data_future.add_done_callback(when_finished)
-
-    def _handle_future_callback(self, future: Future, on_success, on_error):
-        """Helper method to reduce duplication in future callback handling."""
-        if future.done() and not future.cancelled() and future.exception() is None:
-            on_success(future.result())
-        elif not future.cancelled() and future.exception() is not None:
-            on_error(future.exception())
-
-    def _build_audience_attributes(self):
-        """Helper method to build audience attributes dictionary."""
-        audience_attributes = {}
-        for key in self.attributes:
-            audience_attributes[key.name] = key.value
-        return audience_attributes
 
     def set_units(self, units: dict):
         for key, value in units.items():
@@ -218,8 +204,12 @@ class Context:
         attribute.name = name
         attribute.value = value
         attribute.setAt = self.clock.millis()
-        Concurrency.add_rw(self.context_lock, self.attributes, attribute)
-        self._attrs_seq += 1
+        try:
+            self.context_lock.acquire_write()
+            self.attributes.append(attribute)
+            self._attrs_seq += 1
+        finally:
+            self.context_lock.release_write()
 
     def check_not_closed(self):
         if self.closed.value:
@@ -247,31 +237,25 @@ class Context:
                             variant.config)
 
                         if variables is None:
-                            if self.event_logger:
-                                try:
-                                    from sdk.json.event_type import EventType
-                                    self.event_logger.handle_event(
-                                        EventType.ERROR,
-                                        f"Failed to parse variant config for {experiment.name}/{variant.name}"
-                                    )
-                                except Exception:
-                                    pass
+                            self.log_event(
+                                EventType.ERROR,
+                                f"Failed to parse variant config for {experiment.name}/{variant.name}"
+                            )
                             experiment_variables.variables.append({})
                             continue
 
                         for key, value in variables.items():
-                            index_variables[key] = experiment_variables
+                            if key in index_variables:
+                                if experiment_variables not in index_variables[key]:
+                                    index_variables[key].append(experiment_variables)
+                            else:
+                                index_variables[key] = [experiment_variables]
                         experiment_variables.variables.append(variables)
                     except Exception as e:
-                        if self.event_logger:
-                            try:
-                                from sdk.json.event_type import EventType
-                                self.event_logger.handle_event(
-                                    EventType.ERROR,
-                                    f"Error parsing variant {experiment.name}/{variant.name}: {e}"
-                                )
-                            except Exception:
-                                pass
+                        self.log_event(
+                            EventType.ERROR,
+                            f"Error parsing variant {experiment.name}/{variant.name}: {e}"
+                        )
                         experiment_variables.variables.append({})
                 else:
                     experiment_variables.variables.append({})
@@ -288,23 +272,14 @@ class Context:
 
                         try:
                             if customFieldValue.type.startswith("json"):
-                                parsed = self.variable_parser.parse(
-                                    self,
-                                    experiment.name,
-                                    customFieldValue.name,
-                                    customValue)
-                                if parsed is not None:
-                                    value.value = parsed
-                                else:
-                                    if self.event_logger:
-                                        try:
-                                            from sdk.json.event_type import EventType
-                                            self.event_logger.handle_event(
-                                                EventType.ERROR,
-                                                f"Failed to parse JSON custom field {customFieldValue.name}"
-                                            )
-                                        except Exception:
-                                            pass
+                                try:
+                                    import json as _json
+                                    value.value = _json.loads(customValue)
+                                except (ValueError, TypeError):
+                                    self.log_event(
+                                        EventType.ERROR,
+                                        f"Failed to parse JSON custom field {customFieldValue.name}"
+                                    )
                                     continue
 
                             elif customFieldValue.type.startswith("boolean"):
@@ -314,29 +289,19 @@ class Context:
                                 try:
                                     value.value = int(customValue)
                                 except (ValueError, TypeError) as e:
-                                    if self.event_logger:
-                                        try:
-                                            from sdk.json.event_type import EventType
-                                            self.event_logger.handle_event(
-                                                EventType.ERROR,
-                                                f"Failed to parse number custom field {customFieldValue.name}: {e}"
-                                            )
-                                        except Exception:
-                                            pass
+                                    self.log_event(
+                                        EventType.ERROR,
+                                        f"Failed to parse number custom field {customFieldValue.name}: {e}"
+                                    )
                                     continue
 
                             else:
                                 value.value = customValue
                         except Exception as e:
-                            if self.event_logger:
-                                try:
-                                    from sdk.json.event_type import EventType
-                                    self.event_logger.handle_event(
-                                        EventType.ERROR,
-                                        f"Error parsing custom field {customFieldValue.name}: {e}"
-                                    )
-                                except Exception:
-                                    pass
+                            self.log_event(
+                                EventType.ERROR,
+                                f"Error parsing custom field {customFieldValue.name}: {e}"
+                            )
                             continue
 
                     experimentCustomFields[customFieldValue.name] = value
@@ -457,17 +422,23 @@ class Context:
                 achievements = None
                 event_count = 0
                 try:
-                    self.event_lock.acquire_read()
+                    self.event_lock.acquire_write()
                     event_count = self.pending_count.get()
 
                     if event_count > 0:
                         if len(self.exposures) > 0:
                             exposures = list(self.exposures)
+                            self.exposures.clear()
 
                         if len(self.achievements) > 0:
                             achievements = list(self.achievements)
+                            self.achievements.clear()
+
+                        self.pending_count.set(
+                            self.pending_count.get() - event_count
+                        )
                 finally:
-                    self.event_lock.release_read()
+                    self.event_lock.release_write()
 
                 if event_count > 0:
                     event = PublishEvent()
@@ -497,17 +468,21 @@ class Context:
                         if data.done() and \
                                 data.cancelled() is False and \
                                 data.exception() is None:
-                            try:
-                                self.event_lock.acquire_write()
-                                self.exposures.clear()
-                                self.achievements.clear()
-                                self.pending_count.set(0)
-                            finally:
-                                self.event_lock.release_write()
                             self.log_event(EventType.PUBLISH, event)
                             result.set_result(None)
                         elif data.cancelled() is False and \
                                 data.exception() is not None:
+                            try:
+                                self.event_lock.acquire_write()
+                                if exposures:
+                                    self.exposures = exposures + self.exposures
+                                if achievements:
+                                    self.achievements = achievements + self.achievements
+                                self.pending_count.set(
+                                    self.pending_count.get() + event_count
+                                )
+                            finally:
+                                self.event_lock.release_write()
                             self.log_error(data.exception())
                             result.set_exception(data.exception())
 
@@ -532,6 +507,7 @@ class Context:
         try:
             self.close_async().result()
         except Exception as e:
+            self.close_error = e
             self.log_error(e)
 
     def refresh(self):
@@ -594,9 +570,13 @@ class Context:
                 self.timeout_lock.release_write()
 
     def clear_refresh_timer(self):
-        if self.refresh_timer is not None:
-            self.refresh_timer.cancel()
-            self.refresh_timer = None
+        try:
+            self.timeout_lock.acquire_write()
+            if self.refresh_timer is not None:
+                self.refresh_timer.cancel()
+                self.refresh_timer = None
+        finally:
+            self.timeout_lock.release_write()
 
     def get_variable_value(self, key: str, default_value: object):
         self.check_ready(True)
@@ -651,9 +631,8 @@ class Context:
         variable_keys = {}
         try:
             self.data_lock.acquire_read()
-            for key, value in self.index_variables.items():
-                expr_var: ExperimentVariables = value
-                variable_keys[key] = expr_var.data.name
+            for key, experiments in self.index_variables.items():
+                variable_keys[key] = [expr_var.data.name for expr_var in experiments]
         finally:
             self.data_lock.release_read()
 
@@ -681,8 +660,6 @@ class Context:
         return keys
 
     def _get_custom_field(self, experiment_name: str, key: str, field_attr: str):
-        """Helper method to get custom field value or type."""
-        import copy
         self.check_ready(True)
 
         result = None
@@ -876,8 +853,6 @@ class Context:
             self.data_lock.release_read()
 
     def set_override(self, experiment_name: str, variant: int):
-        self.check_not_closed()
-
         return Concurrency.put_rw(self.context_lock,
                                   self.overrides,
                                   experiment_name, variant)
@@ -916,7 +891,10 @@ class Context:
                                                 unit_type, apply)
 
     def get_variable_experiment(self, key: str):
-        return Concurrency.get_rw(self.data_lock, self.index_variables, key)
+        experiments = Concurrency.get_rw(self.data_lock, self.index_variables, key)
+        if experiments:
+            return experiments[0]
+        return None
 
     def get_variable_assignment(self, key: str):
         experiment: ExperimentVariables = self.get_variable_experiment(key)

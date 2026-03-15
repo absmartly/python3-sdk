@@ -98,6 +98,7 @@ class Context:
 
         self.failed = False
         self.close_error = None
+        self.ready_error = None
 
         self.closed = AtomicBool()
         self.closing = AtomicBool()
@@ -194,9 +195,40 @@ class Context:
         finally:
             self.context_lock.release_write()
 
+    def get_unit(self, unit_type: str):
+        return Concurrency.get_rw(self.context_lock, self.units, unit_type)
+
+    def get_units(self):
+        try:
+            self.context_lock.acquire_read()
+            return dict(self.units)
+        finally:
+            self.context_lock.release_read()
+
     def set_attributes(self, attributes: dict):
         for key, value in attributes.items():
             self.set_attribute(key, value)
+
+    def get_attribute(self, name: str):
+        try:
+            self.context_lock.acquire_read()
+            result = None
+            for attr in self.attributes:
+                if attr.name == name:
+                    result = attr.value
+            return result
+        finally:
+            self.context_lock.release_read()
+
+    def get_attributes(self):
+        try:
+            self.context_lock.acquire_read()
+            result = {}
+            for attr in self.attributes:
+                result[attr.name] = attr.value
+            return result
+        finally:
+            self.context_lock.release_read()
 
     def set_attribute(self, name: str, value: object):
         self.check_not_closed()
@@ -399,6 +431,7 @@ class Context:
             self.index_variables = {}
             self.data = ContextData()
             self.failed = True
+            self.ready_error = exception
         finally:
             self.data_lock.release_write()
 

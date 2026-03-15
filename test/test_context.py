@@ -1761,3 +1761,90 @@ class ContextTest(unittest.TestCase):
         context.clear_refresh_timer()
         self.assertIsNone(context.refresh_timer)
         context.close()
+
+    def test_get_unit_returns_unit(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+
+        self.assertEqual("e791e240fcd3df7d238cfc285f475e8152fcc0ec", context.get_unit("session_id"))
+        self.assertEqual("123456789", context.get_unit("user_id"))
+        self.assertEqual("bleh@absmartly.com", context.get_unit("email"))
+        self.assertIsNone(context.get_unit("nonexistent"))
+        context.close()
+
+    def test_get_units_returns_all_units(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+
+        result = context.get_units()
+        self.assertEqual(self.units, result)
+        context.close()
+
+    def test_get_attribute_returns_last_set_value(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+
+        context.set_attribute("country", "US")
+        context.set_attribute("language", "en")
+        context.set_attribute("country", "DE")
+
+        self.assertEqual("DE", context.get_attribute("country"))
+        self.assertEqual("en", context.get_attribute("language"))
+        self.assertIsNone(context.get_attribute("nonexistent"))
+        context.close()
+
+    def test_get_attributes_returns_all_attributes(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+
+        context.set_attribute("country", "US")
+        context.set_attribute("language", "en")
+        context.set_attribute("country", "DE")
+
+        result = context.get_attributes()
+        self.assertEqual("DE", result["country"])
+        self.assertEqual("en", result["language"])
+        context.close()
+
+    def test_ready_error_is_none_on_success(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+
+        self.assertIsNone(context.ready_error)
+        self.assertFalse(context.is_failed())
+        context.close()
+
+    def test_ready_error_set_on_failed_future(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_failed)
+
+        self.assertTrue(context.is_failed())
+        self.assertIsNotNone(context.ready_error)
+        context.close()
+
+    def test_ready_error_set_after_async_failure(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future)
+
+        self.assertFalse(context.is_ready())
+        error = RuntimeError("FAILED")
+        self.data_future.set_exception(error)
+        context.wait_until_ready()
+
+        self.assertTrue(context.is_failed())
+        self.assertIsNotNone(context.ready_error)
+        context.close()

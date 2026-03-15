@@ -624,7 +624,8 @@ class Context:
             self.timeout_lock.release_write()
 
     def get_variable_value(self, key: str, default_value: object):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return default_value
 
         assignment = self.get_variable_assignment(key)
         if assignment is not None:
@@ -637,7 +638,8 @@ class Context:
         return default_value
 
     def peek_variable_value(self, key: str, default_value: object):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return default_value
 
         assignment = self.get_variable_assignment(key)
         if assignment is not None:
@@ -647,7 +649,8 @@ class Context:
         return default_value
 
     def peek_treatment(self, experiment_name: str):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return 0
 
         return self.get_assignment(experiment_name).variant
 
@@ -664,14 +667,16 @@ class Context:
             computer)
 
     def get_treatment(self, experiment_name: str, exposed_at: int = None):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return 0
         assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
         if not assignment.exposed.value:
             self.queue_exposure(assignment)
         return assignment.variant
 
     def get_variable_keys(self):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return {}
 
         variable_keys = {}
         try:
@@ -684,7 +689,8 @@ class Context:
         return variable_keys
 
     def get_custom_field_keys(self):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return []
 
         keys = []
         try:
@@ -705,7 +711,8 @@ class Context:
         return keys
 
     def _get_custom_field(self, experiment_name: str, key: str, field_attr: str):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return None
 
         result = None
         try:
@@ -879,7 +886,8 @@ class Context:
             self.data_lock.release_read()
 
     def get_experiments(self):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return []
 
         try:
             self.data_lock.acquire_read()

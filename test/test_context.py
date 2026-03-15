@@ -1848,3 +1848,46 @@ class ContextTest(unittest.TestCase):
         self.assertTrue(context.is_failed())
         self.assertIsNotNone(context.ready_error)
         context.close()
+
+    def test_read_methods_return_safe_defaults_when_not_ready(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future)
+
+        self.assertFalse(context.is_ready())
+
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+        self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+        self.assertEqual(17, context.get_variable_value("banner.size", 17))
+        self.assertEqual(17, context.peek_variable_value("banner.size", 17))
+        self.assertEqual({}, context.get_variable_keys())
+        self.assertEqual([], context.get_experiments())
+        self.assertIsNone(context.get_custom_field_value("exp_test_abc", "country"))
+        self.assertIsNone(context.get_custom_field_value_type("exp_test_abc", "country"))
+        self.assertEqual([], context.get_custom_field_keys())
+
+        self.data_future.set_result(self.data)
+
+    def test_read_methods_return_safe_defaults_after_finalize(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+
+        self.assertTrue(context.is_ready())
+
+        context.get_treatment("exp_test_ab")
+        context.close()
+
+        self.assertTrue(context.is_closed())
+
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+        self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+        self.assertEqual(17, context.get_variable_value("banner.size", 17))
+        self.assertEqual(17, context.peek_variable_value("banner.size", 17))
+        self.assertEqual({}, context.get_variable_keys())
+        self.assertEqual([], context.get_experiments())
+        self.assertIsNone(context.get_custom_field_value("exp_test_abc", "country"))
+        self.assertIsNone(context.get_custom_field_value_type("exp_test_abc", "country"))
+        self.assertEqual([], context.get_custom_field_keys())

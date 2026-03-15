@@ -185,11 +185,11 @@ class Context:
             self.context_lock.acquire_write()
 
             if unit_type in self.units.keys() and self.units[unit_type] != uid:
-                raise ValueError("Unit already set.")
+                raise ValueError(f"Unit '{unit_type}' UID already set.")
 
             trimmed = uid.strip()
             if len(trimmed) == 0:
-                raise ValueError("Unit UID must not be blank.")
+                raise ValueError(f"Unit '{unit_type}' UID must not be blank.")
 
             self.units[unit_type] = trimmed
         finally:
@@ -245,9 +245,9 @@ class Context:
 
     def check_not_closed(self):
         if self.closed.value:
-            raise RuntimeError('ABsmartly Context is finalized')
+            raise RuntimeError('ABsmartly Context is finalized.')
         elif self.closing.value:
-            raise RuntimeError('ABsmartly Context is closing')
+            raise RuntimeError('ABsmartly Context is finalizing.')
 
     def set_data(self, data: ContextData):
         index = {}
@@ -391,8 +391,14 @@ class Context:
     def is_closed(self):
         return self.closed.value
 
+    def is_finalized(self):
+        return self.is_closed()
+
     def is_closing(self):
         return not self.closed.value and self.closing.value
+
+    def is_finalizing(self):
+        return self.is_closing()
 
     def refresh_async(self):
         self.check_not_closed()
@@ -542,6 +548,12 @@ class Context:
         except Exception as e:
             self.close_error = e
             self.log_error(e)
+
+    def finalize(self):
+        return self.close()
+
+    def finalize_async(self):
+        return self.close_async()
 
     def refresh(self):
         self.refresh_async().result()
@@ -719,8 +731,11 @@ class Context:
     def get_custom_field_value(self, experiment_name: str, key: str):
         return self._get_custom_field(experiment_name, key, 'value')
 
-    def get_custom_field_type(self, experiment_name: str, key: str):
+    def get_custom_field_value_type(self, experiment_name: str, key: str):
         return self._get_custom_field(experiment_name, key, 'type')
+
+    def get_custom_field_type(self, experiment_name: str, key: str):
+        return self.get_custom_field_value_type(experiment_name, key)
 
     def _build_audience_attributes(self):
         """Helper method to build audience attributes map from current attributes."""
@@ -852,7 +867,7 @@ class Context:
 
     def check_ready(self, expect_not_closed: bool):
         if not self.is_ready():
-            raise RuntimeError('ABsmartly Context is not yet ready')
+            raise RuntimeError('ABsmartly Context is not yet ready.')
         elif expect_not_closed:
             self.check_not_closed()
 

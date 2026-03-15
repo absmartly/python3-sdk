@@ -376,7 +376,7 @@ class ContextTest(unittest.TestCase):
             context.set_attribute("attr1", "value1")
         except RuntimeError as e:
             self.assertIsNotNone(e)
-            self.assertEqual("ABsmartly Context is closing", str(e))
+            self.assertEqual("ABsmartly Context is finalizing.", str(e))
         time.sleep(0.3)
         context.close()
 
@@ -416,7 +416,7 @@ class ContextTest(unittest.TestCase):
             context.set_attribute("attr1", "value1")
         except RuntimeError as e:
             self.assertIsNotNone(e)
-            self.assertEqual("ABsmartly Context is finalized", str(e))
+            self.assertEqual("ABsmartly Context is finalized.", str(e))
         time.sleep(0.3)
         context.close()
 
@@ -477,12 +477,12 @@ class ContextTest(unittest.TestCase):
         try:
             context.set_unit("db_user_id", "")
         except ValueError as e:
-            self.assertEqual("Unit UID must not be blank.", str(e))
+            self.assertEqual("Unit 'db_user_id' UID must not be blank.", str(e))
 
         try:
             context.set_unit("session_id", "1")
         except ValueError as e:
-            self.assertEqual("Unit already set.", str(e))
+            self.assertEqual("Unit 'session_id' UID already set.", str(e))
 
         context.close()
 
@@ -1370,7 +1370,7 @@ class ContextTest(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             context.set_unit("device_id", "")
 
-        self.assertEqual("Unit UID must not be blank.", str(ctx.exception))
+        self.assertEqual("Unit 'device_id' UID must not be blank.", str(ctx.exception))
         context.close()
 
     def test_set_unit_duplicate_throws(self):
@@ -1383,7 +1383,7 @@ class ContextTest(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             context.set_unit("user_id", "different-value")
 
-        self.assertEqual("Unit already set.", str(ctx.exception))
+        self.assertEqual("Unit 'user_id' UID already set.", str(ctx.exception))
         context.close()
 
     def test_set_units_batch(self):

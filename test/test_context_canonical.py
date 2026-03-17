@@ -484,13 +484,13 @@ class ContextVariableKeysTests(ContextCanonicalTestBase):
         context = self.create_ready_context(data_future=self.data_future_refresh)
         keys = context.get_variable_keys()
         expected = {
-            "banner.border": "exp_test_ab",
-            "banner.size": "exp_test_ab",
-            "button.color": "exp_test_abc",
-            "card.width": "exp_test_not_eligible",
-            "submit.color": "exp_test_fullon",
-            "submit.shape": "exp_test_fullon",
-            "show-modal": "exp_test_new",
+            "banner.border": ["exp_test_ab"],
+            "banner.size": ["exp_test_ab"],
+            "button.color": ["exp_test_abc"],
+            "card.width": ["exp_test_not_eligible"],
+            "submit.color": ["exp_test_fullon"],
+            "submit.shape": ["exp_test_fullon"],
+            "show-modal": ["exp_test_new"],
         }
         self.assertEqual(expected, keys)
         context.close()
@@ -929,8 +929,8 @@ class ContextNotReadyTests(ContextCanonicalTestBase):
         config.units = self.units
         context = self.create_context(config, self.data_future)
         self.assertFalse(context.is_ready())
-        with self.assertRaises(RuntimeError):
-            context.get_treatment("exp_test_ab")
+        result = context.get_treatment("exp_test_ab")
+        self.assertEqual(0, result)
         context.close()
 
     def test_peek_throws_when_not_ready(self):
@@ -939,8 +939,8 @@ class ContextNotReadyTests(ContextCanonicalTestBase):
         config.units = self.units
         context = self.create_context(config, self.data_future)
         self.assertFalse(context.is_ready())
-        with self.assertRaises(RuntimeError):
-            context.peek_treatment("exp_test_ab")
+        result = context.peek_treatment("exp_test_ab")
+        self.assertEqual(0, result)
         context.close()
 
     def test_variable_value_throws_when_not_ready(self):
@@ -949,8 +949,8 @@ class ContextNotReadyTests(ContextCanonicalTestBase):
         config.units = self.units
         context = self.create_context(config, self.data_future)
         self.assertFalse(context.is_ready())
-        with self.assertRaises(RuntimeError):
-            context.get_variable_value("banner.size", "default")
+        result = context.get_variable_value("banner.size", "default")
+        self.assertEqual("default", result)
         context.close()
 
 

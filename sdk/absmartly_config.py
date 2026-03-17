@@ -17,4 +17,12 @@ class ABsmartlyConfig:
     variable_parser: Optional[VariableParser] = None
 
 
-ABSmartlyConfig = ABsmartlyConfig
+class ABSmartlyConfig(ABsmartlyConfig):
+    def __init__(self, *args, **kwargs):
+        import warnings
+        warnings.warn(
+            "ABSmartlyConfig is deprecated, use ABsmartlyConfig instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

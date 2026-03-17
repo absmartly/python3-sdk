@@ -15,9 +15,10 @@ class DefaultAudienceDeserializer(AudienceDeserializer):
                     offset: int,
                     length: int) -> Optional[dict]:
         try:
-            if bytes_ == b'null' or (offset == 0 and length == 4 and bytes_[offset:offset+length] == b'null'):
+            segment = bytes_[offset:offset + length]
+            if segment == b'null':
                 return None
-            return jsons.loadb(bytes_, dict)
+            return jsons.loadb(segment, dict)
         except Exception as e:
             logger.error(f"Failed to deserialize audience filter: {e}")
             return None

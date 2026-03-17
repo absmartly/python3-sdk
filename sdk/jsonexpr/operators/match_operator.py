@@ -1,29 +1,11 @@
 import re
-import signal
-from contextlib import contextmanager
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 import logging
 
 from sdk.jsonexpr.evaluator import Evaluator
 from sdk.jsonexpr.operators.binary_operator import BinaryOperator
 
 logger = logging.getLogger(__name__)
-
-
-@contextmanager
-def timeout(seconds):
-    def timeout_handler(signum, frame):
-        raise TimeoutError("Regex execution timeout")
-
-    try:
-        original_handler = signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(seconds)
-        try:
-            yield
-        finally:
-            signal.alarm(0)
-            signal.signal(signal.SIGALRM, original_handler)
-    except (AttributeError, ValueError):
-        yield
 
 
 class MatchOperator(BinaryOperator):
@@ -41,13 +23,19 @@ class MatchOperator(BinaryOperator):
 
                 try:
                     compiled = re.compile(pattern)
-                    with timeout(self.REGEX_TIMEOUT_SECONDS):
-                        return bool(compiled.match(text))
+                    with ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(compiled.match, text)
+                        try:
+                            result = future.result(
+                                timeout=self.REGEX_TIMEOUT_SECONDS
+                            )
+                            return bool(result)
+                        except TimeoutError:
+                            logger.warning("Regex execution timeout (potential ReDoS)")
+                            future.cancel()
+                            return None
                 except re.error as e:
                     logger.warning(f"Invalid regex pattern: {e}")
-                    return None
-                except TimeoutError:
-                    logger.warning(f"Regex execution timeout (potential ReDoS)")
                     return None
                 except Exception as e:
                     logger.error(f"Unexpected error in regex matching: {e}")

@@ -157,6 +157,43 @@ class TestSDKInitialization(unittest.TestCase):
 
         self.assertTrue(context.is_closed())
 
+    def test_absmartly_deprecation_warning(self):
+        import warnings
+        from sdk.absmartly import ABsmartly
+        mock_data_provider = Mock(spec=ContextDataProvider)
+        mock_event_handler = Mock(spec=ContextEventHandler)
+
+        config_lowercase = ABSmartlyConfig.__bases__[0]()
+        config_lowercase.context_data_provider = mock_data_provider
+        config_lowercase.context_event_handler = mock_event_handler
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            config = ABSmartlyConfig()
+            self.assertTrue(any(
+                issubclass(warning.category, DeprecationWarning) and
+                "ABSmartlyConfig" in str(warning.message)
+                for warning in w
+            ))
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            config.context_data_provider = mock_data_provider
+            config.context_event_handler = mock_event_handler
+            sdk = ABSmartly(config)
+            self.assertTrue(any(
+                issubclass(warning.category, DeprecationWarning) and
+                "ABSmartly" in str(warning.message)
+                for warning in w
+            ))
+
+    def test_context_config_type_annotations(self):
+        config = ContextConfig()
+        self.assertIsNone(config.custom_assignments)
+        self.assertIsNone(config.overrides)
+        self.assertIsNone(config.attributes)
+        self.assertIsNone(config.units)
+
 
 if __name__ == '__main__':
     unittest.main()

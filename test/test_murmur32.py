@@ -123,3 +123,9 @@ class Murmur32Test(unittest.TestCase):
         self._assert_hash(
             "The quick brown fox jumps over the lazy dog",
             0x00000001, 0x78e69e27)
+
+    def test_rotate_left_renamed(self):
+        self.assertTrue(hasattr(murmur, 'rotate_left'))
+        self.assertFalse(hasattr(murmur, 'rotate_right'))
+        result = murmur.rotate_left(1, 1)
+        self.assertEqual(result, 2)

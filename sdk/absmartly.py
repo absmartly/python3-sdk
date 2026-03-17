@@ -116,4 +116,12 @@ class ABsmartly:
                        AudienceMatcher(self.audience_deserializer))
 
 
-ABSmartly = ABsmartly
+class ABSmartly(ABsmartly):
+    def __init__(self, *args, **kwargs):
+        import warnings
+        warnings.warn(
+            "ABSmartly is deprecated, use ABsmartly instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        super().__init__(*args, **kwargs)

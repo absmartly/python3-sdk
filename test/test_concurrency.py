@@ -189,6 +189,8 @@ class TestConcurrency(unittest.TestCase):
             t.join()
 
         self.assertEqual(0, len(errors))
+        self.assertGreater(publish_count[0], 0)
+        self.assertEqual(0, context.get_pending_count())
 
         context.close()
 

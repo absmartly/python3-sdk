@@ -6,7 +6,7 @@ import sdk.internal.variant_assigner as assigner
 
 
 def hash_unit(unit):
-    dig = hashlib.md5(str(unit).encode('utf-8')).digest()
+    dig = hashlib.md5(str(unit).encode('utf-8')).digest()  # noqa: S324
     return base64.urlsafe_b64encode(dig).rstrip(b'=')
 
 

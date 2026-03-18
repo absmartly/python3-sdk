@@ -38,6 +38,6 @@ class MatchOperator(BinaryOperator):
                     logger.warning(f"Invalid regex pattern: {e}")
                     return None
                 except Exception as e:
-                    logger.error(f"Unexpected error in regex matching: {e}")
+                    logger.exception("Unexpected error in regex matching: %s", e)
                     return None
         return None

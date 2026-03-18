@@ -64,7 +64,7 @@ def fmix(h: int):
 
 
 def rotate_left(n, d):
-    return (n << d) | (n >> (32 - d)) & 0xFFFFFFFF
+    return ((n << d) | (n >> (32 - d))) & 0xFFFFFFFF
 
 
 def to_signed32(n):

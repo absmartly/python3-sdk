@@ -216,7 +216,7 @@ class Context:
             for attr in self.attributes:
                 if attr.name == name:
                     result = attr.value
-            return result
+            return copy.deepcopy(result) if isinstance(result, (dict, list)) else result
         finally:
             self.context_lock.release_read()
 
@@ -225,7 +225,8 @@ class Context:
             self.context_lock.acquire_read()
             result = {}
             for attr in self.attributes:
-                result[attr.name] = attr.value
+                value = attr.value
+                result[attr.name] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
             return result
         finally:
             self.context_lock.release_read()
@@ -548,6 +549,7 @@ class Context:
         except Exception as e:
             self.close_error = e
             self.log_error(e)
+            raise
 
     def finalize(self):
         return self.close()

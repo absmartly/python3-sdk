@@ -1539,6 +1539,7 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(1, len(published_events[0].goals))
         self.assertEqual("goal1", published_events[0].goals[0].name)
         self.assertEqual(1, context.get_pending_count())
+        self.client.publish = original_publish
         context.close()
 
     def test_flush_restores_events_on_failure(self):
@@ -1585,11 +1586,12 @@ class ContextTest(unittest.TestCase):
             return future
 
         self.client.publish = failing_publish
-        context.close()
+        with self.assertRaises(RuntimeError) as cm:
+            context.close()
 
         self.assertIsNotNone(context.close_error)
         self.assertIsInstance(context.close_error, RuntimeError)
-        self.assertEqual("Publish failed", str(context.close_error))
+        self.assertEqual("Publish failed", str(cm.exception))
 
     def test_close_no_error_on_success(self):
         self.set_up()

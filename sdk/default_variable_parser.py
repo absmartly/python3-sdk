@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Any, Optional
 import json
 
 from sdk.context import Context
@@ -11,7 +11,7 @@ class DefaultVariableParser(VariableParser):
               context: Context,
               experiment_name: str,
               variant_name: str,
-              config: str) -> Optional[dict]:
+              config: str) -> Optional[Any]:
         try:
             result = json.loads(config)
             return result

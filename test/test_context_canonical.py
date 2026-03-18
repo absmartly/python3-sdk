@@ -159,6 +159,8 @@ class ContextCanonicalTestBase(unittest.TestCase):
         config.units = kwargs.get('units', self.units)
         if 'overrides' in kwargs:
             config.overrides = kwargs['overrides']
+        if 'custom_assignments' in kwargs:
+            config.custom_assignments = kwargs['custom_assignments']
         if 'cassignments' in kwargs:
             config.cassigmnents = kwargs['cassignments']
         data_future = kwargs.get('data_future', self.data_future_ready)
@@ -222,6 +224,7 @@ class ContextEventLoggerTests(ContextCanonicalTestBase):
         except RuntimeError:
             pass
         self.assertEqual(self.event_logger.last_type, EventType.ERROR)
+        self.client._publish_future = None
         context.close()
 
     def test_event_logger_on_refresh_success(self):
@@ -624,6 +627,7 @@ class ContextPublishTests(ContextCanonicalTestBase):
         self.client._publish_future = fail_future
         with self.assertRaises(RuntimeError):
             context.publish()
+        self.client._publish_future = None
         context.close()
 
     def test_publish_throws_after_close(self):

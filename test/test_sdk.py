@@ -59,7 +59,7 @@ class TestSDKInitialization(unittest.TestCase):
         client_config.environment = "dev"
 
         http_client = DefaultHTTPClient(DefaultHTTPClientConfig())
-        client = Client(client_config, http_client)
+        _ = Client(client_config, http_client)
 
         self.assertIsNone(client_config.api_key)
 

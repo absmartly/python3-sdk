@@ -1430,6 +1430,12 @@ class ContextTest(unittest.TestCase):
 
         self.assertFalse(context.is_closed())
         self.assertFalse(context.is_failed())
+
+        def success_publish(event):
+            future = Future()
+            future.set_result(None)
+            return future
+        self.client.publish = success_publish
         context.close()
 
     def test_recovery_from_failed_refresh(self):

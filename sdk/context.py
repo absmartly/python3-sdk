@@ -9,7 +9,7 @@ from typing import Optional
 from sdk.audience_matcher import AudienceMatcher
 from sdk.context_config import ContextConfig
 from sdk.context_data_provider import ContextDataProvider
-from sdk.context_event_handler import ContextEventHandler
+from sdk.context_publisher import ContextPublisher
 from sdk.context_event_logger import ContextEventLogger, EventType
 from sdk.internal.lock.atomic_bool import AtomicBool
 from sdk.internal.lock.atomic_int import AtomicInt
@@ -69,7 +69,7 @@ class Context:
     def __init__(self,
                  clock: Clock, config: ContextConfig,
                  data_future: Future, data_provider: ContextDataProvider,
-                 event_handler: ContextEventHandler,
+                 event_handler: ContextPublisher,
                  event_logger: ContextEventLogger,
                  variable_parser: VariableParser,
                  audience_matcher: AudienceMatcher):

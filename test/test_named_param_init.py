@@ -19,7 +19,7 @@ class TestNamedParameterInitialization(unittest.TestCase):
 
         self.assertIsNotNone(sdk)
         self.assertIsNotNone(sdk.context_data_provider)
-        self.assertIsNotNone(sdk.context_event_handler)
+        self.assertIsNotNone(sdk.context_publisher)
         self.assertIsNotNone(sdk.variable_parser)
         self.assertIsNotNone(sdk.audience_deserializer)
 

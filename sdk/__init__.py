@@ -5,6 +5,7 @@ from sdk.client_config import ClientConfig
 from sdk.context import Context
 from sdk.context_config import ContextConfig
 from sdk.context_event_logger import ContextEventLogger
+from sdk.context_publisher import ContextPublisher
 from sdk.default_http_client import DefaultHTTPClient
 from sdk.default_http_client_config import DefaultHTTPClientConfig
 
@@ -18,6 +19,7 @@ __all__ = [
     "Context",
     "ContextConfig",
     "ContextEventLogger",
+    "ContextPublisher",
     "DefaultHTTPClient",
     "DefaultHTTPClientConfig",
 ]

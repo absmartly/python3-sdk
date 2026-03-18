@@ -1,3 +1,4 @@
+import warnings
 from concurrent.futures import Future
 from typing import Optional
 
@@ -66,21 +67,21 @@ class ABsmartly:
 
     def __init__(self, config: ABsmartlyConfig):
         self.context_data_provider = config.context_data_provider
-        self.context_event_handler = config.context_event_handler
+        self.context_publisher = config.context_publisher
         self.context_event_logger = config.context_event_logger
         self.variable_parser = config.variable_parser
         self.audience_deserializer = config.audience_deserializer
 
         if self.context_data_provider is None or \
-                self.context_event_handler is None:
+                self.context_publisher is None:
             self.client = config.client
 
             if self.context_data_provider is None:
                 self.context_data_provider = \
                     DefaultContextDataProvider(self.client)
 
-            if self.context_event_handler is None:
-                self.context_event_handler = \
+            if self.context_publisher is None:
+                self.context_publisher = \
                     DefaultContextPublisher(self.client)
 
         if self.variable_parser is None:
@@ -88,6 +89,27 @@ class ABsmartly:
 
         if self.audience_deserializer is None:
             self.audience_deserializer = DefaultAudienceDeserializer()
+
+    def __getattr__(self, name):
+        if name == "context_event_handler":
+            warnings.warn(
+                "context_event_handler is deprecated, use context_publisher instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return self.context_publisher
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name, value):
+        if name == "context_event_handler":
+            warnings.warn(
+                "context_event_handler is deprecated, use context_publisher instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            super().__setattr__("context_publisher", value)
+        else:
+            super().__setattr__(name, value)
 
     def get_context_data(self) -> Future[Optional[ContextData]]:
         return self.context_data_provider.get_context_data()
@@ -97,7 +119,7 @@ class ABsmartly:
                        config,
                        self.context_data_provider.get_context_data(),
                        self.context_data_provider,
-                       self.context_event_handler,
+                       self.context_publisher,
                        self.context_event_logger,
                        self.variable_parser,
                        AudienceMatcher(self.audience_deserializer))
@@ -110,7 +132,7 @@ class ABsmartly:
         return Context(SystemClockUTC(), config,
                        future_data,
                        self.context_data_provider,
-                       self.context_event_handler,
+                       self.context_publisher,
                        self.context_event_logger,
                        self.variable_parser,
                        AudienceMatcher(self.audience_deserializer))

@@ -3,7 +3,7 @@ from sdk.jsonexpr.operators.binary_operator import BinaryOperator
 
 
 class InOperator(BinaryOperator):
-    def binary(self, evaluator: Evaluator, needle: object, haystack: object):
+    def binary(self, evaluator: Evaluator, haystack: object, needle: object):
         if type(haystack) is list:
             for item in haystack:
                 if evaluator.compare(item, needle) == 0:

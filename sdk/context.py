@@ -297,45 +297,15 @@ class Context:
             if experiment.customFieldValues is not None:
                 experimentCustomFields = {}
                 for customFieldValue in experiment.customFieldValues:
+                    # Store the raw type/value and parse lazily on access (see
+                    # _get_custom_field). Eagerly parsing here would emit a
+                    # spurious ERROR event at ready-time for fields that are
+                    # never accessed (e.g. an intentionally-invalid json field),
+                    # which diverges from the canonical SDKs (JS/dart) that
+                    # parse only when the value is requested.
                     value = ContextCustomFieldValue()
                     value.type = customFieldValue.type
-
-                    if customFieldValue.value is not None:
-                        customValue = customFieldValue.value
-
-                        try:
-                            if customFieldValue.type.startswith("json"):
-                                try:
-                                    import json as _json
-                                    value.value = _json.loads(customValue)
-                                except (ValueError, TypeError):
-                                    self.log_event(
-                                        EventType.ERROR,
-                                        f"Failed to parse JSON custom field {customFieldValue.name}"
-                                    )
-                                    continue
-
-                            elif customFieldValue.type.startswith("boolean"):
-                                value.value = customValue == "true"
-
-                            elif customFieldValue.type.startswith("number"):
-                                try:
-                                    value.value = int(customValue)
-                                except (ValueError, TypeError) as e:
-                                    self.log_event(
-                                        EventType.ERROR,
-                                        f"Failed to parse number custom field {customFieldValue.name}: {e}"
-                                    )
-                                    continue
-
-                            else:
-                                value.value = customValue
-                        except Exception as e:
-                            self.log_event(
-                                EventType.ERROR,
-                                f"Error parsing custom field {customFieldValue.name}: {e}"
-                            )
-                            continue
+                    value.value = customFieldValue.value
 
                     experimentCustomFields[customFieldValue.name] = value
 
@@ -723,19 +693,69 @@ class Context:
             if experiment_name in self.context_custom_fields:
                 custom_field_value = self.context_custom_fields[experiment_name]
                 if key in custom_field_value:
+                    field = custom_field_value[key]
                     if field_attr == 'value':
-                        original_value = custom_field_value[key].value
-                        if isinstance(original_value, (dict, list)):
-                            result = copy.deepcopy(original_value)
-                        else:
-                            result = original_value
+                        result = self._coerce_custom_field_value(
+                            experiment_name, key, field.type, field.value
+                        )
                     else:
-                        result = getattr(custom_field_value[key], field_attr)
+                        result = getattr(field, field_attr)
 
         finally:
             self.data_lock.release_read()
 
         return result
+
+    def _coerce_custom_field_value(self, experiment_name, key, field_type, raw_value):
+        # Parse the stored raw value lazily, matching the canonical JS SDK:
+        # text/string pass through, number -> int, boolean -> == "true",
+        # json -> json.loads (with "null"/"" special-cases). Only here can a
+        # malformed value produce an ERROR event, and only when accessed.
+        if raw_value is None:
+            return None
+
+        if field_type is None:
+            return raw_value
+
+        if field_type.startswith("text") or field_type.startswith("string"):
+            return raw_value
+
+        if field_type.startswith("number"):
+            try:
+                return int(raw_value)
+            except (ValueError, TypeError) as e:
+                self.log_event(
+                    EventType.ERROR,
+                    f"Failed to parse number custom field {key}: {e}"
+                )
+                return None
+
+        if field_type.startswith("boolean"):
+            return raw_value == "true"
+
+        if field_type.startswith("json"):
+            if raw_value == "null":
+                return None
+            if raw_value == "":
+                return ""
+            try:
+                import json as _json
+                parsed = _json.loads(raw_value)
+                if isinstance(parsed, (dict, list)):
+                    return copy.deepcopy(parsed)
+                return parsed
+            except (ValueError, TypeError):
+                self.log_event(
+                    EventType.ERROR,
+                    f"Failed to parse JSON custom field value '{key}' for experiment '{experiment_name}'"
+                )
+                return None
+
+        self.log_event(
+            EventType.ERROR,
+            f"Unknown custom field type '{field_type}' for experiment '{experiment_name}' and key '{key}'"
+        )
+        return None
 
     def get_custom_field_value(self, experiment_name: str, key: str):
         return self._get_custom_field(experiment_name, key, 'value')

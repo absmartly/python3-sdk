@@ -45,6 +45,21 @@ class MD5Test(unittest.TestCase):
             "4PIrO7lKtTxOcj2eMYlG7A",
             self.md5_base64url("special characters a\u00e7b\u2193c"))
 
+    def test_astral_multibyte_characters(self):
+        # Characters outside the BMP are stored as UTF-16 surrogate pairs and
+        # must encode to 4-byte UTF-8; these canonical hashes are shared across
+        # all SDKs.
+        self.assertEqual("KgLqw51xanDs83V5GFkntg", self.md5_base64url("\U0001F600"))
+        self.assertEqual(
+            "ZJuDalvUWRJnVtkspj-2bQ",
+            self.md5_base64url("\U0001F600\U0001F601"))
+        self.assertEqual(
+            "v2CJG7YcjjWncKOSCzF2GA",
+            self.md5_base64url("\u4e16\u754c\u4f60\u597d"))
+        self.assertEqual(
+            "SCgk4OzXlFMvo1UMsP88fA",
+            self.md5_base64url("user_\u4e16\u754c_123"))
+
     def test_quick_brown_fox(self):
         self.assertEqual(
             "nhB9nTcrtoJr2B01QqQZ1g",

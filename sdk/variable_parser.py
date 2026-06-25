@@ -1,5 +1,5 @@
 from abc import abstractmethod
-from typing import Optional
+from typing import Any, Optional
 
 
 class VariableParser:
@@ -9,5 +9,5 @@ class VariableParser:
               context,
               experiment_name: str,
               variant_name: str,
-              variable_value: str) -> Optional[dict]:
+              variable_value: str) -> Optional[Any]:
         raise NotImplementedError

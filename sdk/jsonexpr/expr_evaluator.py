@@ -30,7 +30,6 @@ class ExprEvaluator(Evaluator):
                 if op is not None:
                     res = op.evaluate(self, value)
                     return res
-                break
         return None
 
     def boolean_convert(self, x: object):
@@ -71,9 +70,15 @@ class ExprEvaluator(Evaluator):
             value = None
             if type(target) is list:
                 try:
-                    value = target[int(frag)]
-                except BaseException as err:
-                    print(err)
+                    index = int(frag)
+                    if 0 <= index < len(target):
+                        value = target[index]
+                    else:
+                        return None
+                except ValueError:
+                    return None
+                except Exception as e:
+                    raise ValueError(f"Unexpected error accessing list index '{frag}': {e}") from e
             elif type(target) is dict:
                 if frag not in target:
                     return None

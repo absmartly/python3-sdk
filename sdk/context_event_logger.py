@@ -9,6 +9,7 @@ class EventType(Enum):
     PUBLISH = "publish"
     EXPOSURE = "exposure"
     GOAL = "goal"
+    FINALIZE = "finalize"
     CLOSE = "close"
 
 

@@ -1,5 +1,6 @@
 import base64
 import collections
+import copy
 import hashlib
 import threading
 from concurrent.futures import Future
@@ -8,7 +9,7 @@ from typing import Optional
 from sdk.audience_matcher import AudienceMatcher
 from sdk.context_config import ContextConfig
 from sdk.context_data_provider import ContextDataProvider
-from sdk.context_event_handler import ContextEventHandler
+from sdk.context_publisher import ContextPublisher
 from sdk.context_event_logger import ContextEventLogger, EventType
 from sdk.internal.lock.atomic_bool import AtomicBool
 from sdk.internal.lock.atomic_int import AtomicInt
@@ -41,9 +42,10 @@ class Assignment:
         self.full_on: Optional[bool] = False
         self.custom: Optional[bool] = False
         self.audience_mismatch: Optional[bool] = False
-        self.variables: dict = {}
+        self.variables: Optional[dict] = None
         self.exposed = AtomicBool()
         self.exposedAt: Optional[int] = None
+        self.attrs_seq: Optional[int] = 0
 
 
 class ExperimentVariables:
@@ -67,7 +69,7 @@ class Context:
     def __init__(self,
                  clock: Clock, config: ContextConfig,
                  data_future: Future, data_provider: ContextDataProvider,
-                 event_handler: ContextEventHandler,
+                 event_handler: ContextPublisher,
                  event_logger: ContextEventLogger,
                  variable_parser: VariableParser,
                  audience_matcher: AudienceMatcher):
@@ -86,7 +88,7 @@ class Context:
         self.index_variables = {}
         self.context_custom_fields = {}
         self.assignment_cache = {}
-        self.cassignments = {}
+        self.custom_assignments = {}
         self.overrides = {}
 
         self.exposures = []
@@ -95,6 +97,8 @@ class Context:
         self.data: Optional[ContextData] = None
 
         self.failed = False
+        self.close_error = None
+        self.ready_error = None
 
         self.closed = AtomicBool()
         self.closing = AtomicBool()
@@ -119,6 +123,7 @@ class Context:
         self.hashed_units = dict.fromkeys((range(len(self.units))))
 
         self.attributes: list[Attribute] = []
+        self._attrs_seq = 0
 
         if config.attributes is not None:
             self.set_attributes(config.attributes)
@@ -128,10 +133,11 @@ class Context:
         else:
             self.overrides = {}
 
-        if config.cassigmnents is not None:
-            self.cassignments = dict(config.cassigmnents)
+        cassignments = config.custom_assignments
+        if cassignments is not None:
+            self.custom_assignments = dict(cassignments)
         else:
-            self.cassignments = {}
+            self.custom_assignments = {}
 
         if data_future.done():
             def when_finished(data: Future):
@@ -143,6 +149,9 @@ class Context:
                         data.exception() is not None:
                     self.set_data_failed(data.exception())
                     self.log_error(data.exception())
+                    raise RuntimeError(
+                        "Failed to initialize ABSmartly Context"
+                    ) from data.exception()
 
             data_future.add_done_callback(when_finished)
         else:
@@ -153,7 +162,6 @@ class Context:
                         data.exception() is None:
                     self.set_data(data.result())
                     self.ready_future.set_result(None)
-                    self.ready_future = None
                     self.log_event(EventType.READY, data.result())
 
                     if self.get_pending_count() > 0:
@@ -162,7 +170,6 @@ class Context:
                         data.exception() is not None:
                     self.set_data_failed(data.exception())
                     self.ready_future.set_result(None)
-                    self.ready_future = None
                     self.log_error(data.exception())
 
             data_future.add_done_callback(when_finished)
@@ -178,19 +185,51 @@ class Context:
             self.context_lock.acquire_write()
 
             if unit_type in self.units.keys() and self.units[unit_type] != uid:
-                raise ValueError("Unit already set.")
+                raise ValueError(f"Unit '{unit_type}' UID already set.")
 
             trimmed = uid.strip()
             if len(trimmed) == 0:
-                raise ValueError("Unit UID must not be blank.")
+                raise ValueError(f"Unit '{unit_type}' UID must not be blank.")
 
             self.units[unit_type] = trimmed
         finally:
             self.context_lock.release_write()
 
+    def get_unit(self, unit_type: str):
+        return Concurrency.get_rw(self.context_lock, self.units, unit_type)
+
+    def get_units(self):
+        try:
+            self.context_lock.acquire_read()
+            return dict(self.units)
+        finally:
+            self.context_lock.release_read()
+
     def set_attributes(self, attributes: dict):
         for key, value in attributes.items():
             self.set_attribute(key, value)
+
+    def get_attribute(self, name: str):
+        try:
+            self.context_lock.acquire_read()
+            result = None
+            for attr in self.attributes:
+                if attr.name == name:
+                    result = attr.value
+            return copy.deepcopy(result) if isinstance(result, (dict, list)) else result
+        finally:
+            self.context_lock.release_read()
+
+    def get_attributes(self):
+        try:
+            self.context_lock.acquire_read()
+            result = {}
+            for attr in self.attributes:
+                value = attr.value
+                result[attr.name] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
+            return result
+        finally:
+            self.context_lock.release_read()
 
     def set_attribute(self, name: str, value: object):
         self.check_not_closed()
@@ -198,13 +237,18 @@ class Context:
         attribute.name = name
         attribute.value = value
         attribute.setAt = self.clock.millis()
-        Concurrency.add_rw(self.context_lock, self.attributes, attribute)
+        try:
+            self.context_lock.acquire_write()
+            self.attributes.append(attribute)
+            self._attrs_seq += 1
+        finally:
+            self.context_lock.release_write()
 
     def check_not_closed(self):
         if self.closed.value:
-            raise RuntimeError('ABSmartly Context is closed')
+            raise RuntimeError('ABsmartly Context is finalized.')
         elif self.closing.value:
-            raise RuntimeError('ABSmartly Context is closing')
+            raise RuntimeError('ABsmartly Context is finalizing.')
 
     def set_data(self, data: ContextData):
         index = {}
@@ -218,14 +262,34 @@ class Context:
 
             for variant in experiment.variants:
                 if variant.config is not None and len(variant.config) > 0:
-                    variables = self.variable_parser.parse(
-                        self,
-                        experiment.name,
-                        variant.name,
-                        variant.config)
-                    for key, value in variables.items():
-                        index_variables[key] = experiment_variables
-                    experiment_variables.variables.append(variables)
+                    try:
+                        variables = self.variable_parser.parse(
+                            self,
+                            experiment.name,
+                            variant.name,
+                            variant.config)
+
+                        if variables is None:
+                            self.log_event(
+                                EventType.ERROR,
+                                f"Failed to parse variant config for {experiment.name}/{variant.name}"
+                            )
+                            experiment_variables.variables.append({})
+                            continue
+
+                        for key, value in variables.items():
+                            if key in index_variables:
+                                if experiment_variables not in index_variables[key]:
+                                    index_variables[key].append(experiment_variables)
+                            else:
+                                index_variables[key] = [experiment_variables]
+                        experiment_variables.variables.append(variables)
+                    except Exception as e:
+                        self.log_event(
+                            EventType.ERROR,
+                            f"Error parsing variant {experiment.name}/{variant.name}: {e}"
+                        )
+                        experiment_variables.variables.append({})
                 else:
                     experiment_variables.variables.append({})
             index[experiment.name] = experiment_variables
@@ -233,28 +297,15 @@ class Context:
             if experiment.customFieldValues is not None:
                 experimentCustomFields = {}
                 for customFieldValue in experiment.customFieldValues:
+                    # Store the raw type/value and parse lazily on access (see
+                    # _get_custom_field). Eagerly parsing here would emit a
+                    # spurious ERROR event at ready-time for fields that are
+                    # never accessed (e.g. an intentionally-invalid json field),
+                    # which diverges from the canonical SDKs (JS/dart) that
+                    # parse only when the value is requested.
                     value = ContextCustomFieldValue()
                     value.type = customFieldValue.type
-
-                    if customFieldValue.value is not None:
-                        customValue = customFieldValue.value
-
-                        if customFieldValue.type.startswith("json"):
-                            value.value = self.variable_parser.parse(
-                                self,
-                                experiment.name,
-                                customFieldValue.name,
-                                customValue)
-
-                        elif customFieldValue.type.startswith("boolean"):
-                            value.value = bool(customValue)
-
-                        elif customFieldValue.type.startswith("number"):
-                            value.value = int(customValue)
-
-
-                        else:
-                            value.value = customValue
+                    value.value = customFieldValue.value
 
                     experimentCustomFields[customFieldValue.name] = value
 
@@ -275,11 +326,13 @@ class Context:
     def set_refresh_timer(self):
         if self.refresh_interval > 0 and self.refresh_timer is None and not self.is_closing() and not self.is_closed():
             def ref():
-                self.refresh_async()
-                self.refresh_timer = threading.Timer(
-                    self.refresh_interval,
-                    ref)
-                self.refresh_timer.start()
+                if not self.is_closed() and not self.is_closing():
+                    self.refresh_async()
+                    if not self.is_closed() and not self.is_closing():
+                        self.refresh_timer = threading.Timer(
+                            self.refresh_interval,
+                            ref)
+                        self.refresh_timer.start()
 
             self.refresh_timer = threading.Timer(
                 self.refresh_interval,
@@ -287,7 +340,7 @@ class Context:
             self.refresh_timer.start()
 
     def set_timeout(self):
-        if self.is_ready():
+        if self.is_ready() and self.publish_delay >= 0:
             if self.timeout is None:
                 try:
                     self.timeout_lock.acquire_write()
@@ -309,8 +362,14 @@ class Context:
     def is_closed(self):
         return self.closed.value
 
+    def is_finalized(self):
+        return self.is_closed()
+
     def is_closing(self):
         return not self.closed.value and self.closing.value
+
+    def is_finalizing(self):
+        return self.is_closing()
 
     def refresh_async(self):
         self.check_not_closed()
@@ -349,6 +408,7 @@ class Context:
             self.index_variables = {}
             self.data = ContextData()
             self.failed = True
+            self.ready_error = exception
         finally:
             self.data_lock.release_write()
 
@@ -383,7 +443,10 @@ class Context:
                         if len(self.achievements) > 0:
                             achievements = list(self.achievements)
                             self.achievements.clear()
-                        self.pending_count.set(0)
+
+                        self.pending_count.set(
+                            self.pending_count.get() - event_count
+                        )
                 finally:
                     self.event_lock.release_write()
 
@@ -419,6 +482,17 @@ class Context:
                             result.set_result(None)
                         elif data.cancelled() is False and \
                                 data.exception() is not None:
+                            try:
+                                self.event_lock.acquire_write()
+                                if exposures:
+                                    self.exposures = exposures + self.exposures
+                                if achievements:
+                                    self.achievements = achievements + self.achievements
+                                self.pending_count.set(
+                                    self.pending_count.get() + event_count
+                                )
+                            finally:
+                                self.event_lock.release_write()
                             self.log_error(data.exception())
                             result.set_exception(data.exception())
 
@@ -440,7 +514,18 @@ class Context:
         return result
 
     def close(self):
-        self.close_async().result()
+        try:
+            self.close_async().result()
+        except Exception as e:
+            self.close_error = e
+            self.log_error(e)
+            raise
+
+    def finalize(self):
+        return self.close()
+
+    def finalize_async(self):
+        return self.close_async()
 
     def refresh(self):
         self.refresh_async().result()
@@ -502,12 +587,17 @@ class Context:
                 self.timeout_lock.release_write()
 
     def clear_refresh_timer(self):
-        if self.refresh_timer is not None:
-            self.refresh_timer.cancel()
-            self.refresh_timer = None
+        try:
+            self.timeout_lock.acquire_write()
+            if self.refresh_timer is not None:
+                self.refresh_timer.cancel()
+                self.refresh_timer = None
+        finally:
+            self.timeout_lock.release_write()
 
     def get_variable_value(self, key: str, default_value: object):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return default_value
 
         assignment = self.get_variable_assignment(key)
         if assignment is not None:
@@ -520,7 +610,8 @@ class Context:
         return default_value
 
     def peek_variable_value(self, key: str, default_value: object):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return default_value
 
         assignment = self.get_variable_assignment(key)
         if assignment is not None:
@@ -530,7 +621,8 @@ class Context:
         return default_value
 
     def peek_treatment(self, experiment_name: str):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return 0
 
         return self.get_assignment(experiment_name).variant
 
@@ -547,28 +639,30 @@ class Context:
             computer)
 
     def get_treatment(self, experiment_name: str, exposed_at: int = None):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return 0
         assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
         if not assignment.exposed.value:
             self.queue_exposure(assignment)
         return assignment.variant
 
     def get_variable_keys(self):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return {}
 
         variable_keys = {}
         try:
             self.data_lock.acquire_read()
-            for key, value in self.index_variables.items():
-                expr_var: ExperimentVariables = value
-                variable_keys[key] = expr_var.data.name
+            for key, experiments in self.index_variables.items():
+                variable_keys[key] = [expr_var.data.name for expr_var in experiments]
         finally:
-            self.data_lock.release_write()
+            self.data_lock.release_read()
 
         return variable_keys
 
     def get_custom_field_keys(self):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return []
 
         keys = []
         try:
@@ -581,46 +675,114 @@ class Context:
                     for customFieldValue in customFieldValues:
                         keys.append(customFieldValue.name)
         finally:
-            self.data_lock.release_write()
+            self.data_lock.release_read()
 
         keys = list(set(keys))
         keys.sort()
 
         return keys
 
-    def get_custom_field_value(self, experiment_name: str, key: str):
-        self.check_ready(True)
+    def _get_custom_field(self, experiment_name: str, key: str, field_attr: str):
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return None
 
-        value: any = None
+        result = None
         try:
             self.data_lock.acquire_read()
 
             if experiment_name in self.context_custom_fields:
                 custom_field_value = self.context_custom_fields[experiment_name]
                 if key in custom_field_value:
-                    value = custom_field_value[key].value
+                    field = custom_field_value[key]
+                    if field_attr == 'value':
+                        result = self._coerce_custom_field_value(
+                            experiment_name, key, field.type, field.value
+                        )
+                    else:
+                        result = getattr(field, field_attr)
 
         finally:
             self.data_lock.release_read()
 
-        return value
+        return result
+
+    def _coerce_custom_field_value(self, experiment_name, key, field_type, raw_value):
+        # Parse the stored raw value lazily, matching the canonical JS SDK:
+        # text/string pass through, number -> int, boolean -> == "true",
+        # json -> json.loads (with "null"/"" special-cases). Only here can a
+        # malformed value produce an ERROR event, and only when accessed.
+        if raw_value is None:
+            return None
+
+        if field_type is None:
+            return raw_value
+
+        if field_type.startswith("text") or field_type.startswith("string"):
+            return raw_value
+
+        if field_type.startswith("number"):
+            try:
+                return int(raw_value)
+            except (ValueError, TypeError) as e:
+                self.log_event(
+                    EventType.ERROR,
+                    f"Failed to parse number custom field {key}: {e}"
+                )
+                return None
+
+        if field_type.startswith("boolean"):
+            return raw_value == "true"
+
+        if field_type.startswith("json"):
+            if raw_value == "null":
+                return None
+            if raw_value == "":
+                return ""
+            try:
+                import json as _json
+                parsed = _json.loads(raw_value)
+                if isinstance(parsed, (dict, list)):
+                    return copy.deepcopy(parsed)
+                return parsed
+            except (ValueError, TypeError):
+                self.log_event(
+                    EventType.ERROR,
+                    f"Failed to parse JSON custom field value '{key}' for experiment '{experiment_name}'"
+                )
+                return None
+
+        self.log_event(
+            EventType.ERROR,
+            f"Unknown custom field type '{field_type}' for experiment '{experiment_name}' and key '{key}'"
+        )
+        return None
+
+    def get_custom_field_value(self, experiment_name: str, key: str):
+        return self._get_custom_field(experiment_name, key, 'value')
+
+    def get_custom_field_value_type(self, experiment_name: str, key: str):
+        return self._get_custom_field(experiment_name, key, 'type')
 
     def get_custom_field_type(self, experiment_name: str, key: str):
-        self.check_ready(True)
+        return self.get_custom_field_value_type(experiment_name, key)
 
-        type = None
-        try:
-            self.data_lock.acquire_read()
+    def _build_audience_attributes(self):
+        """Helper method to build audience attributes map from current attributes."""
+        attrs = {}
+        for attr in self.attributes:
+            attrs[attr.name] = attr.value
+        return attrs
 
-            if experiment_name in self.context_custom_fields:
-                customFieldValue = self.context_custom_fields[experiment_name]
-                if key in customFieldValue:
-                    type = customFieldValue[key].type
+    def _audience_matches(self, experiment: Experiment, assignment: Assignment):
+        if experiment.audience is not None and len(experiment.audience) > 0:
+            if self._attrs_seq > (assignment.attrs_seq or 0):
+                attrs = self._build_audience_attributes()
+                match = self.audience_matcher.evaluate(experiment.audience, attrs)
+                new_audience_mismatch = not match.result if match is not None else False
 
-        finally:
-            self.data_lock.release_read()
-
-        return type
+                if new_audience_mismatch != assignment.audience_mismatch:
+                    return False
+        return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
         try:
@@ -640,11 +802,12 @@ class Context:
                 elif experiment is None:
                     if assignment.assigned is False:
                         return assignment
-                elif experiment_name not in self.cassignments or \
-                        self.cassignments[experiment_name] == \
+                elif experiment_name not in self.custom_assignments or \
+                        self.custom_assignments[experiment_name] == \
                         assignment.variant:
                     if experiment_matches(experiment.data, assignment):
-                        return assignment
+                        if self._audience_matches(experiment.data, assignment):
+                            return assignment
         finally:
             self.context_lock.release_read()
 
@@ -672,9 +835,7 @@ class Context:
 
                     if experiment.data.audience is not None and \
                             len(experiment.data.audience) > 0:
-                        attrs = {}
-                        for attr in self.attributes:
-                            attrs[attr.name] = attr.value
+                        attrs = self._build_audience_attributes()
                         match = self.audience_matcher.evaluate(
                             experiment.data.audience,
                             attrs)
@@ -696,8 +857,8 @@ class Context:
                                     experiment.data.trafficSeedHi,
                                     experiment.data.trafficSeedLo) == 1
                             if eligible:
-                                if experiment_name in self.cassignments:
-                                    custom = self.cassignments[experiment_name]
+                                if experiment_name in self.custom_assignments:
+                                    custom = self.custom_assignments[experiment_name]
                                     assignment.variant = custom
                                     assignment.custom = True
                                 else:
@@ -721,8 +882,10 @@ class Context:
                     assignment.iteration = experiment.data.iteration
                     assignment.traffic_split = experiment.data.trafficSplit
                     assignment.full_on_variant = experiment.data.fullOnVariant
+                    assignment.attrs_seq = self._attrs_seq
 
             if experiment is not None and \
+                    assignment.variant >= 0 and \
                     (assignment.variant < len(experiment.data.variants)):
                 assignment.variables = experiment.variables[assignment.variant]
 
@@ -733,7 +896,7 @@ class Context:
 
     def check_ready(self, expect_not_closed: bool):
         if not self.is_ready():
-            raise RuntimeError('ABSmartly Context is not yet ready')
+            raise RuntimeError('ABsmartly Context is not yet ready.')
         elif expect_not_closed:
             self.check_not_closed()
 
@@ -745,7 +908,8 @@ class Context:
             self.data_lock.release_read()
 
     def get_experiments(self):
-        self.check_ready(True)
+        if not self.is_ready() or self.is_closed() or self.is_closing():
+            return []
 
         try:
             self.data_lock.acquire_read()
@@ -767,8 +931,6 @@ class Context:
             self.data_lock.release_read()
 
     def set_override(self, experiment_name: str, variant: int):
-        self.check_not_closed()
-
         return Concurrency.put_rw(self.context_lock,
                                   self.overrides,
                                   experiment_name, variant)
@@ -786,12 +948,12 @@ class Context:
         self.check_not_closed()
 
         Concurrency.put_rw(self.context_lock,
-                           self.cassignments,
+                           self.custom_assignments,
                            experiment_name, variant)
 
     def get_custom_assignment(self, experiment_name: str):
         return Concurrency.get_rw(self.context_lock,
-                                  self.cassignments,
+                                  self.custom_assignments,
                                   experiment_name)
 
     def set_custom_assignments(self, custom_assignments: dict):
@@ -807,7 +969,10 @@ class Context:
                                                 unit_type, apply)
 
     def get_variable_experiment(self, key: str):
-        return Concurrency.get_rw(self.data_lock, self.index_variables, key)
+        experiments = Concurrency.get_rw(self.data_lock, self.index_variables, key)
+        if experiments:
+            return experiments[0]
+        return None
 
     def get_variable_assignment(self, key: str):
         experiment: ExperimentVariables = self.get_variable_experiment(key)
@@ -834,7 +999,7 @@ class Context:
                                 and res.exception() is not None:
                             self.closed.set(True)
                             self.closing.set(False)
-                            self.closing_future.exception(res.exception())
+                            self.closing_future.set_exception(res.exception())
 
                     self.flush().add_done_callback(accept)
                     return self.closing_future

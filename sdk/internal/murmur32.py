@@ -1,18 +1,8 @@
-import sys as _sys
-
-if _sys.version_info > (3, 0):
-    def xrange(a, b, c):
-        return range(a, b, c)
-
-    def xencode(x):
-        if isinstance(x, bytes) or isinstance(x, bytearray):
-            return x
-        else:
-            return x.encode()
-else:
-    def xencode(x):
+def xencode(x):
+    if isinstance(x, bytes) or isinstance(x, bytearray):
         return x
-del _sys
+    else:
+        return x.encode()
 
 
 def digest(key, seed):
@@ -26,18 +16,18 @@ def digest(key, seed):
     c1 = 0xcc9e2d51
     c2 = 0x1b873593
 
-    for block_start in xrange(0, nblocks * 4, 4):
+    for block_start in range(0, nblocks * 4, 4):
         k1 = key[block_start + 3] << 24 | \
              key[block_start + 2] << 16 | \
              key[block_start + 1] << 8 | \
              key[block_start + 0]
 
         k1 = (c1 * k1) & 0xFFFFFFFF
-        k1 = rotate_right(k1, 15)
+        k1 = rotate_left(k1, 15)
         k1 = (c2 * k1) & 0xFFFFFFFF
 
         h1 ^= k1
-        h1 = rotate_right(h1, 13)
+        h1 = rotate_left(h1, 13)
         h1 = (h1 * 5 + 0xe6546b64) & 0xFFFFFFFF
 
     tail_index = nblocks * 4
@@ -53,7 +43,7 @@ def digest(key, seed):
 
     if tail_size > 0:
         k1 = (k1 * c1) & 0xFFFFFFFF
-        k1 = rotate_right(k1, 15)
+        k1 = rotate_left(k1, 15)
         k1 = (k1 * c2) & 0xFFFFFFFF
         h1 ^= k1
 
@@ -73,8 +63,8 @@ def fmix(h: int):
     return h
 
 
-def rotate_right(n, d):
-    return (n << d) | (n >> (32 - d)) & 0xFFFFFFFF
+def rotate_left(n, d):
+    return ((n << d) | (n >> (32 - d))) & 0xFFFFFFFF
 
 
 def to_signed32(n):

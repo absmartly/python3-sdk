@@ -1,6 +1,4 @@
-import base64
 import collections
-import hashlib
 import threading
 from concurrent.futures import Future
 from typing import Optional
@@ -10,6 +8,7 @@ from sdk.context_config import ContextConfig
 from sdk.context_data_provider import ContextDataProvider
 from sdk.context_event_handler import ContextEventHandler
 from sdk.context_event_logger import ContextEventLogger, EventType
+from sdk.internal import hashing
 from sdk.internal.lock.atomic_bool import AtomicBool
 from sdk.internal.lock.atomic_int import AtomicInt
 from sdk.internal.lock.concurrency import Concurrency
@@ -536,9 +535,7 @@ class Context:
 
     def get_unit_hash(self, unit_type: str, unit_uid: str):
         def computer(key: str):
-            dig = hashlib.md5(unit_uid.encode('utf-8')).digest()
-            unithash = base64.urlsafe_b64encode(dig).rstrip(b'=')
-            return unithash
+            return hashing.hash_unit(unit_uid).encode('ascii')
 
         return Concurrency.compute_if_absent_rw(
             self.context_lock,

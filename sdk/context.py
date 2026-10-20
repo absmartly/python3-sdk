@@ -336,11 +336,13 @@ class Context:
                     self.refresh_timer = threading.Timer(
                         self.refresh_interval,
                         ref)
+                    self.refresh_timer.daemon = True
                     self.refresh_timer.start()
 
             self.refresh_timer = threading.Timer(
                 self.refresh_interval,
                 ref)
+            self.refresh_timer.daemon = True
             self.refresh_timer.start()
 
     def set_timeout(self):
@@ -353,6 +355,7 @@ class Context:
                         self.flush()
 
                     self.timeout = threading.Timer(self.publish_delay, flush)
+                    self.timeout.daemon = True
                     self.timeout.start()
                 finally:
                     self.timeout_lock.release_write()

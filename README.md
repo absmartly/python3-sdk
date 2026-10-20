@@ -35,7 +35,7 @@ This example assumes an API Key, an Application, and an Environment have been cr
 #### Recommended: Named Parameters
 
 ```python
-from absmartly import ABsmartly, ContextConfig
+from sdk import ABsmartly, ContextConfig
 
 def main():
     sdk = ABsmartly.create(
@@ -54,7 +54,7 @@ def main():
 #### With Optional Parameters
 
 ```python
-from absmartly import ABsmartly, ContextConfig
+from sdk import ABsmartly, ContextConfig
 
 sdk = ABsmartly.create(
     endpoint="https://your-company.absmartly.io/v1",
@@ -71,7 +71,7 @@ sdk = ABsmartly.create(
 For use cases where you need to manually configure all components:
 
 ```python
-from absmartly import (
+from sdk import (
     ABsmartly,
     ABsmartlyConfig,
     Client,
@@ -339,7 +339,7 @@ The ABsmartly SDK can be instantiated with an event logger used for all contexts
 In addition, an event logger can be specified when creating a particular context, in the `ContextConfig`.
 
 ```python
-from absmartly import ABsmartly, ContextEventLogger, EventType
+from sdk import ABsmartly, ContextEventLogger, EventType
 
 
 class CustomEventLogger(ContextEventLogger):
@@ -393,7 +393,7 @@ The data parameter depends on the type of event.
 
 ```python
 from flask import Flask, session, render_template
-from absmartly import ABsmartly, ContextConfig
+from sdk import ABsmartly, ContextConfig
 
 app = Flask(__name__)
 
@@ -427,7 +427,7 @@ def index():
 
 ```python
 # settings.py
-from absmartly import ABsmartly
+from sdk import ABsmartly
 
 ABSMARTLY_SDK = ABsmartly.create(
     endpoint="https://your-company.absmartly.io/v1",
@@ -439,7 +439,7 @@ ABSMARTLY_SDK = ABsmartly.create(
 # views.py
 from django.conf import settings
 from django.shortcuts import render
-from absmartly import ContextConfig
+from sdk import ContextConfig
 
 def my_view(request):
     context_config = ContextConfig()
@@ -460,7 +460,7 @@ def my_view(request):
 
 ```python
 from fastapi import FastAPI, Request
-from absmartly import ABsmartly, ContextConfig
+from sdk import ABsmartly, ContextConfig
 import uuid
 
 app = FastAPI()

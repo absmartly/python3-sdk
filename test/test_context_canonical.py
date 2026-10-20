@@ -1056,3 +1056,37 @@ class ContextConcurrencyAndParserTests(unittest.TestCase):
         result = ctx._coerce_custom_field_value("exp", "payload", "json", '{"raw":true}')
         self.assertEqual({"decoded_by_custom_parser": True}, result)
         ctx.variable_parser.parse.assert_called_once_with(ctx, "exp", "payload", '{"raw":true}')
+
+
+class ReadWriteLockOwnershipTests(unittest.TestCase):
+
+    def test_cross_thread_reader_release_then_writer(self):
+        import threading
+        from sdk.internal.lock.read_write_lock import ReadWriteLock
+        lock = ReadWriteLock()
+        a_in, b_in, a_out = threading.Event(), threading.Event(), threading.Event()
+        errors = []
+
+        def a():
+            lock.acquire_read(); a_in.set(); b_in.wait(5)
+            lock.release_read(); a_out.set()
+
+        def b():
+            a_in.wait(5); lock.acquire_read(); b_in.set(); a_out.wait(5)
+            try:
+                lock.release_read()
+            except Exception as e:
+                errors.append(e)
+
+        ts = [threading.Thread(target=a), threading.Thread(target=b)]
+        [t.start() for t in ts]; [t.join(10) for t in ts]
+        self.assertEqual([], errors)
+        lock.acquire_write(); lock.release_write()
+
+    def test_writer_can_nest_and_read(self):
+        from sdk.internal.lock.read_write_lock import ReadWriteLock
+        lock = ReadWriteLock()
+        lock.acquire_write(); lock.acquire_write()
+        lock.acquire_read(); lock.release_read()
+        lock.release_write(); lock.release_write()
+        lock.acquire_write(); lock.release_write()

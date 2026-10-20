@@ -55,9 +55,9 @@ class DefaultHTTPClient(HTTPClient):
              headers: dict,
              body: bytearray) -> Response:
         headers.update({'Content-type': 'application/json'})
-        return self.http_client.put(url,
-                                    data=bytes(body),
-                                    params=query,
-                                    headers=headers,
-                                    timeout=(self.timeout,
-                                             self.request_timeout))
+        return self.http_client.post(url,
+                                     data=bytes(body),
+                                     params=query,
+                                     headers=headers,
+                                     timeout=(self.timeout,
+                                              self.request_timeout))

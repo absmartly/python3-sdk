@@ -20,4 +20,6 @@ jobs:
           python -m build
 
       - name: Run Tests
-        run: sh run.sh
+        run: |
+          source venv_python3-sdk/bin/activate
+          python -m unittest

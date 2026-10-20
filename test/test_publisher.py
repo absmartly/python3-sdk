@@ -161,3 +161,17 @@ class TestPublisher(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class DefaultHTTPClientMethodTests(unittest.TestCase):
+
+    def test_post_uses_http_post_and_put_uses_http_put(self):
+        from sdk.default_http_client import DefaultHTTPClient
+        from sdk.default_http_client_config import DefaultHTTPClientConfig
+        client = DefaultHTTPClient(DefaultHTTPClientConfig())
+        client.http_client = Mock()
+        client.post("http://x/y", {}, {}, bytearray(b"{}"))
+        client.http_client.post.assert_called_once()
+        client.http_client.put.assert_not_called()
+        client.put("http://x/y", {}, {}, bytearray(b"{}"))
+        client.http_client.put.assert_called_once()

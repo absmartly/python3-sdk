@@ -716,7 +716,7 @@ class Context:
     def _coerce_custom_field_value(self, experiment_name, key, field_type, raw_value):
         # Parse the stored raw value lazily, matching the canonical JS SDK:
         # text/string pass through, number -> int, boolean -> == "true",
-        # json -> json.loads (with "null"/"" special-cases). Only here can a
+        # json -> configured variable parser (with "null"/"" special-cases). Only here can a
         # malformed value produce an ERROR event, and only when accessed.
         if raw_value is None:
             return None
@@ -746,12 +746,12 @@ class Context:
             if raw_value == "":
                 return ""
             try:
-                import json as _json
-                parsed = _json.loads(raw_value)
+                parsed = self.variable_parser.parse(
+                    self, experiment_name, key, raw_value)
                 if isinstance(parsed, (dict, list)):
                     return copy.deepcopy(parsed)
                 return parsed
-            except (ValueError, TypeError):
+            except Exception:
                 self.log_event(
                     EventType.ERROR,
                     f"Failed to parse JSON custom field value '{key}' for experiment '{experiment_name}'"

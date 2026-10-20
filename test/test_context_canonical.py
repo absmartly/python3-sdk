@@ -1015,3 +1015,44 @@ class ContextPublishDelayTests(ContextCanonicalTestBase):
             time.sleep(0.02)
         self.assertEqual(0, context.get_pending_count())
         context.close()
+
+
+class ContextConcurrencyAndParserTests(unittest.TestCase):
+
+    def test_overlapping_get_rw_does_not_wedge_lock(self):
+        import threading
+        from sdk.internal.lock.concurrency import Concurrency
+        from sdk.internal.lock.read_write_lock import ReadWriteLock
+        lock = ReadWriteLock()
+        data = {"a": 1}
+        errors = []
+
+        def reader():
+            try:
+                for _ in range(2000):
+                    Concurrency.get_rw(lock, data, "a")
+            except Exception as e:
+                errors.append(e)
+
+        threads = [threading.Thread(target=reader) for _ in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(10)
+        self.assertEqual([], errors)
+        acquired = []
+        w = threading.Thread(target=lambda: (lock.acquire_write(), acquired.append(1), lock.release_write()))
+        w.start()
+        w.join(5)
+        self.assertEqual([1], acquired)
+
+    def test_json_custom_field_uses_configured_parser(self):
+        from unittest.mock import MagicMock
+        from sdk.context import Context
+        ctx = Context.__new__(Context)
+        ctx.variable_parser = MagicMock()
+        ctx.variable_parser.parse.return_value = {"decoded_by_custom_parser": True}
+        ctx.log_event = MagicMock()
+        result = ctx._coerce_custom_field_value("exp", "payload", "json", '{"raw":true}')
+        self.assertEqual({"decoded_by_custom_parser": True}, result)
+        ctx.variable_parser.parse.assert_called_once_with(ctx, "exp", "payload", '{"raw":true}')

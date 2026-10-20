@@ -326,13 +326,17 @@ class Context:
     def set_refresh_timer(self):
         if self.refresh_interval > 0 and self.refresh_timer is None and not self.is_closing() and not self.is_closed():
             def ref():
-                if not self.is_closed() and not self.is_closing():
+                if self.is_closed() or self.is_closing():
+                    return
+                try:
                     self.refresh_async()
-                    if not self.is_closed() and not self.is_closing():
-                        self.refresh_timer = threading.Timer(
-                            self.refresh_interval,
-                            ref)
-                        self.refresh_timer.start()
+                except RuntimeError:
+                    return
+                if not self.is_closed() and not self.is_closing():
+                    self.refresh_timer = threading.Timer(
+                        self.refresh_interval,
+                        ref)
+                    self.refresh_timer.start()
 
             self.refresh_timer = threading.Timer(
                 self.refresh_interval,

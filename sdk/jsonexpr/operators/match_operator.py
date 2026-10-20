@@ -23,7 +23,8 @@ class MatchOperator(BinaryOperator):
 
                 try:
                     compiled = re.compile(pattern)
-                    with ThreadPoolExecutor(max_workers=1) as pool:
+                    pool = ThreadPoolExecutor(max_workers=1)
+                    try:
                         future = pool.submit(compiled.match, text)
                         try:
                             result = future.result(
@@ -34,6 +35,8 @@ class MatchOperator(BinaryOperator):
                             logger.warning("Regex execution timeout (potential ReDoS)")
                             future.cancel()
                             return None
+                    finally:
+                        pool.shutdown(wait=False)
                 except re.error as e:
                     logger.warning(f"Invalid regex pattern: {e}")
                     return None

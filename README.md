@@ -17,7 +17,7 @@ pip install absmartly
 
 ### Dependencies
 
-```
+```text
 setuptools~=60.2.0
 requests~=2.28.1
 urllib3~=1.26.12
@@ -480,7 +480,7 @@ async def root(request: Request):
     }
 
     ctx = sdk.create_context(context_config)
-    await ctx.wait_until_ready_async()
+    ctx.wait_until_ready_async().result()
 
     treatment = ctx.get_treatment("exp_test_experiment")
 

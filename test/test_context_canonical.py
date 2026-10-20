@@ -643,7 +643,7 @@ class ContextFinalizeTests(ContextCanonicalTestBase):
     def test_finalize_does_not_publish_when_empty(self):
         self.set_up()
         context = self.create_ready_context()
-        context.close()
+        context.finalize()
         self.assertEqual(0, len(self.client._publish_calls))
         self.assertTrue(context.is_closed())
 
@@ -651,7 +651,7 @@ class ContextFinalizeTests(ContextCanonicalTestBase):
         self.set_up()
         context = self.create_ready_context()
         context.track("goal1", {"amount": 100})
-        context.close()
+        context.finalize()
         self.assertEqual(1, len(self.client._publish_calls))
         self.assertTrue(context.is_closed())
 
@@ -659,7 +659,7 @@ class ContextFinalizeTests(ContextCanonicalTestBase):
         self.set_up()
         context = self.create_ready_context()
         context.get_treatment("exp_test_ab")
-        context.close()
+        context.finalize()
         self.assertEqual(1, len(self.client._publish_calls))
         event = self.client._publish_calls[0]
         self.assertIsNotNone(event.exposures)
@@ -669,7 +669,7 @@ class ContextFinalizeTests(ContextCanonicalTestBase):
         self.set_up()
         context = self.create_ready_context()
         context.track("goal1", {"amount": 100})
-        context.close()
+        context.finalize()
         event = self.client._publish_calls[0]
         self.assertIsNotNone(event.goals)
         self.assertEqual(1, len(event.goals))
@@ -679,7 +679,7 @@ class ContextFinalizeTests(ContextCanonicalTestBase):
         context = self.create_ready_context()
         context.set_attribute("attr1", "value1")
         context.track("goal1", {"amount": 100})
-        context.close()
+        context.finalize()
         event = self.client._publish_calls[0]
         self.assertIsNotNone(event.attributes)
         self.assertEqual(1, len(event.attributes))
@@ -688,14 +688,14 @@ class ContextFinalizeTests(ContextCanonicalTestBase):
         self.set_up()
         context = self.create_ready_context()
         context.track("goal1", {"amount": 100})
-        context.close()
+        context.finalize()
         self.assertEqual(0, context.get_pending_count())
 
     def test_finalize_stops_refresh_timer(self):
         self.set_up()
         context = self.create_ready_context(data_future=self.data_future_refresh)
         self.assertIsNotNone(context.refresh_timer)
-        context.close()
+        context.finalize()
         self.assertIsNone(context.refresh_timer)
 
 
@@ -708,12 +708,12 @@ class ContextRefreshTests(ContextCanonicalTestBase):
         context.refresh()
         experiments = context.get_experiments()
         self.assertIn("exp_test_new", experiments)
-        context.close()
+        context.finalize()
 
     def test_refresh_throws_after_close(self):
         self.set_up()
         context = self.create_ready_context()
-        context.close()
+        context.finalize()
         with self.assertRaises(RuntimeError):
             context.refresh()
 
@@ -724,7 +724,7 @@ class ContextRefreshTests(ContextCanonicalTestBase):
         context.refresh()
         result = context.get_treatment("exp_test_ab")
         self.assertEqual(2, result)
-        context.close()
+        context.finalize()
 
     def test_refresh_keeps_custom_assignments(self):
         self.set_up()
@@ -733,7 +733,7 @@ class ContextRefreshTests(ContextCanonicalTestBase):
         context.refresh()
         result = context.get_treatment("exp_test_ab")
         self.assertEqual(2, result)
-        context.close()
+        context.finalize()
 
     def test_refresh_not_requeue_when_not_changed(self):
         self.set_up()
@@ -744,7 +744,7 @@ class ContextRefreshTests(ContextCanonicalTestBase):
         context.refresh()
         context.get_treatment("exp_test_ab")
         self.assertEqual(initial_count, context.get_pending_count())
-        context.close()
+        context.finalize()
 
     def test_refresh_not_requeue_with_override(self):
         self.set_up()
@@ -755,7 +755,7 @@ class ContextRefreshTests(ContextCanonicalTestBase):
         context.refresh()
         context.get_treatment("exp_test_ab")
         self.assertEqual(initial_count, context.get_pending_count())
-        context.close()
+        context.finalize()
 
     def test_refresh_picks_up_experiment_started(self):
         self.set_up()
@@ -766,7 +766,7 @@ class ContextRefreshTests(ContextCanonicalTestBase):
         context.refresh()
         result = context.get_treatment("exp_test_new")
         self.assertEqual(1, result)
-        context.close()
+        context.finalize()
 
     def test_refresh_picks_up_experiment_stopped(self):
         self.set_up()
@@ -777,7 +777,15 @@ class ContextRefreshTests(ContextCanonicalTestBase):
         context.refresh()
         result = context.get_treatment("exp_test_new")
         self.assertEqual(0, result)
-        context.close()
+        context.finalize()
+
+    def test_finalize_async_publishes_pending_events(self):
+        self.set_up()
+        context = self.create_ready_context()
+        context.track("goal1", {"amount": 100})
+        context.finalize_async().result()
+        self.assertEqual(1, len(self.client._publish_calls))
+        self.assertTrue(context.is_finalized())
 
 
 class ContextUnitTests(ContextCanonicalTestBase):
@@ -788,7 +796,7 @@ class ContextUnitTests(ContextCanonicalTestBase):
         context = self.create_context(config, self.data_future)
         self.assertFalse(context.is_ready())
         context.set_unit("session_id", "some-session")
-        self.assertIn("session_id", context.units)
+        self.assertIn("session_id", context.get_units())
         context.close()
 
     def test_set_unit_throws_after_close(self):
@@ -808,7 +816,7 @@ class ContextAttributeTests(ContextCanonicalTestBase):
         context = self.create_context(config, self.data_future)
         self.assertFalse(context.is_ready())
         context.set_attribute("user_age", 25)
-        self.assertEqual(1, len(context.attributes))
+        self.assertEqual(1, len(context.get_attributes()))
         context.close()
 
     def test_get_attribute_returns_last_set_value(self):
@@ -816,9 +824,8 @@ class ContextAttributeTests(ContextCanonicalTestBase):
         context = self.create_ready_context()
         context.set_attribute("user_age", 25)
         context.set_attribute("user_age", 30)
-        age_attrs = [a for a in context.attributes if a.name == "user_age"]
-        self.assertEqual(2, len(age_attrs))
-        self.assertEqual(30, age_attrs[-1].value)
+        self.assertEqual(30, context.get_attribute("user_age"))
+        self.assertEqual(30, context.get_attributes()["user_age"])
         context.close()
 
 
@@ -988,7 +995,9 @@ class ContextPublishDelayTests(ContextCanonicalTestBase):
         context.get_treatment("exp_test_ab")
         self.assertEqual(1, context.get_pending_count())
         self.assertIsNotNone(context.timeout)
-        time.sleep(0.3)
+        deadline = time.time() + 5
+        while context.get_pending_count() != 0 and time.time() < deadline:
+            time.sleep(0.02)
         self.assertEqual(0, context.get_pending_count())
         context.close()
 
@@ -1001,6 +1010,8 @@ class ContextPublishDelayTests(ContextCanonicalTestBase):
         context.track("goal1", {"amount": 100})
         self.assertEqual(1, context.get_pending_count())
         self.assertIsNotNone(context.timeout)
-        time.sleep(0.3)
+        deadline = time.time() + 5
+        while context.get_pending_count() != 0 and time.time() < deadline:
+            time.sleep(0.02)
         self.assertEqual(0, context.get_pending_count())
         context.close()

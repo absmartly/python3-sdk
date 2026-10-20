@@ -59,8 +59,9 @@ class TestSDKInitialization(unittest.TestCase):
         client_config.environment = "dev"
 
         http_client = DefaultHTTPClient(DefaultHTTPClientConfig())
-        _ = Client(client_config, http_client)
+        client = Client(client_config, http_client)
 
+        self.assertIsNotNone(client)
         self.assertIsNone(client_config.api_key)
 
     def test_sdk_create_context(self):

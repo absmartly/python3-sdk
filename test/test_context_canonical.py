@@ -257,7 +257,7 @@ class ContextEventLoggerTests(ContextCanonicalTestBase):
         self.set_up()
         context = self.create_ready_context()
         context.close()
-        self.assertEqual(self.event_logger.last_type, EventType.CLOSE)
+        self.assertEqual(self.event_logger.last_type, EventType.FINALIZE)
 
 
 class ContextTreatmentTests(ContextCanonicalTestBase):
@@ -940,8 +940,8 @@ class ContextNotReadyTests(ContextCanonicalTestBase):
         config.units = self.units
         context = self.create_context(config, self.data_future)
         self.assertFalse(context.is_ready())
-        result = context.get_treatment("exp_test_ab")
-        self.assertEqual(0, result)
+        with self.assertRaisesRegex(RuntimeError, "not yet ready"):
+            context.get_treatment("exp_test_ab")
         context.close()
 
     def test_peek_throws_when_not_ready(self):
@@ -950,8 +950,8 @@ class ContextNotReadyTests(ContextCanonicalTestBase):
         config.units = self.units
         context = self.create_context(config, self.data_future)
         self.assertFalse(context.is_ready())
-        result = context.peek_treatment("exp_test_ab")
-        self.assertEqual(0, result)
+        with self.assertRaisesRegex(RuntimeError, "not yet ready"):
+            context.peek_treatment("exp_test_ab")
         context.close()
 
     def test_variable_value_throws_when_not_ready(self):
@@ -960,8 +960,8 @@ class ContextNotReadyTests(ContextCanonicalTestBase):
         config.units = self.units
         context = self.create_context(config, self.data_future)
         self.assertFalse(context.is_ready())
-        result = context.get_variable_value("banner.size", "default")
-        self.assertEqual("default", result)
+        with self.assertRaisesRegex(RuntimeError, "not yet ready"):
+            context.get_variable_value("banner.size", "default")
         context.close()
 
 

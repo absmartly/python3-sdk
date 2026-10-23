@@ -1117,7 +1117,7 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(type(self.event_logger.logger_data),
                          type(Exposure()))
         context.close()
-        self.assertEqual(self.event_logger.logger_type, EventType.CLOSE)
+        self.assertEqual(self.event_logger.logger_type, EventType.FINALIZE)
         self.assertIsNone(self.event_logger.logger_data)
 
     def test_assignment_with_historical_exposed_at_timestamp(self):
@@ -1857,7 +1857,23 @@ class ContextTest(unittest.TestCase):
         self.assertIsNotNone(context.ready_error)
         context.close()
 
-    def test_read_methods_return_safe_defaults_when_not_ready(self):
+    def assert_read_methods_raise(self, context, message):
+        reads = [
+            lambda: context.get_treatment("exp_test_ab"),
+            lambda: context.peek_treatment("exp_test_ab"),
+            lambda: context.get_variable_value("banner.size", 17),
+            lambda: context.peek_variable_value("banner.size", 17),
+            lambda: context.get_variable_keys(),
+            lambda: context.get_custom_field_value("exp_test_abc", "country"),
+            lambda: context.get_custom_field_value_type("exp_test_abc", "country"),
+            lambda: context.get_custom_field_keys(),
+        ]
+        for read in reads:
+            with self.assertRaises(RuntimeError) as raised:
+                read()
+            self.assertEqual(message, str(raised.exception))
+
+    def test_read_methods_raise_when_not_ready(self):
         self.set_up()
         config = ContextConfig()
         config.units = self.units
@@ -1865,19 +1881,19 @@ class ContextTest(unittest.TestCase):
 
         self.assertFalse(context.is_ready())
 
-        self.assertEqual(0, context.get_treatment("exp_test_ab"))
-        self.assertEqual(0, context.peek_treatment("exp_test_ab"))
-        self.assertEqual(17, context.get_variable_value("banner.size", 17))
-        self.assertEqual(17, context.peek_variable_value("banner.size", 17))
-        self.assertEqual({}, context.get_variable_keys())
-        self.assertEqual([], context.get_experiments())
-        self.assertIsNone(context.get_custom_field_value("exp_test_abc", "country"))
-        self.assertIsNone(context.get_custom_field_value_type("exp_test_abc", "country"))
-        self.assertEqual([], context.get_custom_field_keys())
+        self.assert_read_methods_raise(
+            context, "ABsmartly Context is not yet ready.")
+        with self.assertRaises(RuntimeError) as raised:
+            context.get_experiments()
+        self.assertEqual("ABsmartly Context is not yet ready.",
+                         str(raised.exception))
+        with self.assertRaises(RuntimeError):
+            context.refresh()
+        self.assertEqual(0, context.get_pending_count())
 
         self.data_future.set_result(self.data)
 
-    def test_read_methods_return_safe_defaults_after_finalize(self):
+    def test_read_methods_raise_after_finalize(self):
         self.set_up()
         config = ContextConfig()
         config.units = self.units
@@ -1890,12 +1906,7 @@ class ContextTest(unittest.TestCase):
 
         self.assertTrue(context.is_closed())
 
-        self.assertEqual(0, context.get_treatment("exp_test_ab"))
-        self.assertEqual(0, context.peek_treatment("exp_test_ab"))
-        self.assertEqual(17, context.get_variable_value("banner.size", 17))
-        self.assertEqual(17, context.peek_variable_value("banner.size", 17))
-        self.assertEqual({}, context.get_variable_keys())
-        self.assertEqual([], context.get_experiments())
-        self.assertIsNone(context.get_custom_field_value("exp_test_abc", "country"))
-        self.assertIsNone(context.get_custom_field_value_type("exp_test_abc", "country"))
-        self.assertEqual([], context.get_custom_field_keys())
+        self.assert_read_methods_raise(
+            context, "ABsmartly Context is finalized.")
+        # experiments() only requires readiness (JS context.ts experiments).
+        self.assertIn("exp_test_ab", context.get_experiments())

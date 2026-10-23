@@ -25,15 +25,21 @@ class Client:
         self.query = {"application": application,
                       "environment": environment}
 
-    def get_context_data(self):
-        return self.executor.submit(self.send_get, self.url, self.query, {})
-
-    def send_get(self, url: str, query: dict, headers: dict):
-        response = self.http_client.get(url, query, headers)
+    def _handle_response(self, response):
+        """Helper method to handle HTTP response and deserialize content."""
         if response.status_code // 100 == 2:
             content = response.content
             return self.deserializer.deserialize(content, 0, len(content))
-        return response.raise_for_status()
+        response.raise_for_status()
+        raise RuntimeError(f"Unexpected HTTP status {response.status_code}")
+
+    def get_context_data(self):
+        return self.executor.submit(self.send_get, self.url, self.query, self.headers)
+
+    def send_get(self, url: str, query: dict, headers: dict):
+        request_headers = dict(headers) if headers else {}
+        response = self.http_client.get(url, query, request_headers)
+        return self._handle_response(response)
 
     def publish(self, event: PublishEvent):
         return self.executor.submit(
@@ -48,9 +54,20 @@ class Client:
                  query: dict,
                  headers: dict,
                  event: PublishEvent):
+        request_headers = dict(headers) if headers else {}
         content = self.serializer.serialize(event)
-        response = self.http_client.put(url, query, headers, content)
-        if response.status_code // 100 == 2:
-            content = response.content
-            return self.deserializer.deserialize(content, 0, len(content))
-        return response.raise_for_status()
+        response = self.http_client.put(url, query, request_headers, content)
+        return self._handle_response(response)
+
+    def post(self, url: str, query: dict, headers: dict, event: PublishEvent):
+        return self.send_post(url, query, headers, event)
+
+    def send_post(self,
+                  url: str,
+                  query: dict,
+                  headers: dict,
+                  event: PublishEvent):
+        request_headers = dict(headers) if headers else {}
+        content = self.serializer.serialize(event)
+        response = self.http_client.post(url, query, request_headers, content)
+        return self._handle_response(response)

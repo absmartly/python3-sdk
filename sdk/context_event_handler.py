@@ -1,14 +1,11 @@
-from abc import abstractmethod
-from concurrent.futures import Future
-from typing import Optional
+import warnings
 
-from sdk.json.context_data import ContextData
-from sdk.json.publish_event import PublishEvent
+from sdk.context_publisher import ContextPublisher
 
+warnings.warn(
+    "ContextEventHandler is deprecated, use ContextPublisher instead.",
+    DeprecationWarning,
+    stacklevel=2
+)
 
-class ContextEventHandler:
-
-    @abstractmethod
-    def publish(self, context, event: PublishEvent) -> \
-            Future[Optional[ContextData]]:
-        raise NotImplementedError
+ContextEventHandler = ContextPublisher

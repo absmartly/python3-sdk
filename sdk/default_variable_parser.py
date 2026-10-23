@@ -1,7 +1,5 @@
-from typing import Optional
-
-import jsons
-from jsons import DeserializationError
+from typing import Any, Optional
+import json
 
 from sdk.context import Context
 from sdk.variable_parser import VariableParser
@@ -13,8 +11,9 @@ class DefaultVariableParser(VariableParser):
               context: Context,
               experiment_name: str,
               variant_name: str,
-              config: str) -> Optional[dict]:
+              config: str) -> Optional[Any]:
         try:
-            return jsons.loads(config, dict)
-        except DeserializationError:
-            return None
+            result = json.loads(config)
+            return result
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid JSON in variant config: {e}") from e

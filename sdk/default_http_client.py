@@ -10,11 +10,14 @@ class DefaultHTTPClient(HTTPClient):
 
     def __init__(self, config: DefaultHTTPClientConfig):
         self.http_client = req.Session()
+        # Same policy as the JS SDK client (client.ts request/tryWith): every
+        # request, including the PUT publish, is retried on network errors and
+        # 5xx responses; a 4xx response fails immediately.
         retry = Retry(total=config.max_retries, read=config.max_retries,
                       connect=config.max_retries,
                       backoff_factor=config.retry_interval,
-                      status_forcelist=(502, 503),
-                      allowed_methods=frozenset(['GET', 'POST']))
+                      status_forcelist=frozenset(range(500, 600)),
+                      allowed_methods=frozenset(['GET', 'POST', 'PUT']))
         self.http_client.mount(
             'http://', HTTPAdapter(max_retries=retry,
                                    pool_maxsize=200,
@@ -55,9 +58,9 @@ class DefaultHTTPClient(HTTPClient):
              headers: dict,
              body: bytearray) -> Response:
         headers.update({'Content-type': 'application/json'})
-        return self.http_client.put(url,
-                                    data=bytes(body),
-                                    params=query,
-                                    headers=headers,
-                                    timeout=(self.timeout,
-                                             self.request_timeout))
+        return self.http_client.post(url,
+                                     data=bytes(body),
+                                     params=query,
+                                     headers=headers,
+                                     timeout=(self.timeout,
+                                              self.request_timeout))

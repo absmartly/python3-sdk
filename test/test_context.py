@@ -1610,6 +1610,56 @@ class ContextTest(unittest.TestCase):
 
         self.assertIsNone(context.close_error)
 
+    def test_cancelled_publish_future_does_not_strand_close(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        context.track("goal1", {"amount": 100})
+
+        pending = Future()
+        self.client.publish = lambda event: pending
+        publish = context.publish_async()
+        self.assertTrue(publish.cancel())
+        closing = context.close_async()
+        pending.set_result(None)
+
+        closing.result(timeout=5)
+        self.assertTrue(context.is_closed())
+        self.assertFalse(context.is_closing())
+
+    def test_failed_close_restores_refresh_timer(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        config.refresh_interval = 60
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertIsNotNone(context.refresh_timer)
+        context.track("goal1", {"amount": 100})
+
+        def failing_publish(event):
+            future = Future()
+            future.set_exception(RuntimeError("Publish failed"))
+            return future
+
+        self.client.publish = failing_publish
+        with self.assertRaises(RuntimeError):
+            context.close()
+
+        self.assertFalse(context.is_closed())
+        self.assertIsNotNone(context.refresh_timer)
+        context.clear_refresh_timer()
+
+    def test_get_data_after_close(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_ready)
+        data = context.get_data()
+        context.close()
+
+        self.assertIs(data, context.get_data())
+
     def test_set_attribute_increments_attrs_seq_atomically(self):
         self.set_up()
         config = ContextConfig()

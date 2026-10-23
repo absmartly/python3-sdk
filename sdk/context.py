@@ -96,6 +96,8 @@ def _js_number(value):
 
 def _chain(source: Future, target: Future):
     def copy_result(done: Future):
+        if target.done():
+            return
         error = _future_error(done)
         if error is None:
             target.set_result(None)
@@ -525,6 +527,9 @@ class Context:
         self.clear_timeout()
 
         result = Future()
+        # Internal coordination uses its own future so a caller cancelling
+        # the returned one cannot corrupt the in-flight bookkeeping.
+        internal = Future()
         discarded = None
         try:
             self.event_lock.acquire_write()
@@ -565,7 +570,7 @@ class Context:
                 self.pending_count.set(0)
                 # Registered in the same critical section as the drain, so a
                 # concurrent flush or close always sees this publish in flight.
-                self.flush_future = result
+                self.flush_future = internal
         finally:
             self.event_lock.release_write()
 
@@ -590,16 +595,17 @@ class Context:
                 restore()
             try:
                 self.event_lock.acquire_write()
-                if self.flush_future is result:
+                if self.flush_future is internal:
                     self.flush_future = None
             finally:
                 self.event_lock.release_write()
             if error is None:
                 self.log_event(EventType.PUBLISH, event)
-                result.set_result(None)
+                internal.set_result(None)
             else:
                 self.log_error(error)
-                result.set_exception(error)
+                internal.set_exception(error)
+            _chain(internal, result)
 
         try:
             event = self._build_publish_event(exposures, achievements)
@@ -1116,6 +1122,8 @@ class Context:
                 # A failed final publish leaves the context open with its
                 # events queued so close() can be retried (JS _finalize).
                 self.closing.set(False)
+            if error is not None:
+                self.set_refresh_timer()
             if error is None:
                 closing_future.set_result(None)
                 self.log_event(EventType.FINALIZE, None)

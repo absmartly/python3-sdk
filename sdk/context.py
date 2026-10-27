@@ -25,6 +25,7 @@ from sdk.json.goal_achievement import GoalAchievement
 from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
+from sdk.utils import hash_unit, is_numeric, is_object
 from sdk.variable_parser import VariableParser
 
 logger = logging.getLogger(__name__)
@@ -111,17 +112,6 @@ def _future_error(future: Future):
     if future.cancelled():
         return CancelledError()
     return future.exception()
-
-
-def _encode_utf8(value: str) -> bytes:
-    # Match the JS SDK (TextEncoder semantics): a lone surrogate becomes
-    # U+FFFD instead of raising or being written as a CESU-8 sequence.
-    try:
-        return value.encode('utf-8')
-    except UnicodeEncodeError:
-        return value.encode('utf-16', 'surrogatepass') \
-            .decode('utf-16', 'replace') \
-            .encode('utf-8')
 
 
 class Context:
@@ -223,16 +213,18 @@ class Context:
                 if data.done() and data.cancelled() is False and \
                         data.exception() is None:
                     self.set_data(data.result())
-                    self.ready_future.set_result(None)
+                    # Log before settling, as the JS SDK does, so a caller
+                    # woken by the future already sees the event.
                     self.log_event(EventType.READY, data.result())
+                    self.ready_future.set_result(None)
 
                     if self.get_pending_count() > 0:
                         self.set_timeout()
                 elif data.cancelled() is False and \
                         data.exception() is not None:
                     self.set_data_failed(data.exception())
-                    self.ready_future.set_result(None)
                     self.log_error(data.exception())
+                    self.ready_future.set_result(None)
 
             data_future.add_done_callback(when_finished)
 
@@ -240,8 +232,18 @@ class Context:
         for key, value in units.items():
             self.set_unit(key, value)
 
-    def set_unit(self, unit_type: str, uid: str):
+    def set_unit(self, unit_type: str, uid):
         self.check_not_closed()
+
+        # Like the JS SDK (context.ts unit()), a numeric UID is kept as a
+        # number and only rendered to text when hashed.
+        if isinstance(uid, str):
+            uid = uid.strip()
+            if len(uid) == 0:
+                raise ValueError(f"Unit '{unit_type}' UID must not be blank.")
+        elif not is_numeric(uid):
+            raise ValueError(
+                f"Unit '{unit_type}' must be a string or a number.")
 
         try:
             self.context_lock.acquire_write()
@@ -249,11 +251,7 @@ class Context:
             if unit_type in self.units.keys() and self.units[unit_type] != uid:
                 raise ValueError(f"Unit '{unit_type}' UID already set.")
 
-            trimmed = uid.strip()
-            if len(trimmed) == 0:
-                raise ValueError(f"Unit '{unit_type}' UID must not be blank.")
-
-            self.units[unit_type] = trimmed
+            self.units[unit_type] = uid
         finally:
             self.context_lock.release_write()
 
@@ -473,11 +471,11 @@ class Context:
                         error = e
                 self.refreshing.set(False)
                 if error is None:
-                    refresh_future.set_result(None)
                     self.log_event(EventType.REFRESH, data.result())
+                    refresh_future.set_result(None)
                 else:
-                    refresh_future.set_exception(error)
                     self.log_error(error)
+                    refresh_future.set_exception(error)
 
             try:
                 data_future = self.data_provider.get_context_data()
@@ -671,6 +669,10 @@ class Context:
     def track(self, goal_name: str, properties: dict, achieved_at: int = None):
         self.check_not_closed()
 
+        if properties is not None and not is_object(properties):
+            raise ValueError(
+                f"Goal '{goal_name}' properties must be of type object.")
+
         achievement = GoalAchievement()
         achievement.achievedAt = achieved_at or self.clock.millis()
         achievement.name = goal_name
@@ -757,11 +759,9 @@ class Context:
 
         return self.get_assignment(experiment_name).variant
 
-    def get_unit_hash(self, unit_type: str, unit_uid: str):
+    def get_unit_hash(self, unit_type: str, unit_uid):
         def computer(key: str):
-            dig = hashlib.md5(_encode_utf8(unit_uid)).digest()
-            unithash = base64.urlsafe_b64encode(dig).rstrip(b'=')
-            return unithash
+            return hash_unit(unit_uid).encode('ascii')
 
         return Concurrency.compute_if_absent_rw(
             self.context_lock,
@@ -1125,8 +1125,8 @@ class Context:
             if error is not None:
                 self.set_refresh_timer()
             if error is None:
-                closing_future.set_result(None)
                 self.log_event(EventType.FINALIZE, None)
+                closing_future.set_result(None)
             else:
                 closing_future.set_exception(error)
 

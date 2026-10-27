@@ -40,7 +40,11 @@ def unit_to_string(value) -> str:
     # any Decimal context the caller has set.
     if isinstance(value, str):
         return value
-    number = float(value)
+    # Integers go through binary64 too, as a JS number would.
+    try:
+        number = float(value)
+    except OverflowError:
+        number = float('inf') if value > 0 else float('-inf')
     if number != number:
         return "NaN"
     if abs(number) >= 1e21:
@@ -49,8 +53,6 @@ def unit_to_string(value) -> str:
         if number == float('-inf'):
             return "-Infinity"
         return repr(number)
-    if isinstance(value, int):
-        return str(value)
     numerator, denominator = abs(number).as_integer_ratio()
     quotient, remainder = divmod(numerator, denominator)
     if 2 * remainder >= denominator:

@@ -178,6 +178,7 @@ class IntegrityParityTest(unittest.TestCase):
             1e20: "100000000000000000000", 1e21: "1e+21",
             1.5e22: "1.5e+22", -1e21: "-1e+21", 1e29: "1e+29",
             12345.0: "12345", 10 ** 21: "1e+21",
+            9007199254740993: "9007199254740992", 10 ** 400: "Infinity",
         }
         for value, expected in cases.items():
             self.assertEqual(expected, utils.unit_to_string(value), value)

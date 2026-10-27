@@ -127,6 +127,20 @@ class IntegrityParityTest(unittest.TestCase):
             [(EventType.PUBLISH, False), (EventType.FINALIZE, False)],
             self.logger.events)
 
+    def test_failed_final_publish_logs_error_once(self):
+        context = self.make(done_future(empty_data()))
+        context.track("goal1", None)
+        failed = Future()
+        failed.set_exception(RuntimeError("Publish failed"))
+        self.publisher.next = failed
+        self.logger.events.clear()
+        with self.assertRaises(RuntimeError):
+            context.close()
+        self.assertEqual([EventType.ERROR],
+                         [event for event, _ in self.logger.events])
+        self.assertFalse(context.is_closed())
+        self.assertEqual(1, context.get_pending_count())
+
     def test_numeric_unit_kept_as_number(self):
         context = self.make(done_future(empty_data()), units={"user_id": 125})
         context.set_unit("price", 125.75)

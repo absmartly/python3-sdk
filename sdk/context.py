@@ -644,8 +644,8 @@ class Context:
         try:
             self.close_async().result()
         except Exception as e:
+            # The failed flush already logged this error; JS logs it once.
             self.close_error = e
-            self.log_error(e)
             raise
 
     def finalize(self):

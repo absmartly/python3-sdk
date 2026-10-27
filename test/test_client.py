@@ -46,7 +46,11 @@ class ClientTest(unittest.TestCase):
         http_client.get.assert_called_once_with(
             "https://localhost/v1/context",
             expected_query,
-            {})
+            {"X-API-Key": "test-api-key",
+             "X-Application": "website",
+             "X-Environment": "dev",
+             "X-Application-Version": '0',
+             "X-Agent": "absmartly-python-sdk"})
         http_client.get.reset_mock()
         client.publish(event)
         time.sleep(0.1)
@@ -82,7 +86,11 @@ class ClientTest(unittest.TestCase):
         http_client.get.assert_called_once_with(
             "https://localhost/v1/context",
             expected_query,
-            {})
+            {"X-API-Key": "test-api-key",
+             "X-Application": "website",
+             "X-Environment": "dev",
+             "X-Application-Version": '0',
+             "X-Agent": "absmartly-python-sdk"})
         http_client.get.reset_mock()
 
         result = future.result()

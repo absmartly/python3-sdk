@@ -1,11 +1,11 @@
 import time
 
 from context_event_logger_example import ContextEventLoggerExample
-from sdk.absmartly_config import ABSmartlyConfig
+from sdk.absmartly_config import ABsmartlyConfig
 
 from sdk.context_config import ContextConfig
 
-from sdk.absmarly import ABSmartly
+from sdk.absmartly import ABsmartly
 
 from sdk.client import Client
 from sdk.client_config import ClientConfig
@@ -23,10 +23,10 @@ def main():
 
     default_client_config = DefaultHTTPClientConfig()
     default_client = DefaultHTTPClient(default_client_config)
-    sdk_config = ABSmartlyConfig()
+    sdk_config = ABsmartlyConfig()
     sdk_config.client = Client(client_config, default_client)
     sdk_config.context_event_logger = ContextEventLoggerExample()
-    sdk = ABSmartly(sdk_config)
+    sdk = ABsmartly(sdk_config)
 
     context_config = ContextConfig()
     context_config.publish_delay = 10

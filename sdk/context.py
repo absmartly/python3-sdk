@@ -1,14 +1,14 @@
-import base64
-import collections
-import hashlib
+import copy
+import logging
+import math
 import threading
-from concurrent.futures import Future
+from concurrent.futures import CancelledError, Future
 from typing import Optional
 
 from sdk.audience_matcher import AudienceMatcher
 from sdk.context_config import ContextConfig
 from sdk.context_data_provider import ContextDataProvider
-from sdk.context_event_handler import ContextEventHandler
+from sdk.context_publisher import ContextPublisher
 from sdk.context_event_logger import ContextEventLogger, EventType
 from sdk.internal.lock.atomic_bool import AtomicBool
 from sdk.internal.lock.atomic_int import AtomicInt
@@ -23,7 +23,10 @@ from sdk.json.goal_achievement import GoalAchievement
 from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
+from sdk.utils import hash_unit, is_numeric, is_object
 from sdk.variable_parser import VariableParser
+
+logger = logging.getLogger(__name__)
 
 
 class Assignment:
@@ -41,9 +44,10 @@ class Assignment:
         self.full_on: Optional[bool] = False
         self.custom: Optional[bool] = False
         self.audience_mismatch: Optional[bool] = False
-        self.variables: dict = {}
+        self.variables: Optional[dict] = None
         self.exposed = AtomicBool()
         self.exposedAt: Optional[int] = None
+        self.attrs_seq: Optional[int] = 0
 
 
 class ExperimentVariables:
@@ -55,19 +59,64 @@ class ContextCustomFieldValue:
     value: Optional[any]
 
 def experiment_matches(experiment: Experiment, assignment: Assignment):
+    # Same fields and ordered comparison as the JS SDK's experimentMatches
+    # (context.ts _assign / arrayEqualsShallow): seeds, the variant split,
+    # variant configs and the audience text are deliberately not compared, so
+    # a cached assignment stays sticky across a refresh.
     return experiment.id == assignment.id and \
            experiment.unitType == assignment.unit_type and \
            experiment.iteration == assignment.iteration and \
            experiment.fullOnVariant == assignment.full_on_variant and \
-           collections.Counter(experiment.trafficSplit) == \
-           collections.Counter(assignment.traffic_split)
+           list(experiment.trafficSplit or []) == \
+           list(assignment.traffic_split or [])
+
+
+def _js_number(value):
+    # JS Number(string): surrounding whitespace is ignored, an empty string is
+    # 0, hex/octal/binary prefixes are accepted, and anything unparseable is
+    # NaN, which this SDK reports as None (JSON.stringify(NaN) is null).
+    text = str(value).strip()
+    if text == "":
+        return 0
+    try:
+        if text[:2].lower() in ("0x", "0o", "0b"):
+            return int(text, 0)
+        if "_" in text or any(c.isalpha() and c not in "eE" for c in text):
+            if text.lstrip("+-") != "Infinity":
+                return None
+            return -math.inf if text.startswith("-") else math.inf
+        number = float(text)
+    except ValueError:
+        return None
+    if number.is_integer():
+        return int(number)
+    return number
+
+
+def _chain(source: Future, target: Future):
+    def copy_result(done: Future):
+        if target.done():
+            return
+        error = _future_error(done)
+        if error is None:
+            target.set_result(None)
+        else:
+            target.set_exception(error)
+
+    source.add_done_callback(copy_result)
+
+
+def _future_error(future: Future):
+    if future.cancelled():
+        return CancelledError()
+    return future.exception()
 
 
 class Context:
     def __init__(self,
                  clock: Clock, config: ContextConfig,
                  data_future: Future, data_provider: ContextDataProvider,
-                 event_handler: ContextEventHandler,
+                 event_handler: ContextPublisher,
                  event_logger: ContextEventLogger,
                  variable_parser: VariableParser,
                  audience_matcher: AudienceMatcher):
@@ -86,7 +135,7 @@ class Context:
         self.index_variables = {}
         self.context_custom_fields = {}
         self.assignment_cache = {}
-        self.cassignments = {}
+        self.custom_assignments = {}
         self.overrides = {}
 
         self.exposures = []
@@ -95,6 +144,8 @@ class Context:
         self.data: Optional[ContextData] = None
 
         self.failed = False
+        self.close_error = None
+        self.ready_error = None
 
         self.closed = AtomicBool()
         self.closing = AtomicBool()
@@ -108,6 +159,8 @@ class Context:
 
         self.refresh_future: Optional[Future] = None
         self.closing_future: Optional[Future] = None
+        self.flush_future: Optional[Future] = None
+        self._close_lock = threading.Lock()
 
         self.refresh_timer: Optional[threading.Timer] = None
         self.timeout: Optional[threading.Timer] = None
@@ -119,6 +172,7 @@ class Context:
         self.hashed_units = dict.fromkeys((range(len(self.units))))
 
         self.attributes: list[Attribute] = []
+        self._attrs_seq = 0
 
         if config.attributes is not None:
             self.set_attributes(config.attributes)
@@ -128,10 +182,11 @@ class Context:
         else:
             self.overrides = {}
 
-        if config.cassigmnents is not None:
-            self.cassignments = dict(config.cassigmnents)
+        cassignments = config.custom_assignments
+        if cassignments is not None:
+            self.custom_assignments = dict(cassignments)
         else:
-            self.cassignments = {}
+            self.custom_assignments = {}
 
         if data_future.done():
             def when_finished(data: Future):
@@ -143,6 +198,9 @@ class Context:
                         data.exception() is not None:
                     self.set_data_failed(data.exception())
                     self.log_error(data.exception())
+                    raise RuntimeError(
+                        "Failed to initialize ABSmartly Context"
+                    ) from data.exception()
 
             data_future.add_done_callback(when_finished)
         else:
@@ -152,18 +210,18 @@ class Context:
                 if data.done() and data.cancelled() is False and \
                         data.exception() is None:
                     self.set_data(data.result())
-                    self.ready_future.set_result(None)
-                    self.ready_future = None
+                    # Log before settling, as the JS SDK does, so a caller
+                    # woken by the future already sees the event.
                     self.log_event(EventType.READY, data.result())
+                    self.ready_future.set_result(None)
 
                     if self.get_pending_count() > 0:
                         self.set_timeout()
                 elif data.cancelled() is False and \
                         data.exception() is not None:
                     self.set_data_failed(data.exception())
-                    self.ready_future.set_result(None)
-                    self.ready_future = None
                     self.log_error(data.exception())
+                    self.ready_future.set_result(None)
 
             data_future.add_done_callback(when_finished)
 
@@ -171,26 +229,64 @@ class Context:
         for key, value in units.items():
             self.set_unit(key, value)
 
-    def set_unit(self, unit_type: str, uid: str):
+    def set_unit(self, unit_type: str, uid):
         self.check_not_closed()
+
+        # Like the JS SDK (context.ts unit()), a numeric UID is kept as a
+        # number and only rendered to text when hashed.
+        if isinstance(uid, str):
+            uid = uid.strip()
+            if len(uid) == 0:
+                raise ValueError(f"Unit '{unit_type}' UID must not be blank.")
+        elif not is_numeric(uid):
+            raise ValueError(
+                f"Unit '{unit_type}' must be a string or a number.")
 
         try:
             self.context_lock.acquire_write()
 
             if unit_type in self.units.keys() and self.units[unit_type] != uid:
-                raise ValueError("Unit already set.")
+                raise ValueError(f"Unit '{unit_type}' UID already set.")
 
-            trimmed = uid.strip()
-            if len(trimmed) == 0:
-                raise ValueError("Unit UID must not be blank.")
-
-            self.units[unit_type] = trimmed
+            self.units[unit_type] = uid
         finally:
             self.context_lock.release_write()
+
+    def get_unit(self, unit_type: str):
+        return Concurrency.get_rw(self.context_lock, self.units, unit_type)
+
+    def get_units(self):
+        try:
+            self.context_lock.acquire_read()
+            return dict(self.units)
+        finally:
+            self.context_lock.release_read()
 
     def set_attributes(self, attributes: dict):
         for key, value in attributes.items():
             self.set_attribute(key, value)
+
+    def get_attribute(self, name: str):
+        try:
+            self.context_lock.acquire_read()
+            result = None
+            for attr in self.attributes:
+                if attr.name == name:
+                    result = attr.value
+            return copy.deepcopy(result) if isinstance(result, (dict, list)) else result
+        finally:
+            self.context_lock.release_read()
+
+    def get_attributes(self):
+        try:
+            self.context_lock.acquire_read()
+            result = {}
+            for attr in self.attributes:
+                value = attr.value
+                result[attr.name] = copy.deepcopy(value) if isinstance(value, (dict, list)) else value
+            return result
+        finally:
+            self.context_lock.release_read()
 
     def set_attribute(self, name: str, value: object):
         self.check_not_closed()
@@ -198,13 +294,18 @@ class Context:
         attribute.name = name
         attribute.value = value
         attribute.setAt = self.clock.millis()
-        Concurrency.add_rw(self.context_lock, self.attributes, attribute)
+        try:
+            self.context_lock.acquire_write()
+            self.attributes.append(attribute)
+            self._attrs_seq += 1
+        finally:
+            self.context_lock.release_write()
 
     def check_not_closed(self):
         if self.closed.value:
-            raise RuntimeError('ABSmartly Context is closed')
+            raise RuntimeError('ABsmartly Context is finalized.')
         elif self.closing.value:
-            raise RuntimeError('ABSmartly Context is closing')
+            raise RuntimeError('ABsmartly Context is finalizing.')
 
     def set_data(self, data: ContextData):
         index = {}
@@ -218,14 +319,34 @@ class Context:
 
             for variant in experiment.variants:
                 if variant.config is not None and len(variant.config) > 0:
-                    variables = self.variable_parser.parse(
-                        self,
-                        experiment.name,
-                        variant.name,
-                        variant.config)
-                    for key, value in variables.items():
-                        index_variables[key] = experiment_variables
-                    experiment_variables.variables.append(variables)
+                    try:
+                        variables = self.variable_parser.parse(
+                            self,
+                            experiment.name,
+                            variant.name,
+                            variant.config)
+
+                        if variables is None:
+                            self.log_event(
+                                EventType.ERROR,
+                                f"Failed to parse variant config for {experiment.name}/{variant.name}"
+                            )
+                            experiment_variables.variables.append({})
+                            continue
+
+                        for key in variables:
+                            if key in index_variables:
+                                if experiment_variables not in index_variables[key]:
+                                    index_variables[key].append(experiment_variables)
+                            else:
+                                index_variables[key] = [experiment_variables]
+                        experiment_variables.variables.append(variables)
+                    except Exception as e:
+                        self.log_event(
+                            EventType.ERROR,
+                            f"Error parsing variant {experiment.name}/{variant.name}: {e}"
+                        )
+                        experiment_variables.variables.append({})
                 else:
                     experiment_variables.variables.append({})
             index[experiment.name] = experiment_variables
@@ -233,28 +354,15 @@ class Context:
             if experiment.customFieldValues is not None:
                 experimentCustomFields = {}
                 for customFieldValue in experiment.customFieldValues:
+                    # Store the raw type/value and parse lazily on access (see
+                    # _get_custom_field). Eagerly parsing here would emit a
+                    # spurious ERROR event at ready-time for fields that are
+                    # never accessed (e.g. an intentionally-invalid json field),
+                    # which diverges from the canonical SDKs (JS/dart) that
+                    # parse only when the value is requested.
                     value = ContextCustomFieldValue()
                     value.type = customFieldValue.type
-
-                    if customFieldValue.value is not None:
-                        customValue = customFieldValue.value
-
-                        if customFieldValue.type.startswith("json"):
-                            value.value = self.variable_parser.parse(
-                                self,
-                                experiment.name,
-                                customFieldValue.name,
-                                customValue)
-
-                        elif customFieldValue.type.startswith("boolean"):
-                            value.value = bool(customValue)
-
-                        elif customFieldValue.type.startswith("number"):
-                            value.value = int(customValue)
-
-
-                        else:
-                            value.value = customValue
+                    value.value = customFieldValue.value
 
                     experimentCustomFields[customFieldValue.name] = value
 
@@ -273,21 +381,38 @@ class Context:
             self.data_lock.release_write()
 
     def set_refresh_timer(self):
-        if self.refresh_interval > 0 and self.refresh_timer is None and not self.is_closing() and not self.is_closed():
-            def ref():
-                self.refresh_async()
-                self.refresh_timer = threading.Timer(
-                    self.refresh_interval,
-                    ref)
-                self.refresh_timer.start()
+        if self.refresh_interval <= 0:
+            return
 
-            self.refresh_timer = threading.Timer(
-                self.refresh_interval,
-                ref)
-            self.refresh_timer.start()
+        def arm(timer):
+            # Checked under timeout_lock, the lock close() clears the timer
+            # under, so a refresh finishing after close cannot re-arm it.
+            try:
+                self.timeout_lock.acquire_write()
+                if timer is not self.refresh_timer or \
+                        self.is_closing() or self.is_closed():
+                    return
+                self.refresh_timer = threading.Timer(self.refresh_interval, ref)
+                self.refresh_timer.daemon = True
+                self.refresh_timer.start()
+            finally:
+                self.timeout_lock.release_write()
+
+        def ref():
+            timer = self.refresh_timer
+            if self.is_closed() or self.is_closing():
+                return
+            try:
+                self.refresh_async()
+            except RuntimeError:
+                return
+            arm(timer)
+
+        if self.refresh_timer is None:
+            arm(None)
 
     def set_timeout(self):
-        if self.is_ready():
+        if self.is_ready() and self.publish_delay >= 0:
             if self.timeout is None:
                 try:
                     self.timeout_lock.acquire_write()
@@ -296,6 +421,7 @@ class Context:
                         self.flush()
 
                     self.timeout = threading.Timer(self.publish_delay, flush)
+                    self.timeout.daemon = True
                     self.timeout.start()
                 finally:
                     self.timeout_lock.release_write()
@@ -309,31 +435,54 @@ class Context:
     def is_closed(self):
         return self.closed.value
 
+    def is_finalized(self):
+        return self.is_closed()
+
     def is_closing(self):
         return not self.closed.value and self.closing.value
 
+    def is_finalizing(self):
+        return self.is_closing()
+
     def refresh_async(self):
-        self.check_not_closed()
+        self.check_ready(True)
+
+        if self.failed:
+            # A context that failed to initialize stays failed: refreshing it
+            # is a successful no-op, as in the JS SDK (context.ts _refresh).
+            result = Future()
+            result.set_result(None)
+            return result
 
         if self.refreshing.compare_and_set(False, True):
-            self.refresh_future = Future()
+
+            refresh_future = Future()
+            self.refresh_future = refresh_future
 
             def when_ready(data):
-                if data.done() and data.cancelled() is False and \
-                        data.exception() is None:
-                    self.set_data(data.result())
-                    self.refreshing.set(False)
-                    self.refresh_future.set_result(None)
+                error = _future_error(data)
+                if error is None:
+                    try:
+                        self.set_data(data.result())
+                    except Exception as e:
+                        error = e
+                self.refreshing.set(False)
+                if error is None:
                     self.log_event(EventType.REFRESH, data.result())
-                elif data.cancelled() is False and \
-                        data.exception() is not None:
-                    self.refreshing.set(False)
-                    self.refresh_future.set_exception(data.exception())
-                    self.log_error(data.exception())
+                    refresh_future.set_result(None)
+                else:
+                    self.log_error(error)
+                    refresh_future.set_exception(error)
 
-            self.data_provider\
-                .get_context_data()\
-                .add_done_callback(when_ready)
+            try:
+                data_future = self.data_provider.get_context_data()
+                if data_future is None:
+                    raise RuntimeError(
+                        "ContextDataProvider.get_context_data() returned None")
+            except Exception as e:
+                data_future = Future()
+                data_future.set_exception(e)
+            data_future.add_done_callback(when_ready)
 
         if self.refresh_future is not None:
             return self.refresh_future
@@ -349,16 +498,22 @@ class Context:
             self.index_variables = {}
             self.data = ContextData()
             self.failed = True
+            self.ready_error = exception
         finally:
             self.data_lock.release_write()
 
     def log_error(self, exception):
-        if self.event_logger is not None:
-            self.event_logger.handle_event(EventType.ERROR, exception)
+        self.log_event(EventType.ERROR, exception)
 
     def log_event(self, event: EventType, data: object):
+        # A throwing event logger must never change SDK control flow (a
+        # successful publish reported as failed, a future left unresolved),
+        # the same as the JS SDK's _logEvent/_logError.
         if self.event_logger is not None:
-            self.event_logger.handle_event(event, data)
+            try:
+                self.event_logger.handle_event(event, data)
+            except Exception:
+                logger.exception("ABsmartly event logger raised on %s", event)
 
     def get_pending_count(self):
         return self.pending_count.get()
@@ -366,81 +521,137 @@ class Context:
     def flush(self):
         self.clear_timeout()
 
-        if self.failed is False:
-            if self.pending_count.get() > 0:
-                exposures = None
-                achievements = None
-                event_count = 0
-                try:
-                    self.event_lock.acquire_write()
-                    event_count = self.pending_count.get()
+        result = Future()
+        # Internal coordination uses its own future so a caller cancelling
+        # the returned one cannot corrupt the in-flight bookkeeping.
+        internal = Future()
+        discarded = None
+        try:
+            self.event_lock.acquire_write()
 
-                    if event_count > 0:
-                        if len(self.exposures) > 0:
-                            exposures = list(self.exposures)
-                            self.exposures.clear()
+            in_flight = self.flush_future
+            if in_flight is not None:
+                # A publish is in flight and has already drained the queue.
+                # Wait for it to settle (it re-queues its batch on failure)
+                # before looking at the queue again, as the JS SDK does with
+                # _flushPromise, so close() never acts on a queue that only
+                # looks empty.
+                def retry(_):
+                    _chain(self.flush(), result)
 
-                        if len(self.achievements) > 0:
-                            achievements = list(self.achievements)
-                            self.achievements.clear()
-                        self.pending_count.set(0)
-                finally:
-                    self.event_lock.release_write()
+                in_flight.add_done_callback(retry)
+                return result
 
-                if event_count > 0:
-                    event = PublishEvent()
-                    event.hashed = True
-                    event.publishedAt = self.clock.millis()
-                    event.units = []
-                    for key, value in self.units.items():
-                        unit = Unit()
-                        unit.type = key
-                        unit.uid = str(
-                            self.get_unit_hash(key, value),
-                            encoding='ascii')\
-                            .encode('ascii', errors='ignore')\
-                            .decode()
-                        event.units.append(unit)
-                    if len(self.attributes) > 0:
-                        event.attributes = list(self.attributes)
-                    else:
-                        event.attributes = None
-                    event.exposures = exposures
-                    event.goals = achievements
-                    event.historic = self.historic
+            event_count = self.pending_count.get()
+            if event_count == 0:
+                result.set_result(None)
+                return result
 
-                    result = Future()
-
-                    def run(data):
-                        if data.done() and \
-                                data.cancelled() is False and \
-                                data.exception() is None:
-                            self.log_event(EventType.PUBLISH, event)
-                            result.set_result(None)
-                        elif data.cancelled() is False and \
-                                data.exception() is not None:
-                            self.log_error(data.exception())
-                            result.set_exception(data.exception())
-
-                    self.event_handler\
-                        .publish(self, event)\
-                        .add_done_callback(run)
-                    return result
-        else:
-            try:
-                self.event_lock.acquire_write()
+            if self.failed:
+                discarded = RuntimeError(
+                    f"Discarding {len(self.exposures)} exposures and "
+                    f"{len(self.achievements)} goals because context failed "
+                    f"to initialize")
                 self.exposures.clear()
                 self.achievements.clear()
                 self.pending_count.set(0)
+
+            if discarded is None:
+                exposures = list(self.exposures) if self.exposures else None
+                achievements = list(self.achievements) \
+                    if self.achievements else None
+                self.exposures.clear()
+                self.achievements.clear()
+                self.pending_count.set(0)
+                # Registered in the same critical section as the drain, so a
+                # concurrent flush or close always sees this publish in flight.
+                self.flush_future = internal
+        finally:
+            self.event_lock.release_write()
+
+        if discarded is not None:
+            self.log_error(discarded)
+            result.set_result(None)
+            return result
+
+        def restore():
+            try:
+                self.event_lock.acquire_write()
+                if exposures:
+                    self.exposures = exposures + self.exposures
+                if achievements:
+                    self.achievements = achievements + self.achievements
+                self.pending_count.set(self.pending_count.get() + event_count)
             finally:
                 self.event_lock.release_write()
 
-        result = Future()
-        result.set_result(None)
+        def settle(error):
+            if error is not None:
+                restore()
+            try:
+                self.event_lock.acquire_write()
+                if self.flush_future is internal:
+                    self.flush_future = None
+            finally:
+                self.event_lock.release_write()
+            if error is None:
+                self.log_event(EventType.PUBLISH, event)
+                internal.set_result(None)
+            else:
+                self.log_error(error)
+                internal.set_exception(error)
+            _chain(internal, result)
+
+        try:
+            event = self._build_publish_event(exposures, achievements)
+            publish_future = self.event_handler.publish(self, event)
+            if publish_future is None:
+                raise RuntimeError("ContextPublisher.publish() returned None")
+        except Exception as e:
+            event = None
+            settle(e)
+            return result
+
+        publish_future.add_done_callback(
+            lambda data: settle(_future_error(data)))
         return result
 
+    def _build_publish_event(self, exposures, achievements):
+        event = PublishEvent()
+        event.hashed = True
+        event.publishedAt = self.clock.millis()
+        event.units = []
+        for key, value in self.units.items():
+            unit = Unit()
+            unit.type = key
+            unit.uid = str(
+                self.get_unit_hash(key, value),
+                encoding='ascii')\
+                .encode('ascii', errors='ignore')\
+                .decode()
+            event.units.append(unit)
+        if len(self.attributes) > 0:
+            event.attributes = list(self.attributes)
+        else:
+            event.attributes = None
+        event.exposures = exposures
+        event.goals = achievements
+        event.historic = self.historic
+        return event
+
     def close(self):
-        self.close_async().result()
+        try:
+            self.close_async().result()
+        except Exception as e:
+            # The failed flush already logged this error; JS logs it once.
+            self.close_error = e
+            raise
+
+    def finalize(self):
+        return self.close()
+
+    def finalize_async(self):
+        return self.close_async()
 
     def refresh(self):
         self.refresh_async().result()
@@ -455,6 +666,10 @@ class Context:
     def track(self, goal_name: str, properties: dict, achieved_at: int = None):
         self.check_not_closed()
 
+        if properties is not None and not is_object(properties):
+            raise ValueError(
+                f"Goal '{goal_name}' properties must be of type object.")
+
         achievement = GoalAchievement()
         achievement.achievedAt = achieved_at or self.clock.millis()
         achievement.name = goal_name
@@ -465,6 +680,9 @@ class Context:
 
         try:
             self.event_lock.acquire_write()
+            # Re-checked under the lock close() drains the queue under, so a
+            # goal cannot be queued after the final flush and be stranded.
+            self.check_not_closed()
             self.pending_count.increment_and_get()
             self.achievements.append(achievement)
         finally:
@@ -502,9 +720,13 @@ class Context:
                 self.timeout_lock.release_write()
 
     def clear_refresh_timer(self):
-        if self.refresh_timer is not None:
-            self.refresh_timer.cancel()
-            self.refresh_timer = None
+        try:
+            self.timeout_lock.acquire_write()
+            if self.refresh_timer is not None:
+                self.refresh_timer.cancel()
+                self.refresh_timer = None
+        finally:
+            self.timeout_lock.release_write()
 
     def get_variable_value(self, key: str, default_value: object):
         self.check_ready(True)
@@ -534,11 +756,9 @@ class Context:
 
         return self.get_assignment(experiment_name).variant
 
-    def get_unit_hash(self, unit_type: str, unit_uid: str):
+    def get_unit_hash(self, unit_type: str, unit_uid):
         def computer(key: str):
-            dig = hashlib.md5(unit_uid.encode('utf-8')).digest()
-            unithash = base64.urlsafe_b64encode(dig).rstrip(b'=')
-            return unithash
+            return hash_unit(unit_uid).encode('ascii')
 
         return Concurrency.compute_if_absent_rw(
             self.context_lock,
@@ -559,11 +779,10 @@ class Context:
         variable_keys = {}
         try:
             self.data_lock.acquire_read()
-            for key, value in self.index_variables.items():
-                expr_var: ExperimentVariables = value
-                variable_keys[key] = expr_var.data.name
+            for key, experiments in self.index_variables.items():
+                variable_keys[key] = [expr_var.data.name for expr_var in experiments]
         finally:
-            self.data_lock.release_write()
+            self.data_lock.release_read()
 
         return variable_keys
 
@@ -581,46 +800,106 @@ class Context:
                     for customFieldValue in customFieldValues:
                         keys.append(customFieldValue.name)
         finally:
-            self.data_lock.release_write()
+            self.data_lock.release_read()
 
         keys = list(set(keys))
         keys.sort()
 
         return keys
 
-    def get_custom_field_value(self, experiment_name: str, key: str):
+    def _get_custom_field(self, experiment_name: str, key: str, field_attr: str):
         self.check_ready(True)
 
-        value: any = None
+        result = None
         try:
             self.data_lock.acquire_read()
 
             if experiment_name in self.context_custom_fields:
                 custom_field_value = self.context_custom_fields[experiment_name]
                 if key in custom_field_value:
-                    value = custom_field_value[key].value
+                    field = custom_field_value[key]
+                    if field_attr == 'value':
+                        result = self._coerce_custom_field_value(
+                            experiment_name, key, field.type, field.value
+                        )
+                    else:
+                        result = getattr(field, field_attr)
 
         finally:
             self.data_lock.release_read()
 
-        return value
+        return result
+
+    def _coerce_custom_field_value(self, experiment_name, key, field_type, raw_value):
+        # Parse the stored raw value lazily, matching the canonical JS SDK:
+        # text/string pass through, number -> JS Number(), boolean -> == "true",
+        # json -> configured variable parser (with "null"/"" special-cases). Only here can a
+        # malformed value produce an ERROR event, and only when accessed.
+        if raw_value is None:
+            return None
+
+        if field_type is None:
+            return raw_value
+
+        if field_type.startswith("text") or field_type.startswith("string"):
+            return raw_value
+
+        if field_type.startswith("number"):
+            return _js_number(raw_value)
+
+        if field_type.startswith("boolean"):
+            return raw_value == "true"
+
+        if field_type.startswith("json"):
+            if raw_value == "null":
+                return None
+            if raw_value == "":
+                return ""
+            try:
+                parsed = self.variable_parser.parse(
+                    self, experiment_name, key, raw_value)
+                if isinstance(parsed, (dict, list)):
+                    return copy.deepcopy(parsed)
+                return parsed
+            except Exception:
+                self.log_event(
+                    EventType.ERROR,
+                    f"Failed to parse JSON custom field value '{key}' for experiment '{experiment_name}'"
+                )
+                return None
+
+        self.log_event(
+            EventType.ERROR,
+            f"Unknown custom field type '{field_type}' for experiment '{experiment_name}' and key '{key}'"
+        )
+        return None
+
+    def get_custom_field_value(self, experiment_name: str, key: str):
+        return self._get_custom_field(experiment_name, key, 'value')
+
+    def get_custom_field_value_type(self, experiment_name: str, key: str):
+        return self._get_custom_field(experiment_name, key, 'type')
 
     def get_custom_field_type(self, experiment_name: str, key: str):
-        self.check_ready(True)
+        return self.get_custom_field_value_type(experiment_name, key)
 
-        type = None
-        try:
-            self.data_lock.acquire_read()
+    def _build_audience_attributes(self):
+        """Helper method to build audience attributes map from current attributes."""
+        attrs = {}
+        for attr in self.attributes:
+            attrs[attr.name] = attr.value
+        return attrs
 
-            if experiment_name in self.context_custom_fields:
-                customFieldValue = self.context_custom_fields[experiment_name]
-                if key in customFieldValue:
-                    type = customFieldValue[key].type
+    def _audience_matches(self, experiment: Experiment, assignment: Assignment):
+        if experiment.audience is not None and len(experiment.audience) > 0:
+            if self._attrs_seq > (assignment.attrs_seq or 0):
+                attrs = self._build_audience_attributes()
+                match = self.audience_matcher.evaluate(experiment.audience, attrs)
+                new_audience_mismatch = not match.result if match is not None else False
 
-        finally:
-            self.data_lock.release_read()
-
-        return type
+                if new_audience_mismatch != assignment.audience_mismatch:
+                    return False
+        return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
         try:
@@ -640,11 +919,12 @@ class Context:
                 elif experiment is None:
                     if assignment.assigned is False:
                         return assignment
-                elif experiment_name not in self.cassignments or \
-                        self.cassignments[experiment_name] == \
+                elif experiment_name not in self.custom_assignments or \
+                        self.custom_assignments[experiment_name] == \
                         assignment.variant:
                     if experiment_matches(experiment.data, assignment):
-                        return assignment
+                        if self._audience_matches(experiment.data, assignment):
+                            return assignment
         finally:
             self.context_lock.release_read()
 
@@ -672,9 +952,7 @@ class Context:
 
                     if experiment.data.audience is not None and \
                             len(experiment.data.audience) > 0:
-                        attrs = {}
-                        for attr in self.attributes:
-                            attrs[attr.name] = attr.value
+                        attrs = self._build_audience_attributes()
                         match = self.audience_matcher.evaluate(
                             experiment.data.audience,
                             attrs)
@@ -696,8 +974,8 @@ class Context:
                                     experiment.data.trafficSeedHi,
                                     experiment.data.trafficSeedLo) == 1
                             if eligible:
-                                if experiment_name in self.cassignments:
-                                    custom = self.cassignments[experiment_name]
+                                if experiment_name in self.custom_assignments:
+                                    custom = self.custom_assignments[experiment_name]
                                     assignment.variant = custom
                                     assignment.custom = True
                                 else:
@@ -721,8 +999,10 @@ class Context:
                     assignment.iteration = experiment.data.iteration
                     assignment.traffic_split = experiment.data.trafficSplit
                     assignment.full_on_variant = experiment.data.fullOnVariant
+                    assignment.attrs_seq = self._attrs_seq
 
             if experiment is not None and \
+                    assignment.variant >= 0 and \
                     (assignment.variant < len(experiment.data.variants)):
                 assignment.variables = experiment.variables[assignment.variant]
 
@@ -733,7 +1013,7 @@ class Context:
 
     def check_ready(self, expect_not_closed: bool):
         if not self.is_ready():
-            raise RuntimeError('ABSmartly Context is not yet ready')
+            raise RuntimeError('ABsmartly Context is not yet ready.')
         elif expect_not_closed:
             self.check_not_closed()
 
@@ -745,7 +1025,7 @@ class Context:
             self.data_lock.release_read()
 
     def get_experiments(self):
-        self.check_ready(True)
+        self.check_ready(False)
 
         try:
             self.data_lock.acquire_read()
@@ -758,7 +1038,7 @@ class Context:
             self.data_lock.release_read()
 
     def get_data(self):
-        self.check_ready(True)
+        self.check_ready(False)
 
         try:
             self.data_lock.acquire_read()
@@ -767,8 +1047,6 @@ class Context:
             self.data_lock.release_read()
 
     def set_override(self, experiment_name: str, variant: int):
-        self.check_not_closed()
-
         return Concurrency.put_rw(self.context_lock,
                                   self.overrides,
                                   experiment_name, variant)
@@ -783,15 +1061,13 @@ class Context:
             self.set_override(key, value)
 
     def set_custom_assignment(self, experiment_name: str, variant: int):
-        self.check_not_closed()
-
         Concurrency.put_rw(self.context_lock,
-                           self.cassignments,
+                           self.custom_assignments,
                            experiment_name, variant)
 
     def get_custom_assignment(self, experiment_name: str):
         return Concurrency.get_rw(self.context_lock,
-                                  self.cassignments,
+                                  self.custom_assignments,
                                   experiment_name)
 
     def set_custom_assignments(self, custom_assignments: dict):
@@ -807,7 +1083,10 @@ class Context:
                                                 unit_type, apply)
 
     def get_variable_experiment(self, key: str):
-        return Concurrency.get_rw(self.data_lock, self.index_variables, key)
+        experiments = Concurrency.get_rw(self.data_lock, self.index_variables, key)
+        if experiments:
+            return experiments[0]
+        return None
 
     def get_variable_assignment(self, key: str):
         experiment: ExperimentVariables = self.get_variable_experiment(key)
@@ -816,43 +1095,47 @@ class Context:
         return None
 
     def close_async(self):
-        if not self.closed.value:
-            if self.closing.compare_and_set(False, True):
-                self.clear_refresh_timer()
-
-                if self.pending_count.get() > 0:
-                    self.closing_future = Future()
-
-                    def accept(res: Future):
-                        if res.done() and res.cancelled() is False \
-                                and res.exception() is None:
-                            self.closed.set(True)
-                            self.closing.set(False)
-                            self.closing_future.set_result(None)
-                            self.log_event(EventType.CLOSE, None)
-                        elif res.cancelled() is False \
-                                and res.exception() is not None:
-                            self.closed.set(True)
-                            self.closing.set(False)
-                            self.closing_future.exception(res.exception())
-
-                    self.flush().add_done_callback(accept)
-                    return self.closing_future
-
-                else:
-                    self.closed.set(True)
-                    self.closing.set(False)
-                    self.log_event(EventType.CLOSE, None)
-
+        with self._close_lock:
+            if self.closed.value:
+                result = Future()
+                result.set_result(None)
+                return result
             if self.closing_future is not None:
                 return self.closing_future
+            closing_future = Future()
+            self.closing_future = closing_future
+            self.closing.set(True)
 
-        result = Future()
-        result.set_result(None)
-        return result
+        self.clear_refresh_timer()
+
+        def accept(res: Future):
+            error = _future_error(res)
+            with self._close_lock:
+                self.closing_future = None
+                if error is None:
+                    self.closed.set(True)
+                # A failed final publish leaves the context open with its
+                # events queued so close() can be retried (JS _finalize).
+                self.closing.set(False)
+            if error is not None:
+                self.set_refresh_timer()
+            if error is None:
+                self.log_event(EventType.FINALIZE, None)
+                closing_future.set_result(None)
+            else:
+                closing_future.set_exception(error)
+
+        self.flush().add_done_callback(accept)
+        return closing_future
 
     def queue_exposure(self, assignment: Assignment):
-        if assignment.exposed.compare_and_set(False, True):
+        try:
+            self.event_lock.acquire_write()
+            # Only mark the assignment exposed once the queue accepts the
+            # exposure: a context that started closing rejects it instead.
+            self.check_not_closed()
+            if not assignment.exposed.compare_and_set(False, True):
+                return
             exposure = Exposure()
             exposure.id = assignment.id
             exposure.name = assignment.name
@@ -866,12 +1149,10 @@ class Context:
             exposure.custom = assignment.custom
             exposure.audienceMismatch = assignment.audience_mismatch
 
-            try:
-                self.event_lock.acquire_write()
-                self.pending_count.increment_and_get()
-                self.exposures.append(exposure)
-            finally:
-                self.event_lock.release_write()
+            self.pending_count.increment_and_get()
+            self.exposures.append(exposure)
+        finally:
+            self.event_lock.release_write()
 
-            self.log_event(EventType.EXPOSURE, exposure)
-            self.set_timeout()
+        self.log_event(EventType.EXPOSURE, exposure)
+        self.set_timeout()

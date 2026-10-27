@@ -160,7 +160,6 @@ class Context:
         self.refresh_future: Optional[Future] = None
         self.closing_future: Optional[Future] = None
         self.flush_future: Optional[Future] = None
-        self._flush_lock = threading.Lock()
         self._close_lock = threading.Lock()
 
         self.refresh_timer: Optional[threading.Timer] = None
@@ -335,7 +334,7 @@ class Context:
                             experiment_variables.variables.append({})
                             continue
 
-                        for key, value in variables.items():
+                        for key in variables:
                             if key in index_variables:
                                 if experiment_variables not in index_variables[key]:
                                     index_variables[key].append(experiment_variables)
@@ -1062,8 +1061,6 @@ class Context:
             self.set_override(key, value)
 
     def set_custom_assignment(self, experiment_name: str, variant: int):
-        self.check_not_closed()
-
         Concurrency.put_rw(self.context_lock,
                            self.custom_assignments,
                            experiment_name, variant)

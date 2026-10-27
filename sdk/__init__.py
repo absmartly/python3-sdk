@@ -10,17 +10,17 @@ from sdk.default_http_client import DefaultHTTPClient
 from sdk.default_http_client_config import DefaultHTTPClientConfig
 
 __all__ = [
-    "ABsmartly",
     "ABSmartly",
-    "ABsmartlyConfig",
     "ABSmartlyConfig",
+    "ABsmartly",
+    "ABsmartlyConfig",
     "Client",
     "ClientConfig",
     "Context",
     "ContextConfig",
     "ContextEventLogger",
-    "EventType",
     "ContextPublisher",
     "DefaultHTTPClient",
     "DefaultHTTPClientConfig",
+    "EventType",
 ]

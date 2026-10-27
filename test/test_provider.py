@@ -1,9 +1,8 @@
 import unittest
-from concurrent.futures import Future, TimeoutError as FutureTimeoutError
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import MagicMock
 
 from requests import Response
-from requests.exceptions import Timeout, HTTPError, ConnectionError
+from requests.exceptions import Timeout, HTTPError
 
 from sdk.client import Client
 from sdk.client_config import ClientConfig

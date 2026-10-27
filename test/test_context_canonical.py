@@ -1,9 +1,6 @@
-import copy
-import json
 import os
 import threading
 import time
-import typing
 import unittest
 from concurrent.futures import Future
 
@@ -18,17 +15,12 @@ from sdk.default_http_client import DefaultHTTPClient
 from sdk.default_http_client_config import DefaultHTTPClientConfig
 from sdk.default_variable_parser import DefaultVariableParser
 from sdk.context_event_logger import ContextEventLogger, EventType
-from sdk.context_event_handler import ContextEventHandler
-from sdk.context_data_provider import ContextDataProvider
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 from sdk.default_context_data_deserializer import DefaultContextDataDeserializer
-from sdk.json.attribute import Attribute
 from sdk.json.context_data import ContextData
 from sdk.json.exposure import Exposure
 from sdk.json.goal_achievement import GoalAchievement
 from sdk.json.publish_event import PublishEvent
-from sdk.json.unit import Unit
-from sdk.time.clock import Clock
 from sdk.time.fixed_clock import FixedClock
 
 
@@ -109,6 +101,9 @@ class ContextCanonicalTestBase(unittest.TestCase):
     audeser = DefaultAudienceDeserializer()
 
     def set_up(self):
+        self.expectedVariants = dict(type(self).expectedVariants)
+        self.expectedVariables = dict(type(self).expectedVariables)
+        self.units = dict(type(self).units)
         with open(os.path.join(os.path.dirname(__file__), 'res/context.json'), 'r') as file:
             content = file.read()
         with open(os.path.join(os.path.dirname(__file__), 'res/context-strict.json'), 'r') as file:
@@ -162,7 +157,7 @@ class ContextCanonicalTestBase(unittest.TestCase):
         if 'custom_assignments' in kwargs:
             config.custom_assignments = kwargs['custom_assignments']
         if 'cassignments' in kwargs:
-            config.cassigmnents = kwargs['cassignments']
+            config.custom_assignments = kwargs['cassignments']
         data_future = kwargs.get('data_future', self.data_future_ready)
         return self.create_context(config, data_future)
 
@@ -880,12 +875,16 @@ class ContextCustomAssignmentTests(ContextCanonicalTestBase):
         self.assertEqual(2, context.get_custom_assignment("exp_test_ab"))
         context.close()
 
-    def test_custom_assignment_throws_after_close(self):
+    def test_custom_assignments_remain_allowed_after_close(self):
         self.set_up()
         context = self.create_ready_context()
         context.close()
-        with self.assertRaises(RuntimeError):
-            context.set_custom_assignment("exp_test_ab", 2)
+        context.set_custom_assignment("exp_test_ab", 2)
+        context.set_custom_assignments({"exp_test_abc": 1})
+        self.assertEqual(2, context.get_custom_assignment("exp_test_ab"))
+        self.assertEqual(1, context.get_custom_assignment("exp_test_abc"))
+        with self.assertRaisesRegex(RuntimeError, "ABsmartly Context is finalized."):
+            context.get_treatment("exp_test_ab")
 
 
 class ContextCustomFieldTests(ContextCanonicalTestBase):
@@ -980,7 +979,7 @@ class ContextPublishResetTests(ContextCanonicalTestBase):
         self.assertEqual(0, context.get_pending_count())
         self.assertEqual(2, context.get_override("exp_override"))
         self.assertEqual(2, context.get_custom_assignment("exp_test_ab"))
-        self.assertTrue(len(context.attributes) > 0)
+        self.assertTrue(context.get_attributes())
         context.close()
 
 
@@ -995,8 +994,8 @@ class ContextPublishDelayTests(ContextCanonicalTestBase):
         context.get_treatment("exp_test_ab")
         self.assertEqual(1, context.get_pending_count())
         self.assertIsNotNone(context.timeout)
-        deadline = time.time() + 5
-        while context.get_pending_count() != 0 and time.time() < deadline:
+        deadline = time.monotonic() + 5
+        while context.get_pending_count() != 0 and time.monotonic() < deadline:
             time.sleep(0.02)
         self.assertEqual(0, context.get_pending_count())
         context.close()
@@ -1010,8 +1009,8 @@ class ContextPublishDelayTests(ContextCanonicalTestBase):
         context.track("goal1", {"amount": 100})
         self.assertEqual(1, context.get_pending_count())
         self.assertIsNotNone(context.timeout)
-        deadline = time.time() + 5
-        while context.get_pending_count() != 0 and time.time() < deadline:
+        deadline = time.monotonic() + 5
+        while context.get_pending_count() != 0 and time.monotonic() < deadline:
             time.sleep(0.02)
         self.assertEqual(0, context.get_pending_count())
         context.close()
@@ -1020,7 +1019,6 @@ class ContextPublishDelayTests(ContextCanonicalTestBase):
 class ContextConcurrencyAndParserTests(unittest.TestCase):
 
     def test_overlapping_get_rw_does_not_wedge_lock(self):
-        import threading
         from sdk.internal.lock.concurrency import Concurrency
         from sdk.internal.lock.read_write_lock import ReadWriteLock
         lock = ReadWriteLock()
@@ -1061,7 +1059,6 @@ class ContextConcurrencyAndParserTests(unittest.TestCase):
 class ReadWriteLockOwnershipTests(unittest.TestCase):
 
     def test_cross_thread_reader_release_then_writer(self):
-        import threading
         from sdk.internal.lock.read_write_lock import ReadWriteLock
         lock = ReadWriteLock()
         a_in, b_in, a_out = threading.Event(), threading.Event(), threading.Event()

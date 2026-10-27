@@ -325,7 +325,7 @@ context.publish_async()
 
 ### Finalizing
 
-The `close()` and `close_async()` methods will ensure all events have been published to the ABsmartly collector, like `publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called.
+The `close()` and `close_async()` methods will ensure all events have been published to the ABsmartly collector, like `publish()`, and will also "seal" the context, throwing an error if any method that could generate an event is called. Overrides and custom assignments, including the bulk setters, remain allowed after finalization; treatment and variable reads still raise the finalized error.
 
 ```python
 context.close()

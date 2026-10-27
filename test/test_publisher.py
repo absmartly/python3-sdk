@@ -1,16 +1,15 @@
 import unittest
-from concurrent.futures import Future
 from unittest.mock import MagicMock, Mock
 
 from requests import Response
-from requests.exceptions import Timeout, HTTPError, ConnectionError
+from requests.exceptions import Timeout, HTTPError
 
 from sdk.client import Client
 from sdk.client_config import ClientConfig
 from sdk.default_context_event_handler import DefaultContextEventHandler
 from sdk.default_http_client import DefaultHTTPClient
 from sdk.default_http_client_config import DefaultHTTPClientConfig
-from sdk.json.attribute import Attribute
+from sdk.json.context_data import ContextData
 from sdk.json.exposure import Exposure
 from sdk.json.goal_achievement import GoalAchievement
 from sdk.json.publish_event import PublishEvent
@@ -76,7 +75,7 @@ class TestPublisher(unittest.TestCase):
         mock_context = Mock()
 
         future = self.publisher.publish(mock_context, event)
-        result = future.result(timeout=5)
+        self.assertIsInstance(future.result(timeout=5), ContextData)
 
         self.http_client.put.assert_called_once()
         call_args = self.http_client.put.call_args
@@ -152,7 +151,7 @@ class TestPublisher(unittest.TestCase):
         mock_context = Mock()
 
         future = self.publisher.publish(mock_context, event)
-        result = future.result(timeout=5)
+        self.assertIsInstance(future.result(timeout=5), ContextData)
 
         self.http_client.put.assert_called_once()
         call_args = self.http_client.put.call_args

@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 from sdk.absmartly import ABsmartly
 from sdk.absmartly_config import ABsmartlyConfig

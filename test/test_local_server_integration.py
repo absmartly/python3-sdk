@@ -8,12 +8,11 @@ from sdk.absmartly import ABsmartly
 from sdk.context_config import ContextConfig
 
 
-# Shared list capturing every request the local server received.
 RECORDED = []
 
 
 class _Handler(BaseHTTPRequestHandler):
-    def log_message(self, *args):  # silence the default stderr logging
+    def log_message(self, *args):
         pass
 
     def do_GET(self):
@@ -82,7 +81,6 @@ class LocalServerIntegrationTest(unittest.TestCase):
         context = sdk.create_context(context_config)
         context.wait_until_ready()
 
-        # --- assert the real GET /context ---
         get_reqs = [r for r in RECORDED if r["method"] == "GET"]
         self.assertTrue(len(get_reqs) >= 1, "expected a GET /context")
         get = get_reqs[0]
@@ -92,7 +90,6 @@ class LocalServerIntegrationTest(unittest.TestCase):
         self.assertEqual(qs.get("application"), ["website"])
         self.assertEqual(qs.get("environment"), ["dev"])
 
-        # --- queue an event then publish ---
         context.track("payment", {"value": 99})
         context.publish()
 
@@ -101,7 +98,6 @@ class LocalServerIntegrationTest(unittest.TestCase):
         put = put_reqs[0]
         self.assertEqual(urlparse(put["path"]).path, "/context")
 
-        # --- headers ---
         h = put["headers"]
         self.assertEqual(h.get("x-api-key"), "test-api-key")
         self.assertEqual(h.get("x-application"), "website")
@@ -110,7 +106,6 @@ class LocalServerIntegrationTest(unittest.TestCase):
         self.assertTrue(h.get("x-agent"))
         self.assertIn("application/json", h.get("content-type", ""))
 
-        # --- body ---
         body = put["body"]
         self.assertIn("hashed", body)
         self.assertIsInstance(body["units"], list)

@@ -1128,7 +1128,7 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(True, context.is_ready())
         self.assertEqual(False, context.is_failed())
 
-        res = context.get_treatment(
+        context.get_treatment(
             "exp_test_historical_timestamp",
             exposed_at = 1713218400000
         )
@@ -1697,7 +1697,7 @@ class ContextTest(unittest.TestCase):
 
         res = context.get_variable_keys()
 
-        for key, experiments in res.items():
+        for experiments in res.values():
             self.assertIsInstance(experiments, list)
             self.assertGreater(len(experiments), 0)
 

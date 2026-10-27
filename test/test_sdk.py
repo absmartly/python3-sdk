@@ -1,6 +1,6 @@
 import unittest
 from concurrent.futures import Future
-from unittest.mock import MagicMock, Mock, patch
+from unittest.mock import Mock
 
 from sdk.absmartly import ABSmartly
 from sdk.absmartly_config import ABSmartlyConfig
@@ -160,7 +160,6 @@ class TestSDKInitialization(unittest.TestCase):
 
     def test_absmartly_deprecation_warning(self):
         import warnings
-        from sdk.absmartly import ABsmartly
         mock_data_provider = Mock(spec=ContextDataProvider)
         mock_event_handler = Mock(spec=ContextEventHandler)
 
@@ -181,7 +180,7 @@ class TestSDKInitialization(unittest.TestCase):
             warnings.simplefilter("always")
             config.context_data_provider = mock_data_provider
             config.context_event_handler = mock_event_handler
-            sdk = ABSmartly(config)
+            self.assertIsInstance(ABSmartly(config), ABSmartly)
             self.assertTrue(any(
                 issubclass(warning.category, DeprecationWarning) and
                 "ABSmartly" in str(warning.message)

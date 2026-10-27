@@ -2,7 +2,6 @@ from typing import Optional
 import logging
 
 import jsons
-from jsons import DeserializationError
 
 from sdk.audience_deserializer import AudienceDeserializer
 

@@ -1,13 +1,11 @@
+import os
+import subprocess
+import sys
 import unittest
-from unittest.mock import Mock, patch
 
 from sdk.jsonexpr.expr_evaluator import ExprEvaluator
 from sdk.jsonexpr.json_expr import JsonExpr
 from sdk.jsonexpr.operators.match_operator import MatchOperator
-
-GET_CONTEXT = ("sdk.jsonexpr.operators.match_operator."
-               "multiprocessing.get_context")
-TIMEOUT = MatchOperator.REGEX_TIMEOUT_SECONDS
 
 
 class MatchOperatorTest(unittest.TestCase):
@@ -41,39 +39,19 @@ class MatchOperatorTest(unittest.TestCase):
         result = self.operator.binary(self.evaluator, "hello world", "hello")
         self.assertTrue(result)
 
-    def test_timeout_terminates_worker_process(self):
-        process = Mock()
-        process.is_alive.side_effect = [True, False]
-        receiver, sender = Mock(), Mock()
-        receiver.poll.return_value = False
-        context = Mock()
-        context.Pipe.return_value = (receiver, sender)
-        context.Process.return_value = process
-
-        with patch(GET_CONTEXT, return_value=context):
-            self.assertIsNone(
-                self.operator.binary(self.evaluator, "aaaa", "(a+)+$"))
-
-        receiver.poll.assert_called_once_with(TIMEOUT)
-        process.terminate.assert_called_once()
-        process.join.assert_called_once_with(timeout=TIMEOUT)
-        process.kill.assert_not_called()
-        process.close.assert_called_once()
-
-    def test_unresponsive_worker_process_is_killed(self):
-        process = Mock()
-        process.is_alive.side_effect = [True, True]
-        receiver, sender = Mock(), Mock()
-        receiver.poll.return_value = False
-        context = Mock()
-        context.Pipe.return_value = (receiver, sender)
-        context.Process.return_value = process
-
-        with patch(GET_CONTEXT, return_value=context):
-            self.assertIsNone(
-                self.operator.binary(self.evaluator, "aaaa", "(a+)+$"))
-
-        process.terminate.assert_called_once()
-        process.kill.assert_called_once()
-        self.assertEqual(2, process.join.call_count)
-        process.close.assert_called_once()
+    def test_match_works_when_application_reads_script_from_stdin(self):
+        root = os.path.dirname(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.abspath(__file__)))))
+        script = (
+            "from sdk.jsonexpr.expr_evaluator import ExprEvaluator\n"
+            "from sdk.jsonexpr.json_expr import JsonExpr\n"
+            "from sdk.jsonexpr.operators.match_operator import MatchOperator\n"
+            "evaluator = ExprEvaluator(JsonExpr().operators, {})\n"
+            "print(MatchOperator().binary(evaluator, 'bleh@absmartly.com',"
+            " '^bleh@'))\n")
+        completed = subprocess.run(
+            [sys.executable, "-B", "-"], input=script, text=True,
+            capture_output=True, cwd=root, timeout=30,
+            env=dict(os.environ, PYTHONPATH=root))
+        self.assertEqual(0, completed.returncode, completed.stderr)
+        self.assertEqual("True", completed.stdout.strip())

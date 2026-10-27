@@ -1,6 +1,4 @@
-import base64
 import copy
-import hashlib
 import logging
 import math
 import threading

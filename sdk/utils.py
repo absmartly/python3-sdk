@@ -1,7 +1,6 @@
 import base64
 import hashlib
 from concurrent.futures import Future
-from decimal import Decimal, ROUND_HALF_UP
 
 
 def is_numeric(value) -> bool:
@@ -35,19 +34,28 @@ def base64_url_no_padding(value: bytes) -> str:
 
 def unit_to_string(value) -> str:
     # A numeric UID is hashed as JS Number.prototype.toFixed(0) renders it:
-    # rounded half away from zero, with no fractional part.
+    # the exact value rounded half away from zero, "-" kept for negative
+    # values that round to 0 (but not for -0 itself), and the plain number
+    # string from 1e21 upwards. Integer arithmetic keeps this independent of
+    # any Decimal context the caller has set.
     if isinstance(value, str):
         return value
+    number = float(value)
+    if number != number:
+        return "NaN"
+    if abs(number) >= 1e21:
+        if number == float('inf'):
+            return "Infinity"
+        if number == float('-inf'):
+            return "-Infinity"
+        return repr(number)
     if isinstance(value, int):
         return str(value)
-    if value != value:
-        return "NaN"
-    if value in (float('inf'), float('-inf')):
-        return "Infinity" if value > 0 else "-Infinity"
-    rounded = int(Decimal(value).quantize(Decimal(1), rounding=ROUND_HALF_UP))
-    if rounded == 0 and (value < 0 or str(value).startswith('-')):
-        return "-0"
-    return str(rounded)
+    numerator, denominator = abs(number).as_integer_ratio()
+    quotient, remainder = divmod(numerator, denominator)
+    if 2 * remainder >= denominator:
+        quotient += 1
+    return ("-" if number < 0 else "") + str(quotient)
 
 
 def hash_unit(value) -> str:

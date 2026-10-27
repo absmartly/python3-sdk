@@ -72,8 +72,6 @@ class IntegrityParityTest(unittest.TestCase):
                        DefaultVariableParser(),
                        AudienceMatcher(DefaultAudienceDeserializer()))
 
-    # Goal properties
-
     def test_track_rejects_non_object_properties(self):
         context = self.make(done_future(empty_data()))
         for bad in ([1, 2], "text", 5, True):
@@ -89,8 +87,6 @@ class IntegrityParityTest(unittest.TestCase):
         context.track("goal1", None)
         context.track("goal2", {"a": 1})
         self.assertEqual(2, context.get_pending_count())
-
-    # Events are logged before the matching future settles
 
     def test_ready_event_logged_before_ready_settles(self):
         data_future = Future()
@@ -131,8 +127,6 @@ class IntegrityParityTest(unittest.TestCase):
             [(EventType.PUBLISH, False), (EventType.FINALIZE, False)],
             self.logger.events)
 
-    # Unit values keep their type
-
     def test_numeric_unit_kept_as_number(self):
         context = self.make(done_future(empty_data()), units={"user_id": 125})
         context.set_unit("price", 125.75)
@@ -162,8 +156,6 @@ class IntegrityParityTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             context.set_unit("user_id", "125")
 
-    # Utilities match the JS SDK utils
-
     def test_utils_match_js(self):
         self.assertEqual("CY9rzUYh03PK3k6DJie09g", utils.hash_unit("test"))
         self.assertEqual([0xe2, 0x82, 0xac], list(utils.utf8_bytes("\u20ac")))
@@ -179,6 +171,24 @@ class IntegrityParityTest(unittest.TestCase):
         self.assertFalse(utils.is_promise({}))
         self.assertEqual("126", utils.unit_to_string(125.75))
         self.assertEqual("-126", utils.unit_to_string(-125.5))
+
+    def test_unit_to_string_matches_js_to_fixed_0_boundaries(self):
+        cases = {
+            -0.0: "0", -0.4: "-0", 0.5: "1", 2.5: "3", 1.005: "1",
+            1e20: "100000000000000000000", 1e21: "1e+21",
+            1.5e22: "1.5e+22", -1e21: "-1e+21", 1e29: "1e+29",
+            12345.0: "12345", 10 ** 21: "1e+21",
+        }
+        for value, expected in cases.items():
+            self.assertEqual(expected, utils.unit_to_string(value), value)
+
+    def test_unit_hash_ignores_caller_decimal_context(self):
+        import decimal
+        with decimal.localcontext() as ctx:
+            ctx.prec = 3
+            ctx.traps[decimal.Inexact] = True
+            self.assertEqual("12345", utils.unit_to_string(12345.0))
+            self.assertEqual("1e+29", utils.unit_to_string(1e29))
 
 
 if __name__ == '__main__':

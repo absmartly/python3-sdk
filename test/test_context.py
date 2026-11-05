@@ -2118,6 +2118,111 @@ class ContextTest(unittest.TestCase):
                          [e.name for e in published[0].exposures])
         self.assertEqual(["goal1"], [g.name for g in published[0].goals])
 
+    def capture_publish(self):
+        published = []
+
+        def publish(event):
+            published.append(event)
+            future = Future()
+            future.set_result(None)
+            return future
+
+        self.client.publish = publish
+        return published
+
+    def test_recovery_keeps_exposures_queued_against_recovered_data(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_failed)
+        self.assertTrue(context.is_failed())
+
+        # Read the experiment on another thread the moment recovery releases
+        # the data write lock, before set_data has returned.
+        release_write = context.data_lock.release_write
+        reads = []
+
+        def release_and_read():
+            release_write()
+            if context.data is self.data and not reads:
+                reads.append(None)
+                thread = threading.Thread(target=lambda: reads.append(
+                    context.get_treatment("exp_test_ab")))
+                thread.start()
+                thread.join()
+
+        context.data_lock.release_write = release_and_read
+        self.client.get_context_data = lambda: self.data_future_ready
+        context.refresh()
+        context.data_lock.release_write = release_write
+
+        self.assertEqual([None, 1], reads)
+        self.assertFalse(context.is_failed())
+        self.assertEqual(1, context.get_pending_count())
+
+        published = self.capture_publish()
+        context.close()
+        self.assertEqual(["exp_test_ab"],
+                         [e.name for e in published[0].exposures])
+
+    def test_refresh_before_ready_settles_waiters_and_survives_late_failure(
+            self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future)
+        waiter = context.wait_until_ready_async()
+        self.assertFalse(waiter.done())
+
+        self.client.get_context_data = lambda: self.data_future_ready
+        context.refresh()
+
+        self.assertTrue(waiter.done())
+        self.assertTrue(context.is_ready())
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        context.track("goal1", {"amount": 1})
+
+        # The original request failing later must not erase the refreshed
+        # data or the events queued against it.
+        self.data_future.set_exception(RuntimeError("FAILED"))
+
+        self.assertFalse(context.is_failed())
+        self.assertIsNone(context.ready_error)
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        self.assertEqual(2, context.get_pending_count())
+
+        published = self.capture_publish()
+        context.close()
+        self.assertEqual(1, len(published))
+        self.assertEqual(["exp_test_ab"],
+                         [e.name for e in published[0].exposures])
+        self.assertEqual(["goal1"], [g.name for g in published[0].goals])
+
+    def test_refresh_recovery_resolves_overridden_variables(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_failed)
+        context.set_override("exp_test_ab", 1)
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        self.assertEqual("DEFAULT",
+                         context.peek_variable_value("banner.size", "DEFAULT"))
+
+        self.client.get_context_data = lambda: self.data_future_ready
+        context.refresh()
+
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        self.assertEqual("large",
+                         context.peek_variable_value("banner.size", "DEFAULT"))
+
+        published = self.capture_publish()
+        context.close()
+        exposures = published[0].exposures
+        self.assertEqual(["exp_test_ab"], [e.name for e in exposures])
+        self.assertTrue(exposures[0].overridden)
+        self.assertEqual(1, exposures[0].variant)
+        self.assertEqual(1, exposures[0].id)
+
     def test_read_methods_raise_after_finalize(self):
         self.set_up()
         config = ContextConfig()

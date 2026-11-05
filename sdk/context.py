@@ -50,6 +50,9 @@ class Assignment:
         self.exposed = AtomicBool()
         self.exposedAt: Optional[int] = None
         self.attrs_seq: Optional[int] = 0
+        # Computed while the context's data had failed to load: a placeholder
+        # that is recomputed once a refresh recovers the context.
+        self.data_failed: bool = False
 
 
 class ExperimentVariables:
@@ -990,10 +993,14 @@ class Context:
             if experiment_name in self.assignment_cache:
                 assignment: Assignment = self.assignment_cache[experiment_name]
 
-                experiment: ExperimentVariables = \
-                    self.get_experiment(experiment_name)
+                experiment, failed = self._get_experiment_state(
+                    experiment_name)
 
-                if experiment_name in self.overrides:
+                if assignment.data_failed and not failed:
+                    # Computed before a refresh recovered the context; its
+                    # placeholder exposure was dropped, so recompute.
+                    pass
+                elif experiment_name in self.overrides:
                     override = self.overrides[experiment_name]
                     if assignment.overridden and \
                             assignment.variant == override:
@@ -1030,11 +1037,11 @@ class Context:
 
         try:
             self.context_lock.acquire_write()
-            experiment: ExperimentVariables = \
-                self.get_experiment(experiment_name)
+            experiment, failed = self._get_experiment_state(experiment_name)
             assignment = Assignment()
             assignment.name = experiment_name
             assignment.eligible = True
+            assignment.data_failed = failed
 
             if exposed_at:
                 assignment.exposedAt = exposed_at
@@ -1122,6 +1129,15 @@ class Context:
         try:
             self.data_lock.acquire_read()
             return self.index.get(experiment_name, None)
+        finally:
+            self.data_lock.release_read()
+
+    def _get_experiment_state(self, experiment_name: str):
+        # The experiment and the failed flag, read together so an assignment
+        # knows whether it was computed against failed data.
+        try:
+            self.data_lock.acquire_read()
+            return self.index.get(experiment_name, None), self.failed
         finally:
             self.data_lock.release_read()
 
@@ -1237,6 +1253,10 @@ class Context:
             # Only mark the assignment exposed once the queue accepts the
             # exposure: a context that started closing rejects it instead.
             self.check_not_closed()
+            if assignment.data_failed and not self.failed:
+                # A placeholder computed before recovery: its experiment is
+                # now known, so the next read recomputes and exposes it.
+                return
             if not assignment.exposed.compare_and_set(False, True):
                 return
             exposure = Exposure()

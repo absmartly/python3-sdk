@@ -378,14 +378,29 @@ class Context:
         try:
             self.data_lock.acquire_write()
 
+            recovered = self.failed
             self.index = index
             self.index_variables = index_variables
             self.context_custom_fields = context_custom_fields
             self.data = data
+            self.failed = False
+            self.ready_error = None
 
             self.set_refresh_timer()
         finally:
             self.data_lock.release_write()
+
+        if recovered:
+            # Exposures queued while the context had no data are control
+            # placeholders for experiments it could not see; drop them, as a
+            # failed context would have. Goals are real and stay queued.
+            try:
+                self.event_lock.acquire_write()
+                self.pending_count.set(
+                    self.pending_count.get() - len(self.exposures))
+                self.exposures.clear()
+            finally:
+                self.event_lock.release_write()
 
     def set_refresh_timer(self):
         if self.refresh_interval <= 0:
@@ -452,14 +467,10 @@ class Context:
         return self.is_closing()
 
     def refresh_async(self):
-        self.check_ready(True)
-
-        if self.failed:
-            # A context that failed to initialize stays failed: refreshing it
-            # is a successful no-op, as in the JS SDK (context.ts _refresh).
-            result = Future()
-            result.set_result(None)
-            return result
+        # As in v0.2.4, refresh only requires an open context: it works
+        # before ready, and a context whose first fetch failed re-fetches and
+        # recovers (set_data clears the failed state).
+        self.check_not_closed()
 
         if self.refreshing.compare_and_set(False, True):
 

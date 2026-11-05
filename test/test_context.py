@@ -1950,11 +1950,58 @@ class ContextTest(unittest.TestCase):
             context.get_experiments()
         self.assertEqual("ABSmartly Context is not yet ready",
                          str(raised.exception))
-        with self.assertRaises(RuntimeError):
-            context.refresh()
         self.assertEqual(0, context.get_pending_count())
 
         self.data_future.set_result(self.data)
+
+    def test_refresh_before_ready_fetches_data(self):
+        # v0.2.4: refresh() only requires an open context.
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future)
+        self.assertFalse(context.is_ready())
+
+        self.client.get_context_data = lambda: self.data_future_ready
+        context.refresh()
+
+        self.assertTrue(context.is_ready())
+        self.assertIn("exp_test_ab", context.get_experiments())
+        self.data_future.set_result(self.data)
+        context.close()
+
+    def test_refresh_recovers_failed_context(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        context = self.create_test_context(config, self.data_future_failed)
+        self.assertTrue(context.is_failed())
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+        context.track("goal1", {"amount": 1})
+        self.assertEqual(2, context.get_pending_count())
+
+        self.client.get_context_data = lambda: self.data_future_ready
+        context.refresh()
+
+        self.assertFalse(context.is_failed())
+        self.assertIsNone(context.ready_error)
+        self.assertIn("exp_test_ab", context.get_experiments())
+        self.assertNotEqual(0, context.get_treatment("exp_test_ab"))
+
+        published = []
+
+        def publish(event):
+            published.append(event)
+            future = Future()
+            future.set_result(None)
+            return future
+
+        self.client.publish = publish
+        context.close()
+        self.assertEqual(1, len(published))
+        self.assertEqual(["exp_test_ab"],
+                         [e.name for e in published[0].exposures])
+        self.assertEqual(["goal1"], [g.name for g in published[0].goals])
 
     def test_read_methods_raise_after_finalize(self):
         self.set_up()

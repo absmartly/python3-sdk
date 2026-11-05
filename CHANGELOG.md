@@ -17,6 +17,7 @@
 - `custom_assignments` (deprecated alias for the `cassigmnents` typo).
 
 ### Fixed
+- `refresh()` works before the context is ready and on a context whose first fetch failed, as in v0.2.4; a successful refresh clears the failed state so new exposures and queued goals are published (control exposures queued while failed are dropped).
 - `close()` logs `EventType.CLOSE` again (as in v0.2.4), followed by the new `EventType.FINALIZE`.
 - A failed final publish no longer restarts the refresh timer; the events stay queued so `close()` can be retried.
 - The `ready`, `error`, `refresh` and `finalize` events are logged before the matching future settles, so callers woken by it already see the event.

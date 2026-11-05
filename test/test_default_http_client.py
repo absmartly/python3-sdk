@@ -65,6 +65,9 @@ class DefaultHTTPClientRetryTest(unittest.TestCase):
         self.assertEqual(['GET'], _Handler.calls)
 
     def test_wider_policy_is_opt_in(self):
+        # 500 is outside the default (502, 503) list, so this only retries
+        # when both the status list and the allowed methods are widened.
+        _Handler.status = 500
         client = self.make_client(
             retry_status_forcelist=frozenset(range(500, 600)),
             retry_allowed_methods=frozenset(['GET', 'POST', 'PUT']))

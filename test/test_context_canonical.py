@@ -254,6 +254,17 @@ class ContextEventLoggerTests(ContextCanonicalTestBase):
         context.close()
         self.assertEqual(self.event_logger.last_type, EventType.FINALIZE)
 
+    def test_event_logger_logs_close_then_finalize(self):
+        # v0.2.4 loggers branch on EventType.CLOSE; it is still emitted.
+        self.set_up()
+        context = self.create_ready_context()
+        context.close()
+        types = [e[0] for e in self.event_logger.events]
+        self.assertEqual(1, types.count(EventType.CLOSE))
+        self.assertEqual(1, types.count(EventType.FINALIZE))
+        self.assertLess(types.index(EventType.CLOSE),
+                        types.index(EventType.FINALIZE))
+
 
 class ContextTreatmentTests(ContextCanonicalTestBase):
 

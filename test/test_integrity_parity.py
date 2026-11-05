@@ -124,7 +124,8 @@ class IntegrityParityTest(unittest.TestCase):
         self.logger.watch = lambda: result
         pending.set_result(None)
         self.assertEqual(
-            [(EventType.PUBLISH, False), (EventType.FINALIZE, False)],
+            [(EventType.PUBLISH, False), (EventType.CLOSE, False),
+             (EventType.FINALIZE, False)],
             self.logger.events)
 
     def test_failed_final_publish_logs_error_once(self):

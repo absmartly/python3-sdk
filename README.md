@@ -385,7 +385,7 @@ The data parameter depends on the type of event.
 | `Exposure` | `Context.get_treatment()` method succeeds on first exposure| `Exposure` enqueued for publishing          |
 | `Goal`     | `Context.track()` method succeeds                          | `GoalAchievement` enqueued for publishing   |
 | `Close`    | `Context.close()` method succeeds the first time           | `None`                                      |
-| `Finalize` | `Context.close()` method succeeds                          | `None`                                      |
+| `Finalize` | Logged right after `Close` (cross-SDK name for the event)  | `None`                                      |
 
 ## Platform-Specific Examples
 

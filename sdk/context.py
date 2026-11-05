@@ -1123,11 +1123,13 @@ class Context:
                 if error is None:
                     self.closed.set(True)
                 # A failed final publish leaves the context open with its
-                # events queued so close() can be retried (JS _finalize).
+                # events queued so close() can be retried (JS _finalize). The
+                # refresh timer stays cleared, as in JS: the caller has moved
+                # on and must not be left polling /context.
                 self.closing.set(False)
-            if error is not None:
-                self.set_refresh_timer()
             if error is None:
+                # CLOSE is the v0.2.4 event; FINALIZE is the cross-SDK name.
+                self.log_event(EventType.CLOSE, None)
                 self.log_event(EventType.FINALIZE, None)
                 closing_future.set_result(None)
             else:

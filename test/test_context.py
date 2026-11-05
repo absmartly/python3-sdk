@@ -1637,7 +1637,7 @@ class ContextTest(unittest.TestCase):
         self.assertTrue(context.is_closed())
         self.assertFalse(context.is_closing())
 
-    def test_failed_close_restores_refresh_timer(self):
+    def test_failed_close_does_not_restart_refresh_timer(self):
         self.set_up()
         config = ContextConfig()
         config.units = self.units
@@ -1656,8 +1656,9 @@ class ContextTest(unittest.TestCase):
             context.close()
 
         self.assertFalse(context.is_closed())
-        self.assertIsNotNone(context.refresh_timer)
-        context.clear_refresh_timer()
+        self.assertIsNone(context.refresh_timer)
+        # Events stay queued so close() can be retried.
+        self.assertEqual(1, context.get_pending_count())
 
     def test_get_data_after_close(self):
         self.set_up()

@@ -17,5 +17,7 @@
 - `custom_assignments` (deprecated alias for the `cassigmnents` typo).
 
 ### Fixed
+- `close()` logs `EventType.CLOSE` again (as in v0.2.4), followed by the new `EventType.FINALIZE`.
+- A failed final publish no longer restarts the refresh timer; the events stay queued so `close()` can be retried.
 - The `ready`, `error`, `refresh` and `finalize` events are logged before the matching future settles, so callers woken by it already see the event.
 - Custom field values parsed lazily; refresh timer race; daemon timer threads; owner-safe ReadWriteLock; `DefaultHTTPClient.post` uses POST.

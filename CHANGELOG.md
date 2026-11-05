@@ -15,6 +15,7 @@
 - `sdk.utils`: `hash_unit`, `utf8_bytes`, `base64_url_no_padding`, `is_object`, `is_numeric`, `is_promise`.
 - Finalize aliases, `get_unit`, `get_units`, `get_attribute`, `get_attributes`, `ready_error`; `EventType` export.
 - `custom_assignments` (deprecated alias for the `cassigmnents` typo).
+- `Context.cassignments` kept as a deprecated property (with setter) proxying `Context.custom_assignments`.
 
 ### Fixed
 - `refresh()` works before the context is ready and on a context whose first fetch failed, as in v0.2.4; a successful refresh clears the failed state so new exposures and queued goals are published (control exposures queued while failed are dropped).

@@ -1670,6 +1670,24 @@ class ContextTest(unittest.TestCase):
 
         self.assertIs(data, context.get_data())
 
+    def test_cassignments_alias_proxies_custom_assignments(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        config.custom_assignments = {"exp_test_ab": 2}
+        context = self.create_test_context(config, self.data_future_ready)
+
+        with self.assertWarns(DeprecationWarning):
+            self.assertIs(context.custom_assignments, context.cassignments)
+        with self.assertWarns(DeprecationWarning):
+            self.assertEqual({"exp_test_ab": 2}, context.cassignments)
+
+        with self.assertWarns(DeprecationWarning):
+            context.cassignments = {"exp_test_abc": 1}
+        self.assertEqual({"exp_test_abc": 1}, context.custom_assignments)
+        self.assertEqual(1, context.get_custom_assignment("exp_test_abc"))
+        context.close()
+
     def test_set_attribute_increments_attrs_seq_atomically(self):
         self.set_up()
         config = ContextConfig()

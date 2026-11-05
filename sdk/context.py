@@ -2,6 +2,7 @@ import copy
 import logging
 import math
 import threading
+import warnings
 from concurrent.futures import CancelledError, Future
 from typing import Optional
 
@@ -225,6 +226,26 @@ class Context:
                     self.ready_future.set_result(None)
 
             data_future.add_done_callback(when_finished)
+
+    @property
+    def cassignments(self):
+        warnings.warn(
+            "'cassignments' is deprecated and will be removed in a future "
+            "version. Use 'custom_assignments' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self.custom_assignments
+
+    @cassignments.setter
+    def cassignments(self, value):
+        warnings.warn(
+            "'cassignments' is deprecated and will be removed in a future "
+            "version. Use 'custom_assignments' instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        self.custom_assignments = value
 
     def set_units(self, units: dict):
         for key, value in units.items():

@@ -1,5 +1,7 @@
 import unittest
+from collections import OrderedDict
 from concurrent.futures import Future
+from types import MappingProxyType
 
 from sdk.audience_matcher import AudienceMatcher
 from sdk.context import Context
@@ -74,13 +76,24 @@ class IntegrityParityTest(unittest.TestCase):
 
     def test_track_rejects_non_object_properties(self):
         context = self.make(done_future(empty_data()))
-        for bad in ([1, 2], "text", 5, True):
+        for bad in ([1, 2], "text", 5, True, [("a", 1, 2)]):
             with self.assertRaises(ValueError) as raised:
                 context.track("goal1", bad)
             self.assertEqual(
                 "Goal 'goal1' properties must be of type object.",
                 str(raised.exception))
         self.assertEqual(0, context.get_pending_count())
+
+    def test_track_accepts_mappings_and_pairs_like_v024(self):
+        context = self.make(done_future(empty_data()))
+        context.track("goal1", MappingProxyType({"a": 1}))
+        context.track("goal2", [("b", 2)])
+        context.track("goal3", OrderedDict(c=3))
+        self.assertEqual(
+            [{"a": 1}, {"b": 2}, {"c": 3}],
+            [g.properties for g in context.achievements])
+        self.assertTrue(all(type(g.properties) is dict
+                            for g in context.achievements))
 
     def test_track_accepts_object_or_missing_properties(self):
         context = self.make(done_future(empty_data()))

@@ -24,7 +24,7 @@ from sdk.json.goal_achievement import GoalAchievement
 from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
-from sdk.utils import hash_unit, is_numeric, is_object
+from sdk.utils import hash_unit, is_numeric
 from sdk.variable_parser import VariableParser
 
 logger = logging.getLogger(__name__)
@@ -684,17 +684,21 @@ class Context:
     def track(self, goal_name: str, properties: dict, achieved_at: int = None):
         self.check_not_closed()
 
-        if properties is not None and not is_object(properties):
-            raise ValueError(
-                f"Goal '{goal_name}' properties must be of type object.")
+        # Like v0.2.4, anything dict() accepts (a Mapping, MappingProxyType,
+        # a list of pairs) is converted; only unconvertible values raise.
+        if properties is not None:
+            try:
+                if isinstance(properties, (str, bytes)):
+                    raise TypeError
+                properties = dict(properties)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"Goal '{goal_name}' properties must be of type object.")
 
         achievement = GoalAchievement()
         achievement.achievedAt = achieved_at or self.clock.millis()
         achievement.name = goal_name
-        if properties is None:
-            achievement.properties = None
-        else:
-            achievement.properties = dict(properties)
+        achievement.properties = properties
 
         try:
             self.event_lock.acquire_write()

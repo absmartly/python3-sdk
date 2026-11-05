@@ -999,7 +999,7 @@ class Context:
             # the read lock, since concurrent readers cannot all upgrade.
             try:
                 self.context_lock.acquire_write()
-                if assignment.attrs_seq < checked_seq:
+                if (assignment.attrs_seq or 0) < checked_seq:
                     assignment.attrs_seq = checked_seq
             finally:
                 self.context_lock.release_write()

@@ -516,7 +516,15 @@ class ContextVariableKeysTests(ContextCanonicalTestBase):
     def test_variable_keys_returns_all_active_keys(self):
         self.set_up()
         context = self.create_ready_context(data_future=self.data_future_refresh)
-        keys = context.get_variable_keys()
+        self.assertEqual(
+            {"banner.border": "exp_test_ab", "banner.size": "exp_test_ab",
+             "button.color": "exp_test_abc",
+             "card.width": "exp_test_not_eligible",
+             "submit.color": "exp_test_fullon",
+             "submit.shape": "exp_test_fullon",
+             "show-modal": "exp_test_new"},
+            context.get_variable_keys())
+        keys = context.get_variable_keys_all()
         expected = {
             "banner.border": ["exp_test_ab"],
             "banner.size": ["exp_test_ab"],

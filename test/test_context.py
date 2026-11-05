@@ -755,8 +755,19 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(True, context.is_ready())
         self.assertEqual(False, context.is_failed())
 
+        # v0.2.4 shape: one experiment name (a string) per key.
         res = context.get_variable_keys()
-        self.assertEqual(self.variableExperiments, res)
+        self.assertEqual({
+            "banner.border": "exp_test_ab",
+            "banner.size": "exp_test_ab",
+            "button.color": "exp_test_abc",
+            "card.width": "exp_test_not_eligible",
+            "submit.color": "exp_test_fullon",
+            "submit.shape": "exp_test_fullon",
+            "show-modal": "exp_test_new",
+        }, res)
+        self.assertEqual(self.variableExperiments,
+                         context.get_variable_keys_all())
 
         self.assertEqual(0, context.get_pending_count())
         context.close()
@@ -1714,14 +1725,14 @@ class ContextTest(unittest.TestCase):
         self.assertTrue(context.ready_future.done())
         context.close()
 
-    def test_get_variable_keys_returns_list_of_experiments(self):
+    def test_get_variable_keys_all_returns_list_of_experiments(self):
         self.set_up()
         config = ContextConfig()
         config.units = self.units
         context = self.create_test_context(config, self.data_future_refresh)
         self.assertTrue(context.is_ready())
 
-        res = context.get_variable_keys()
+        res = context.get_variable_keys_all()
 
         for experiments in res.values():
             self.assertIsInstance(experiments, list)
@@ -1795,13 +1806,13 @@ class ContextTest(unittest.TestCase):
         context = self.create_test_context(config, future)
         self.assertTrue(context.is_ready())
 
-        res = context.get_variable_keys()
+        res = context.get_variable_keys_all()
 
-        self.assertIn("shared_key", res)
-        self.assertIsInstance(res["shared_key"], list)
-        self.assertEqual(2, len(res["shared_key"]))
-        self.assertIn("exp_a", res["shared_key"])
-        self.assertIn("exp_b", res["shared_key"])
+        self.assertEqual(["exp_a", "exp_b"], res["shared_key"])
+
+        # get_variable_keys keeps the v0.2.4 string per key: the
+        # lowest-id experiment, the first one variable lookups visit.
+        self.assertEqual({"shared_key": "exp_a"}, context.get_variable_keys())
 
         context.close()
 

@@ -10,14 +10,15 @@ class DefaultHTTPClient(HTTPClient):
 
     def __init__(self, config: DefaultHTTPClientConfig):
         self.http_client = req.Session()
-        # Same policy as the JS SDK client (client.ts request/tryWith): every
-        # request, including the PUT publish, is retried on network errors and
-        # 5xx responses; a 4xx response fails immediately.
+        # raise_on_status=False returns the last response once retries are
+        # exhausted, so callers see an HTTPError from raise_for_status()
+        # rather than urllib3's RetryError.
         retry = Retry(total=config.max_retries, read=config.max_retries,
                       connect=config.max_retries,
                       backoff_factor=config.retry_interval,
-                      status_forcelist=frozenset(range(500, 600)),
-                      allowed_methods=frozenset(['GET', 'POST', 'PUT']))
+                      status_forcelist=config.retry_status_forcelist,
+                      allowed_methods=config.retry_allowed_methods,
+                      raise_on_status=False)
         self.http_client.mount(
             'http://', HTTPAdapter(max_retries=retry,
                                    pool_maxsize=200,

@@ -934,17 +934,23 @@ class Context:
         return attrs
 
     def _audience_matches(self, experiment: Experiment, assignment: Assignment):
+        """Returns (matches, attrs_seq) where attrs_seq is the attribute
+        sequence the cached assignment was re-checked against, or None when
+        no re-check was needed."""
         if experiment.audience is not None and len(experiment.audience) > 0:
-            if self._attrs_seq > (assignment.attrs_seq or 0):
+            attrs_seq = self._attrs_seq
+            if attrs_seq > (assignment.attrs_seq or 0):
                 attrs = self._build_audience_attributes()
                 match = self.audience_matcher.evaluate(experiment.audience, attrs)
                 new_audience_mismatch = not match.result if match is not None else False
 
                 if new_audience_mismatch != assignment.audience_mismatch:
-                    return False
-        return True
+                    return False, None
+                return True, attrs_seq
+        return True, None
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
+        checked_seq = None
         try:
             self.context_lock.acquire_read()
 
@@ -966,10 +972,28 @@ class Context:
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:
                     if experiment_matches(experiment.data, assignment):
-                        if self._audience_matches(experiment.data, assignment):
-                            return assignment
+                        matches, checked_seq = self._audience_matches(
+                            experiment.data, assignment)
+                        if matches:
+                            if checked_seq is None:
+                                return assignment
+                        else:
+                            checked_seq = None
         finally:
             self.context_lock.release_read()
+
+        if checked_seq is not None:
+            # The audience result is unchanged: record the sequence it was
+            # checked at (JS sets assignment.attrsSeq), so later reads skip
+            # the re-evaluation. Done under the write lock, after releasing
+            # the read lock, since concurrent readers cannot all upgrade.
+            try:
+                self.context_lock.acquire_write()
+                if assignment.attrs_seq < checked_seq:
+                    assignment.attrs_seq = checked_seq
+            finally:
+                self.context_lock.release_write()
+            return assignment
 
         try:
             self.context_lock.acquire_write()

@@ -323,6 +323,30 @@ class ContextTreatmentTests(ContextCanonicalTestBase):
         self.assertFalse(exposure.audienceMismatch)
         context.close()
 
+    def test_unchanged_audience_recheck_records_attrs_seq(self):
+        self.set_up()
+        context = self.create_ready_context(data_future=self.data_future_strict)
+        context.set_attribute("age", 25)
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+
+        calls = []
+        evaluate = context.audience_matcher.evaluate
+
+        def counting_evaluate(audience, attrs):
+            calls.append(attrs)
+            return evaluate(audience, attrs)
+
+        context.audience_matcher.evaluate = counting_evaluate
+        context.set_attribute("country", "PT")
+        for _ in range(3):
+            self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        # Re-checked once after set_attribute, then served from the cache.
+        self.assertEqual(1, len(calls))
+        self.assertEqual(context._attrs_seq,
+                         context.assignment_cache["exp_test_ab"].attrs_seq)
+        self.assertEqual(1, context.get_pending_count())
+        context.close()
+
     def test_treatment_queues_exposure_with_audience_mismatch_false_nonstrict(self):
         self.set_up()
         context = self.create_ready_context(data_future=self.data_future_strict)

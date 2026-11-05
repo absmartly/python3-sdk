@@ -1,16 +1,10 @@
-import warnings
-
-from sdk.client import Client
+from sdk.context_event_handler import ContextEventHandler
 from sdk.default_context_publisher import DefaultContextPublisher
 
 
-class DefaultContextEventHandler(DefaultContextPublisher):
-    """Deprecated: Use DefaultContextPublisher instead."""
+class DefaultContextEventHandler(DefaultContextPublisher, ContextEventHandler):
+    """Deprecated: use DefaultContextPublisher instead.
 
-    def __init__(self, client: Client):
-        warnings.warn(
-            "DefaultContextEventHandler is deprecated, use DefaultContextPublisher instead.",
-            DeprecationWarning,
-            stacklevel=2
-        )
-        super().__init__(client)
+    Constructing it does not warn, so code written against v0.2.4 keeps
+    running under ``-W error::DeprecationWarning``.
+    """

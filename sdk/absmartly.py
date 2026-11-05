@@ -2,7 +2,7 @@ import warnings
 from concurrent.futures import Future
 from typing import Optional
 
-from sdk.absmartly_config import ABsmartlyConfig
+from sdk.absmartly_config import ABsmartlyConfig, ABSmartlyConfig  # noqa: F401
 from sdk.audience_matcher import AudienceMatcher
 from sdk.client import Client
 from sdk.client_config import ClientConfig
@@ -11,6 +11,8 @@ from sdk.context_config import ContextConfig
 from sdk.context_event_logger import ContextEventLogger
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 from sdk.default_context_data_provider import DefaultContextDataProvider
+from sdk.default_context_event_handler import \
+    DefaultContextEventHandler  # noqa: F401
 from sdk.default_context_publisher import DefaultContextPublisher
 from sdk.default_http_client import DefaultHTTPClient
 from sdk.default_http_client_config import DefaultHTTPClientConfig

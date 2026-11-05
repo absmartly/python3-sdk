@@ -4,6 +4,7 @@ from typing import Optional
 from sdk.audience_deserializer import AudienceDeserializer
 from sdk.client import Client
 from sdk.context_data_provider import ContextDataProvider
+from sdk.context_event_handler import ContextEventHandler  # noqa: F401
 from sdk.context_publisher import ContextPublisher
 from sdk.context_event_logger import ContextEventLogger
 from sdk.variable_parser import VariableParser

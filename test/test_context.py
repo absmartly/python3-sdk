@@ -1807,6 +1807,105 @@ class ContextTest(unittest.TestCase):
 
         context.close()
 
+    def make_shared_key_experiment(self, exp_id, name, unit_type,
+                                   control, treatment):
+        import json
+        from sdk.json.experiment import Experiment
+        from sdk.json.experiment_variant import ExperimentVariant
+
+        experiment = Experiment()
+        experiment.id = exp_id
+        experiment.name = name
+        experiment.unitType = unit_type
+        experiment.iteration = 1
+        experiment.fullOnVariant = 0
+        experiment.trafficSplit = [0.0, 1.0]
+        experiment.trafficSeedHi = 0
+        experiment.trafficSeedLo = 0
+        experiment.audience = ""
+        experiment.audienceStrict = False
+        experiment.split = [0.5, 0.5]
+        experiment.seedHi = exp_id
+        experiment.seedLo = exp_id
+        experiment.customFieldValues = None
+        experiment.variants = []
+        for variant_name, value in (("control", control),
+                                    ("treatment", treatment)):
+            variant = ExperimentVariant()
+            variant.name = variant_name
+            variant.config = None if value is None else \
+                json.dumps({"banner.size": value})
+            experiment.variants.append(variant)
+        return experiment
+
+    def create_shared_key_context(self, experiments, units):
+        from sdk.json.context_data import ContextData
+
+        data = ContextData()
+        data.experiments = experiments
+        future = Future()
+        future.set_result(data)
+        config = ContextConfig()
+        config.units = units
+        return self.create_test_context(config, future)
+
+    def test_variable_value_walks_shared_key_experiments_by_id(self):
+        # JS _variableValue: experiments sharing a key are visited in id
+        # order; the first one whose variables hold the key wins, and each
+        # visited experiment is exposed. Payload order must not matter.
+        self.set_up()
+        exp_a = self.make_shared_key_experiment(
+            1, "exp_a", "user_id", None, "a_treatment")
+        exp_b = self.make_shared_key_experiment(
+            2, "exp_b", "user_id", "b_control", "b_treatment")
+
+        fell_through = 0
+        for i in range(20):
+            uid = f"uid-{i}"
+            context = self.create_shared_key_context(
+                [exp_b, exp_a], {"user_id": uid})
+            a = context.peek_treatment("exp_a")
+            b = context.peek_treatment("exp_b")
+            if a == 1:
+                expected, exposed = "a_treatment", ["exp_a"]
+            else:
+                fell_through += 1
+                expected = ["b_control", "b_treatment"][b]
+                exposed = ["exp_a", "exp_b"]
+
+            self.assertEqual(expected,
+                             context.peek_variable_value("banner.size", "d"))
+            self.assertEqual(0, context.get_pending_count())
+            self.assertEqual(expected,
+                             context.get_variable_value("banner.size", "d"))
+            self.assertEqual(exposed, [e.name for e in context.exposures])
+            context.close()
+        self.assertGreater(fell_through, 0)
+        self.assertLess(fell_through, 20)
+
+    def test_variable_value_skips_unassigned_experiment(self):
+        self.set_up()
+        # exp_a's unit is not set, so it is not assigned: its control value
+        # must not be returned even though it defines the key.
+        exp_a = self.make_shared_key_experiment(
+            1, "exp_a", "device_id", "a_control", "a_treatment")
+        exp_b = self.make_shared_key_experiment(
+            2, "exp_b", "user_id", "b_control", "b_treatment")
+        context = self.create_shared_key_context(
+            [exp_a, exp_b], {"user_id": "uid-1"})
+        expected = ["b_control", "b_treatment"][
+            context.peek_treatment("exp_b")]
+
+        self.assertEqual(expected,
+                         context.get_variable_value("banner.size", "d"))
+        self.assertEqual(["exp_a", "exp_b"],
+                         [e.name for e in context.exposures])
+
+        context.set_override("exp_a", 1)
+        self.assertEqual("a_treatment",
+                         context.peek_variable_value("banner.size", "d"))
+        context.close()
+
     def test_set_override_allowed_after_close(self):
         self.set_up()
         config = ContextConfig()

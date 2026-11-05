@@ -363,11 +363,18 @@ class Context:
                             continue
 
                         for key in variables:
-                            if key in index_variables:
-                                if experiment_variables not in index_variables[key]:
-                                    index_variables[key].append(experiment_variables)
-                            else:
-                                index_variables[key] = [experiment_variables]
+                            # Kept sorted by experiment id, like the JS SDK's
+                            # insertUniqueSorted, so variable lookups visit
+                            # experiments in a stable order.
+                            entries = index_variables.setdefault(key, [])
+                            if experiment_variables not in entries:
+                                position = len(entries)
+                                while position > 0 and \
+                                        entries[position - 1].data.id > \
+                                        experiment.id:
+                                    position -= 1
+                                entries.insert(position,
+                                               experiment_variables)
                         experiment_variables.variables.append(variables)
                     except Exception as e:
                         self.log_event(
@@ -773,24 +780,27 @@ class Context:
 
     def get_variable_value(self, key: str, default_value: object):
         self.check_ready(True)
-
-        assignment = self.get_variable_assignment(key)
-        if assignment is not None:
-            if assignment.variables is not None:
-                if not assignment.exposed.value:
-                    self.queue_exposure(assignment)
-
-                if key in assignment.variables:
-                    return assignment.variables[key]
-        return default_value
+        return self._variable_value(key, default_value, True)
 
     def peek_variable_value(self, key: str, default_value: object):
         self.check_ready(True)
+        return self._variable_value(key, default_value, False)
 
-        assignment = self.get_variable_assignment(key)
-        if assignment is not None:
+    def _variable_value(self, key: str, default_value: object, expose: bool):
+        # Port of the JS SDK's _variableValue/_peekVariable: walk every
+        # experiment defining the key (sorted by id) and return the value from
+        # the first one the unit is assigned to or overridden in, queuing an
+        # exposure for each experiment visited on the way.
+        experiments = Concurrency.get_rw(
+            self.data_lock, self.index_variables, key) or []
+        for experiment in list(experiments):
+            assignment = self.get_assignment(experiment.data.name)
             if assignment.variables is not None:
-                if key in assignment.variables:
+                if expose and not assignment.exposed.value:
+                    self.queue_exposure(assignment)
+
+                if key in assignment.variables and \
+                        (assignment.assigned or assignment.overridden):
                     return assignment.variables[key]
         return default_value
 

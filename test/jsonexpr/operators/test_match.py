@@ -22,10 +22,12 @@ class MatchOperatorTest(unittest.TestCase):
         result = self.operator.binary(self.evaluator, "test", "[invalid")
         self.assertIsNone(result)
 
-    def test_match_returns_none_for_pattern_too_long(self):
-        long_pattern = "a" * 1001
-        result = self.operator.binary(self.evaluator, "test", long_pattern)
-        self.assertIsNone(result)
+    def test_long_pattern_still_matches(self):
+        # v0.2.4 (and JS) have no pattern length cap: long allow-lists match.
+        allow_list = "|".join(f"user{i}@example.com" for i in range(200))
+        self.assertGreater(len(allow_list), 1000)
+        self.assertTrue(self.operator.binary(
+            self.evaluator, "user199@example.com", f"^({allow_list})$"))
 
     def test_match_returns_none_for_none_text(self):
         result = self.operator.binary(self.evaluator, None, "abc")

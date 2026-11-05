@@ -325,7 +325,8 @@ class ContextTreatmentTests(ContextCanonicalTestBase):
 
     def test_unchanged_audience_recheck_records_attrs_seq(self):
         self.set_up()
-        context = self.create_ready_context(data_future=self.data_future_strict)
+        context = self.create_ready_context(
+            data_future=self.data_future_strict)
         context.set_attribute("age", 25)
         self.assertEqual(1, context.get_treatment("exp_test_ab"))
 

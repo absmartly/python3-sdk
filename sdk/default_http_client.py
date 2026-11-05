@@ -13,11 +13,16 @@ class DefaultHTTPClient(HTTPClient):
         # raise_on_status=False returns the last response once retries are
         # exhausted, so callers see an HTTPError from raise_for_status()
         # rather than urllib3's RetryError.
+        # getattr: duck-typed or v0.2.4-style configs (no super().__init__)
+        # lack the retry policy fields and keep the v0.2.4 policy.
         retry = Retry(total=config.max_retries, read=config.max_retries,
                       connect=config.max_retries,
                       backoff_factor=config.retry_interval,
-                      status_forcelist=config.retry_status_forcelist,
-                      allowed_methods=config.retry_allowed_methods,
+                      status_forcelist=getattr(
+                          config, 'retry_status_forcelist', (502, 503)),
+                      allowed_methods=getattr(
+                          config, 'retry_allowed_methods',
+                          frozenset(('GET', 'POST'))),
                       raise_on_status=False)
         self.http_client.mount(
             'http://', HTTPAdapter(max_retries=retry,

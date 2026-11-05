@@ -1,6 +1,7 @@
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from types import SimpleNamespace
 
 import requests
 
@@ -73,6 +74,29 @@ class DefaultHTTPClientRetryTest(unittest.TestCase):
             retry_allowed_methods=frozenset(['GET', 'POST', 'PUT']))
         client.put(self.url, {}, {}, bytearray(b'{}'))
         self.assertEqual(['PUT'] * 3, _Handler.calls)
+
+    def test_legacy_duck_typed_config_keeps_v024_policy(self):
+        # A v0.2.4-style config carries only the released fields.
+        config = SimpleNamespace(connection_timeout=3,
+                                 connection_request_timeout=1,
+                                 retry_interval=0, max_retries=2)
+        client = DefaultHTTPClient(config)
+        client.get(self.url, {}, {})
+        self.assertEqual(['GET'] * 3, _Handler.calls)
+        _Handler.calls = []
+        client.put(self.url, {}, {}, bytearray(b'{}'))
+        self.assertEqual(['PUT'], _Handler.calls)
+
+    def test_legacy_subclass_without_super_init(self):
+        class LegacyConfig(DefaultHTTPClientConfig):
+            def __init__(self):
+                self.connection_timeout = 3
+                self.connection_request_timeout = 1
+                self.retry_interval = 0
+                self.max_retries = 2
+
+        DefaultHTTPClient(LegacyConfig()).get(self.url, {}, {})
+        self.assertEqual(['GET'] * 3, _Handler.calls)
 
 
 if __name__ == '__main__':

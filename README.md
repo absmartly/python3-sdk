@@ -229,6 +229,17 @@ else:
 button_color = context.get_variable_value("button.color", "red")
 ```
 
+#### Listing Variable Keys
+
+`get_variable_keys()` maps each variable key to the names of every experiment that defines it, ordered by experiment id, like the JavaScript SDK's `variableKeys()`.
+
+```python
+keys = context.get_variable_keys()
+# {"button.color": ["exp_test_abc"], "banner.size": ["exp_test_ab", "exp_test_banner"]}
+```
+
+> **Note:** v0.2.4 returned one experiment name (a string) per key. Since 0.3.0 each value is a list, for parity with the other ABsmartly SDKs.
+
 ### Peek at Treatment Variants
 
 Although generally not recommended, it is sometimes necessary to peek at a treatment or variable without triggering an exposure.

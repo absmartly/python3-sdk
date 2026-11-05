@@ -5,13 +5,13 @@
 ### BREAKING
 - `ContextEventHandler` renamed to `ContextPublisher` (`context_event_handler` deprecated). The v0.2.4 import paths (`sdk.absmartly.ABSmartlyConfig`, `sdk.absmartly.DefaultContextEventHandler`, `ContextEventHandler` from `sdk.context_event_handler`, `sdk.absmartly_config` and `sdk.context`) still work and do not warn on import; `ContextEventHandler` stays a plain base class (a subclass without `publish` can still be instantiated) registered as a virtual `ContextPublisher`.
 - `get_custom_field_type` renamed.
+- `get_variable_keys()` returns `Dict[str, List[str]]`: for each variable key, the names of every experiment defining it, in experiment id order. This intentionally differs from v0.2.4 (one experiment name string per key) to match the JS SDK's `variableKeys()`.
 - **BREAKING:** read methods now raise "ABSmartly Context is not yet ready" before the context is ready, and the closed error after close, instead of returning defaults. A context whose load failed is ready and returns control/default values.
 - JSON expr `in` operator is haystack-first (CONTAINS semantics); `eq(null, null)` returns null.
 - `set_unit` keeps numeric UIDs as numbers (hashed like the JS SDK, e.g. `125.75` hashes as `"126"`) and rejects values that are neither a string nor a number with "Unit '<type>' must be a string or a number.".
 - `track` raises "Goal '<name>' properties must be of type object." when properties cannot be converted with `dict()`; any `Mapping` or list of pairs is still accepted, as in v0.2.4.
 
 ### Added
-- `Context.get_variable_keys_all()` returns every experiment defining each variable key; `get_variable_keys()` keeps the v0.2.4 shape (one experiment name per key, the lowest id).
 - `ContextError(RuntimeError)` / `ContextValueError(ValueError)`: lifecycle and unit errors keep their v0.2.4 messages (`'ABSmartly Context is closed'`, `'ABSmartly Context is closing'`, `'ABSmartly Context is not yet ready'`, `'Unit already set.'`, `'Unit UID must not be blank.'`) and expose the cross-SDK wording as `canonical_message`.
 - `sdk.utils`: `hash_unit`, `utf8_bytes`, `base64_url_no_padding`, `is_object`, `is_numeric`, `is_promise`.
 - Finalize aliases, `get_unit`, `get_units`, `get_attribute`, `get_attributes`, `ready_error`; `EventType` export.

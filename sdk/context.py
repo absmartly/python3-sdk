@@ -3,7 +3,7 @@ import logging
 import math
 import threading
 import warnings
-from concurrent.futures import CancelledError, Future
+from concurrent.futures import CancelledError, Future, InvalidStateError
 from typing import Optional
 
 from sdk.audience_matcher import AudienceMatcher
@@ -215,17 +215,30 @@ class Context:
                     # Log before settling, as the JS SDK does, so a caller
                     # woken by the future already sees the event.
                     self.log_event(EventType.READY, data.result())
-                    self.ready_future.set_result(None)
+                    self._settle_ready()
 
                     if self.get_pending_count() > 0:
                         self.set_timeout()
                 elif data.cancelled() is False and \
                         data.exception() is not None:
-                    self.set_data_failed(data.exception())
+                    # A refresh may already have made the context ready while
+                    # this request was pending; its data and the events
+                    # queued against it stay.
+                    self.set_data_failed(data.exception(), keep_ready=True)
                     self.log_error(data.exception())
-                    self.ready_future.set_result(None)
+                    self._settle_ready()
 
             data_future.add_done_callback(when_finished)
+
+    def _settle_ready(self):
+        ready_future = getattr(self, "ready_future", None)
+        if ready_future is None:
+            return
+        try:
+            ready_future.set_result(None)
+        except InvalidStateError:
+            # Already settled by a pre-ready refresh or the initial fetch.
+            pass
 
     @property
     def cassignments(self):
@@ -518,6 +531,11 @@ class Context:
                 self.refreshing.set(False)
                 if error is None:
                     self.log_event(EventType.REFRESH, data.result())
+                    # A refresh before the initial fetch settled makes the
+                    # context ready: wake its readiness waiters too.
+                    self._settle_ready()
+                    if self.get_pending_count() > 0:
+                        self.set_timeout()
                     refresh_future.set_result(None)
                 else:
                     self.log_error(error)
@@ -540,9 +558,11 @@ class Context:
             result.set_result(None)
             return result
 
-    def set_data_failed(self, exception):
+    def set_data_failed(self, exception, keep_ready=False):
         try:
             self.data_lock.acquire_write()
+            if keep_ready and self.data is not None and not self.failed:
+                return
             self.index = {}
             self.index_variables = {}
             self.data = ContextData()

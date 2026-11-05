@@ -12,8 +12,9 @@ class DefaultVariableParser(VariableParser):
               experiment_name: str,
               variant_name: str,
               config: str) -> Optional[Any]:
+        # Invalid JSON returns None, as in v0.2.4; Context logs an ERROR
+        # event for it and treats the variant as having no variables.
         try:
-            result = json.loads(config)
-            return result
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Invalid JSON in variant config: {e}") from e
+            return json.loads(config)
+        except (TypeError, ValueError):
+            return None

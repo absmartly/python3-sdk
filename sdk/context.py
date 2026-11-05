@@ -117,6 +117,16 @@ def _future_error(future: Future):
     return future.exception()
 
 
+def _data_future_error(future: Future):
+    error = _future_error(future)
+    if error is None and future.result() is None:
+        # DefaultContextDataDeserializer returns None for an invalid
+        # response (as in v0.2.4); treat it as a failed load rather than
+        # crashing in set_data and leaving readiness waiters hanging.
+        return RuntimeError("Context data is missing or invalid")
+    return error
+
+
 class Context:
     def __init__(self,
                  clock: Clock, config: ContextConfig,
@@ -195,25 +205,27 @@ class Context:
 
         if data_future.done():
             def when_finished(data: Future):
+                error = None if data.cancelled() else _data_future_error(data)
                 if data.done() and data.cancelled() is False and \
-                        data.exception() is None:
+                        error is None:
                     self.set_data(data.result())
                     self.log_event(EventType.READY, data.result())
                 elif data.cancelled() is False and \
-                        data.exception() is not None:
-                    self.set_data_failed(data.exception())
-                    self.log_error(data.exception())
+                        error is not None:
+                    self.set_data_failed(error)
+                    self.log_error(error)
                     raise RuntimeError(
                         "Failed to initialize ABSmartly Context"
-                    ) from data.exception()
+                    ) from error
 
             data_future.add_done_callback(when_finished)
         else:
             self.ready_future = Future()
 
             def when_finished(data: Future):
+                error = None if data.cancelled() else _data_future_error(data)
                 if data.done() and data.cancelled() is False and \
-                        data.exception() is None:
+                        error is None:
                     self.set_data(data.result())
                     # Log before settling, as the JS SDK does, so a caller
                     # woken by the future already sees the event.
@@ -223,12 +235,12 @@ class Context:
                     if self.get_pending_count() > 0:
                         self.set_timeout()
                 elif data.cancelled() is False and \
-                        data.exception() is not None:
+                        error is not None:
                     # A refresh may already have made the context ready while
                     # this request was pending; its data and the events
                     # queued against it stay.
-                    self.set_data_failed(data.exception(), keep_ready=True)
-                    self.log_error(data.exception())
+                    self.set_data_failed(error, keep_ready=True)
+                    self.log_error(error)
                     self._settle_ready()
 
             data_future.add_done_callback(when_finished)
@@ -525,7 +537,7 @@ class Context:
             self.refresh_future = refresh_future
 
             def when_ready(data):
-                error = _future_error(data)
+                error = _data_future_error(data)
                 if error is None:
                     try:
                         self.set_data(data.result())
@@ -937,6 +949,8 @@ class Context:
             try:
                 parsed = self.variable_parser.parse(
                     self, experiment_name, key, raw_value)
+                if parsed is None:
+                    raise ValueError("invalid JSON")
                 if isinstance(parsed, (dict, list)):
                     return copy.deepcopy(parsed)
                 return parsed

@@ -2,7 +2,6 @@ from typing import Optional
 import logging
 
 import jsons
-from jsons import DeserializationError
 
 from sdk.context_data_deserializer import ContextDataDeserializer
 from sdk.json.context_data import ContextData
@@ -15,11 +14,10 @@ class DefaultContextDataDeserializer(ContextDataDeserializer):
                     bytes_: bytes,
                     offset: int,
                     length: int) -> Optional[ContextData]:
+        # Returns None on invalid input, as in v0.2.4; Context fails the
+        # load (instead of hanging) when the data it receives is None.
         try:
             return jsons.loadb(bytes_, ContextData)
-        except DeserializationError as e:
-            logger.error(f"Failed to deserialize context data: {e}")
-            raise ValueError(f"Failed to deserialize context data: {e}") from e
         except Exception as e:
-            logger.error(f"Unexpected error deserializing context data: {e}")
-            raise ValueError(f"Unexpected error deserializing context data: {e}") from e
+            logger.error(f"Failed to deserialize context data: {e}")
+            return None

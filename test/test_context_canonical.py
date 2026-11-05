@@ -884,7 +884,7 @@ class ContextCustomAssignmentTests(ContextCanonicalTestBase):
         self.assertEqual(2, context.get_custom_assignment("exp_test_ab"))
         self.assertEqual(1, context.get_custom_assignment("exp_test_abc"))
         with self.assertRaisesRegex(RuntimeError,
-                                    "ABsmartly Context is finalized."):
+                                    "ABSmartly Context is closed"):
             context.get_treatment("exp_test_ab")
 
 

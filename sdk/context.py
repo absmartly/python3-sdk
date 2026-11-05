@@ -8,6 +8,7 @@ from typing import Optional
 from sdk.audience_matcher import AudienceMatcher
 from sdk.context_config import ContextConfig
 from sdk.context_data_provider import ContextDataProvider
+from sdk.context_error import ContextError, ContextValueError
 from sdk.context_publisher import ContextPublisher
 from sdk.context_event_logger import ContextEventLogger, EventType
 from sdk.internal.lock.atomic_bool import AtomicBool
@@ -237,7 +238,9 @@ class Context:
         if isinstance(uid, str):
             uid = uid.strip()
             if len(uid) == 0:
-                raise ValueError(f"Unit '{unit_type}' UID must not be blank.")
+                raise ContextValueError(
+                    "Unit UID must not be blank.",
+                    f"Unit '{unit_type}' UID must not be blank.")
         elif not is_numeric(uid):
             raise ValueError(
                 f"Unit '{unit_type}' must be a string or a number.")
@@ -246,7 +249,9 @@ class Context:
             self.context_lock.acquire_write()
 
             if unit_type in self.units.keys() and self.units[unit_type] != uid:
-                raise ValueError(f"Unit '{unit_type}' UID already set.")
+                raise ContextValueError(
+                    "Unit already set.",
+                    f"Unit '{unit_type}' UID already set.")
 
             self.units[unit_type] = uid
         finally:
@@ -303,9 +308,11 @@ class Context:
 
     def check_not_closed(self):
         if self.closed.value:
-            raise RuntimeError('ABsmartly Context is finalized.')
+            raise ContextError('ABSmartly Context is closed',
+                               'ABsmartly Context is finalized.')
         elif self.closing.value:
-            raise RuntimeError('ABsmartly Context is finalizing.')
+            raise ContextError('ABSmartly Context is closing',
+                               'ABsmartly Context is finalizing.')
 
     def set_data(self, data: ContextData):
         index = {}
@@ -1013,7 +1020,8 @@ class Context:
 
     def check_ready(self, expect_not_closed: bool):
         if not self.is_ready():
-            raise RuntimeError('ABsmartly Context is not yet ready.')
+            raise ContextError('ABSmartly Context is not yet ready',
+                               'ABsmartly Context is not yet ready.')
         elif expect_not_closed:
             self.check_not_closed()
 

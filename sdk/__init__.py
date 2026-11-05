@@ -4,6 +4,7 @@ from sdk.client import Client
 from sdk.client_config import ClientConfig
 from sdk.context import Context
 from sdk.context_config import ContextConfig
+from sdk.context_error import ContextError, ContextValueError
 from sdk.context_event_logger import ContextEventLogger, EventType
 from sdk.context_publisher import ContextPublisher
 from sdk.default_http_client import DefaultHTTPClient
@@ -18,6 +19,8 @@ __all__ = [
     "ClientConfig",
     "Context",
     "ContextConfig",
+    "ContextError",
+    "ContextValueError",
     "ContextEventLogger",
     "ContextPublisher",
     "DefaultHTTPClient",

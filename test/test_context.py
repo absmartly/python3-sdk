@@ -8,6 +8,7 @@ from concurrent.futures import Future
 from sdk.context_config import ContextConfig
 
 from sdk.context import Context
+from sdk.context_error import ContextError
 
 from sdk.client import Client
 from sdk.client_config import ClientConfig
@@ -376,7 +377,9 @@ class ContextTest(unittest.TestCase):
             context.set_attribute("attr1", "value1")
         except RuntimeError as e:
             self.assertIsNotNone(e)
-            self.assertEqual("ABsmartly Context is finalizing.", str(e))
+            self.assertEqual("ABSmartly Context is closing", str(e))
+            self.assertEqual("ABsmartly Context is finalizing.",
+                             e.canonical_message)
         time.sleep(0.3)
         context.close()
 
@@ -416,7 +419,9 @@ class ContextTest(unittest.TestCase):
             context.set_attribute("attr1", "value1")
         except RuntimeError as e:
             self.assertIsNotNone(e)
-            self.assertEqual("ABsmartly Context is finalized.", str(e))
+            self.assertEqual("ABSmartly Context is closed", str(e))
+            self.assertEqual("ABsmartly Context is finalized.",
+                             e.canonical_message)
         time.sleep(0.3)
         context.close()
 
@@ -477,12 +482,12 @@ class ContextTest(unittest.TestCase):
         try:
             context.set_unit("db_user_id", "")
         except ValueError as e:
-            self.assertEqual("Unit 'db_user_id' UID must not be blank.", str(e))
+            self.assertEqual("Unit UID must not be blank.", str(e))
 
         try:
             context.set_unit("session_id", "1")
         except ValueError as e:
-            self.assertEqual("Unit 'session_id' UID already set.", str(e))
+            self.assertEqual("Unit already set.", str(e))
 
         context.close()
 
@@ -1370,7 +1375,9 @@ class ContextTest(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             context.set_unit("device_id", "")
 
-        self.assertEqual("Unit 'device_id' UID must not be blank.", str(ctx.exception))
+        self.assertEqual("Unit UID must not be blank.", str(ctx.exception))
+        self.assertEqual("Unit 'device_id' UID must not be blank.",
+                         ctx.exception.canonical_message)
         context.close()
 
     def test_set_unit_duplicate_throws(self):
@@ -1383,7 +1390,9 @@ class ContextTest(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             context.set_unit("user_id", "different-value")
 
-        self.assertEqual("Unit 'user_id' UID already set.", str(ctx.exception))
+        self.assertEqual("Unit already set.", str(ctx.exception))
+        self.assertEqual("Unit 'user_id' UID already set.",
+                         ctx.exception.canonical_message)
         context.close()
 
     def test_set_units_batch(self):
@@ -1907,7 +1916,7 @@ class ContextTest(unittest.TestCase):
         self.assertIsNotNone(context.ready_error)
         context.close()
 
-    def assert_read_methods_raise(self, context, message):
+    def assert_read_methods_raise(self, context, message, canonical):
         reads = [
             lambda: context.get_treatment("exp_test_ab"),
             lambda: context.peek_treatment("exp_test_ab"),
@@ -1921,7 +1930,9 @@ class ContextTest(unittest.TestCase):
         for read in reads:
             with self.assertRaises(RuntimeError) as raised:
                 read()
+            self.assertIsInstance(raised.exception, ContextError)
             self.assertEqual(message, str(raised.exception))
+            self.assertEqual(canonical, raised.exception.canonical_message)
 
     def test_read_methods_raise_when_not_ready(self):
         self.set_up()
@@ -1932,10 +1943,11 @@ class ContextTest(unittest.TestCase):
         self.assertFalse(context.is_ready())
 
         self.assert_read_methods_raise(
-            context, "ABsmartly Context is not yet ready.")
+            context, "ABSmartly Context is not yet ready",
+            "ABsmartly Context is not yet ready.")
         with self.assertRaises(RuntimeError) as raised:
             context.get_experiments()
-        self.assertEqual("ABsmartly Context is not yet ready.",
+        self.assertEqual("ABSmartly Context is not yet ready",
                          str(raised.exception))
         with self.assertRaises(RuntimeError):
             context.refresh()
@@ -1957,6 +1969,7 @@ class ContextTest(unittest.TestCase):
         self.assertTrue(context.is_closed())
 
         self.assert_read_methods_raise(
-            context, "ABsmartly Context is finalized.")
+            context, "ABSmartly Context is closed",
+            "ABsmartly Context is finalized.")
         # experiments() only requires readiness (JS context.ts experiments).
         self.assertIn("exp_test_ab", context.get_experiments())

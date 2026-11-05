@@ -373,13 +373,12 @@ class ContextTest(unittest.TestCase):
 
         self.assertEqual(True, context.is_closing())
         self.assertEqual(False, context.is_closed())
-        try:
+        with self.assertRaises(ContextError) as raised:
             context.set_attribute("attr1", "value1")
-        except RuntimeError as e:
-            self.assertIsNotNone(e)
-            self.assertEqual("ABSmartly Context is closing", str(e))
-            self.assertEqual("ABsmartly Context is finalizing.",
-                             e.canonical_message)
+        self.assertEqual("ABSmartly Context is closing", str(raised.exception))
+        self.assertEqual("ABsmartly Context is finalizing.",
+                         raised.exception.canonical_message)
+        self.assertIsNone(context.get_attribute("attr1"))
         time.sleep(0.3)
         context.close()
 
@@ -415,13 +414,12 @@ class ContextTest(unittest.TestCase):
 
         self.assertEqual(False, context.is_closing())
         self.assertEqual(True, context.is_closed())
-        try:
+        with self.assertRaises(ContextError) as raised:
             context.set_attribute("attr1", "value1")
-        except RuntimeError as e:
-            self.assertIsNotNone(e)
-            self.assertEqual("ABSmartly Context is closed", str(e))
-            self.assertEqual("ABsmartly Context is finalized.",
-                             e.canonical_message)
+        self.assertEqual("ABSmartly Context is closed", str(raised.exception))
+        self.assertEqual("ABsmartly Context is finalized.",
+                         raised.exception.canonical_message)
+        self.assertIsNone(context.get_attribute("attr1"))
         time.sleep(0.3)
         context.close()
 

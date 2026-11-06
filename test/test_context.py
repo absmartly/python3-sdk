@@ -1658,6 +1658,38 @@ class ContextTest(unittest.TestCase):
         # Events stay queued so close() can be retried.
         self.assertEqual(1, context.get_pending_count())
 
+    def test_refresh_outstanding_at_failed_close_does_not_restart_timer(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        config.refresh_interval = 3600
+        config.publish_delay = -1
+        context = self.create_test_context(config, self.data_future_ready)
+        self.assertIsNotNone(context.refresh_timer)
+
+        refresh_data = Future()
+        self.client.get_context_data = lambda: refresh_data
+        refreshing = context.refresh_async()
+        self.assertFalse(refreshing.done())
+
+        context.track("goal1", {"amount": 100})
+
+        def failing_publish(event):
+            future = Future()
+            future.set_exception(RuntimeError("Publish failed"))
+            return future
+
+        self.client.publish = failing_publish
+        with self.assertRaises(RuntimeError):
+            context.close()
+        self.assertFalse(context.is_closed())
+        self.assertIsNone(context.refresh_timer)
+
+        refresh_data.set_result(self.data)
+        refreshing.result(timeout=5)
+        self.assertIsNone(context.refresh_timer)
+        self.assertEqual(1, context.get_pending_count())
+
     def test_get_data_after_close(self):
         self.set_up()
         config = ContextConfig()

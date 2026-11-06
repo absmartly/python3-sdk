@@ -179,6 +179,7 @@ class Context:
         self._close_lock = threading.Lock()
 
         self.refresh_timer: Optional[threading.Timer] = None
+        self.refresh_stopped = False
         self.timeout: Optional[threading.Timer] = None
 
         if config.units is not None:
@@ -477,10 +478,13 @@ class Context:
         def arm(timer):
             # Checked under timeout_lock, the lock close() clears the timer
             # under, so a refresh finishing after close cannot re-arm it.
+            # refresh_stopped also covers a close whose final publish failed:
+            # the context reopens, but a refresh outstanding at close must
+            # not restart polling when it completes.
             try:
                 self.timeout_lock.acquire_write()
-                if timer is not self.refresh_timer or \
-                        self.is_closing() or self.is_closed():
+                if timer is not self.refresh_timer or self.refresh_stopped \
+                        or self.is_closing() or self.is_closed():
                     return
                 self.refresh_timer = threading.Timer(self.refresh_interval, ref)
                 self.refresh_timer.daemon = True
@@ -819,6 +823,7 @@ class Context:
     def clear_refresh_timer(self):
         try:
             self.timeout_lock.acquire_write()
+            self.refresh_stopped = True
             if self.refresh_timer is not None:
                 self.refresh_timer.cancel()
                 self.refresh_timer = None

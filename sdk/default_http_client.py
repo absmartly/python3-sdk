@@ -10,9 +10,10 @@ class DefaultHTTPClient(HTTPClient):
 
     def __init__(self, config: DefaultHTTPClientConfig):
         self.http_client = req.Session()
-        # raise_on_status=False returns the last response once retries are
-        # exhausted, so callers see an HTTPError from raise_for_status()
-        # rather than urllib3's RetryError.
+        # Keep v0.2.4's exhausted-retry behaviour: the default
+        # raise_on_status=True makes urllib3 raise RetryError once GET
+        # retries are exhausted, rather than returning the last 502/503
+        # response (which would otherwise surface as a plain HTTPError).
         # getattr: duck-typed or v0.2.4-style configs (no super().__init__)
         # lack the retry policy fields and keep the v0.2.4 policy.
         retry = Retry(total=config.max_retries, read=config.max_retries,
@@ -22,8 +23,7 @@ class DefaultHTTPClient(HTTPClient):
                           config, 'retry_status_forcelist', (502, 503)),
                       allowed_methods=getattr(
                           config, 'retry_allowed_methods',
-                          frozenset(('GET', 'POST'))),
-                      raise_on_status=False)
+                          frozenset(('GET', 'POST'))))
         self.http_client.mount(
             'http://', HTTPAdapter(max_retries=retry,
                                    pool_maxsize=200,

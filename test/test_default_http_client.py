@@ -49,16 +49,21 @@ class DefaultHTTPClientRetryTest(unittest.TestCase):
         return DefaultHTTPClient(config)
 
     def test_publish_put_is_not_retried_on_status(self):
+        # PUT is outside the allowed methods, so it is sent once and the
+        # 503 response is returned; the caller sees an HTTPError only when
+        # it calls raise_for_status(), exactly as in v0.2.4.
         response = self.make_client().put(self.url, {}, {}, bytearray(b'{}'))
         self.assertEqual(['PUT'], _Handler.calls)
         with self.assertRaises(requests.HTTPError):
             response.raise_for_status()
 
-    def test_get_retried_on_503_then_returns_last_response(self):
-        response = self.make_client().get(self.url, {}, {})
+    def test_get_retried_on_503_then_raises_retry_error(self):
+        # retries=2 means 1 initial + 2 retries = 3 attempts; once they are
+        # exhausted urllib3 raises, which requests surfaces as a RetryError,
+        # preserving the v0.2.4 exhausted-GET exception type.
+        with self.assertRaises(requests.exceptions.RetryError):
+            self.make_client().get(self.url, {}, {})
         self.assertEqual(['GET'] * 3, _Handler.calls)
-        with self.assertRaises(requests.HTTPError):
-            response.raise_for_status()
 
     def test_get_not_retried_on_500(self):
         _Handler.status = 500
@@ -72,7 +77,8 @@ class DefaultHTTPClientRetryTest(unittest.TestCase):
         client = self.make_client(
             retry_status_forcelist=frozenset(range(500, 600)),
             retry_allowed_methods=frozenset(['GET', 'POST', 'PUT']))
-        client.put(self.url, {}, {}, bytearray(b'{}'))
+        with self.assertRaises(requests.exceptions.RetryError):
+            client.put(self.url, {}, {}, bytearray(b'{}'))
         self.assertEqual(['PUT'] * 3, _Handler.calls)
 
     def test_legacy_duck_typed_config_keeps_v024_policy(self):
@@ -81,7 +87,8 @@ class DefaultHTTPClientRetryTest(unittest.TestCase):
                                  connection_request_timeout=1,
                                  retry_interval=0, max_retries=2)
         client = DefaultHTTPClient(config)
-        client.get(self.url, {}, {})
+        with self.assertRaises(requests.exceptions.RetryError):
+            client.get(self.url, {}, {})
         self.assertEqual(['GET'] * 3, _Handler.calls)
         _Handler.calls = []
         client.put(self.url, {}, {}, bytearray(b'{}'))
@@ -95,7 +102,8 @@ class DefaultHTTPClientRetryTest(unittest.TestCase):
                 self.retry_interval = 0
                 self.max_retries = 2
 
-        DefaultHTTPClient(LegacyConfig()).get(self.url, {}, {})
+        with self.assertRaises(requests.exceptions.RetryError):
+            DefaultHTTPClient(LegacyConfig()).get(self.url, {}, {})
         self.assertEqual(['GET'] * 3, _Handler.calls)
 
 

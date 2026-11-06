@@ -2030,6 +2030,8 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(["exp_a", "exp_b"],
                          [e.name for e in context.exposures])
         context.close()
+
+    def test_set_override_allowed_after_close(self):
         self.set_up()
         config = ContextConfig()
         config.units = self.units

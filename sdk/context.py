@@ -879,11 +879,19 @@ class Context:
         return assignment.variant
 
     def get_variable_keys(self):
-        """Map each variable key to the names of every experiment defining
-        it, in experiment id order, like the JS SDK's variableKeys().
+        """Map each variable key to the name of one experiment defining it.
 
-        v0.2.4 returned a single experiment name (a string) per key.
+        Same shape as v0.2.4. When several experiments define a key, the
+        one with the lowest id is returned (the first one variable lookups
+        visit); use get_variable_keys_all() for every experiment.
         """
+        return {key: experiments[0]
+                for key, experiments in self.get_variable_keys_all().items()
+                if experiments}
+
+    def get_variable_keys_all(self):
+        """Map each variable key to the names of every experiment defining
+        it, in experiment id order, like the JS SDK's variableKeys()."""
         self.check_ready(True)
 
         variable_keys = {}

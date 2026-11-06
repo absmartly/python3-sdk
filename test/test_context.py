@@ -755,8 +755,19 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(True, context.is_ready())
         self.assertEqual(False, context.is_failed())
 
+        # v0.2.4 shape: one experiment name (a string) per key.
+        res = context.get_variable_keys()
+        self.assertEqual({
+            "banner.border": "exp_test_ab",
+            "banner.size": "exp_test_ab",
+            "button.color": "exp_test_abc",
+            "card.width": "exp_test_not_eligible",
+            "submit.color": "exp_test_fullon",
+            "submit.shape": "exp_test_fullon",
+            "show-modal": "exp_test_new",
+        }, res)
         self.assertEqual(self.variableExperiments,
-                         context.get_variable_keys())
+                         context.get_variable_keys_all())
 
         self.assertEqual(0, context.get_pending_count())
         context.close()
@@ -1746,14 +1757,14 @@ class ContextTest(unittest.TestCase):
         self.assertTrue(context.ready_future.done())
         context.close()
 
-    def test_get_variable_keys_returns_list_of_experiments(self):
+    def test_get_variable_keys_all_returns_list_of_experiments(self):
         self.set_up()
         config = ContextConfig()
         config.units = self.units
         context = self.create_test_context(config, self.data_future_refresh)
         self.assertTrue(context.is_ready())
 
-        res = context.get_variable_keys()
+        res = context.get_variable_keys_all()
 
         for experiments in res.values():
             self.assertIsInstance(experiments, list)
@@ -1828,7 +1839,11 @@ class ContextTest(unittest.TestCase):
         self.assertTrue(context.is_ready())
 
         self.assertEqual({"shared_key": ["exp_a", "exp_b"]},
-                         context.get_variable_keys())
+                         context.get_variable_keys_all())
+
+        # get_variable_keys keeps the v0.2.4 string per key: the
+        # lowest-id experiment, the first one variable lookups visit.
+        self.assertEqual({"shared_key": "exp_a"}, context.get_variable_keys())
 
         # Ordered by experiment id, not payload order, like JS variableKeys().
         data.experiments = [exp2, exp1]
@@ -1836,13 +1851,15 @@ class ContextTest(unittest.TestCase):
         future.set_result(data)
         context2 = self.create_test_context(config, future)
         self.assertEqual({"shared_key": ["exp_a", "exp_b"]},
+                         context2.get_variable_keys_all())
+        self.assertEqual({"shared_key": "exp_a"},
                          context2.get_variable_keys())
         context2.close()
 
         context.close()
 
     def make_shared_key_experiment(self, exp_id, name, unit_type,
-                                   control, treatment):
+                                   control, treatment, key="banner.size"):
         import json
         from sdk.json.experiment import Experiment
         from sdk.json.experiment_variant import ExperimentVariant
@@ -1868,7 +1885,7 @@ class ContextTest(unittest.TestCase):
             variant = ExperimentVariant()
             variant.name = variant_name
             variant.config = None if value is None else \
-                json.dumps({"banner.size": value})
+                json.dumps({key: value})
             experiment.variants.append(variant)
         return experiment
 
@@ -1940,7 +1957,79 @@ class ContextTest(unittest.TestCase):
                          context.peek_variable_value("banner.size", "d"))
         context.close()
 
-    def test_set_override_allowed_after_close(self):
+    def make_shared_key_experiment_variants(self, exp_id, name, unit_type,
+                                            variant_configs):
+        import json
+        from sdk.json.experiment import Experiment
+        from sdk.json.experiment_variant import ExperimentVariant
+
+        experiment = Experiment()
+        experiment.id = exp_id
+        experiment.name = name
+        experiment.unitType = unit_type
+        experiment.iteration = 1
+        experiment.fullOnVariant = 0
+        experiment.trafficSplit = [0.0, 1.0]
+        experiment.trafficSeedHi = 0
+        experiment.trafficSeedLo = 0
+        experiment.audience = ""
+        experiment.audienceStrict = False
+        experiment.split = [0.5, 0.5]
+        experiment.seedHi = exp_id
+        experiment.seedLo = exp_id
+        experiment.customFieldValues = None
+        experiment.variants = []
+        for i, variables in enumerate(variant_configs):
+            variant = ExperimentVariant()
+            variant.name = "control" if i == 0 else f"treatment{i}"
+            variant.config = None if variables is None \
+                else json.dumps(variables)
+            experiment.variants.append(variant)
+        return experiment
+
+    def test_variable_value_override_on_unassigned_experiment_wins(self):
+        # (d) exp_a's unit is not assigned, but an override selects a variant
+        # that holds the key: `assigned or overridden` is satisfied, so the
+        # override's value wins over the lower experiment in the walk.
+        self.set_up()
+        exp_a = self.make_shared_key_experiment(
+            1, "exp_a", "device_id", "a_control", "a_treatment")
+        exp_b = self.make_shared_key_experiment(
+            2, "exp_b", "user_id", "b_control", "b_treatment")
+        context = self.create_shared_key_context(
+            [exp_a, exp_b], {"user_id": "uid-1"})
+
+        context.set_override("exp_a", 1)
+        self.assertEqual("a_treatment",
+                         context.get_variable_value("banner.size", "d"))
+        # Only exp_a is visited: it resolves the key, so the walk stops.
+        self.assertEqual(["exp_a"], [e.name for e in context.exposures])
+        context.close()
+
+    def test_variable_value_assigned_variant_without_key_falls_through(self):
+        # (e) exp_a is overridden to a variant whose config lacks the key;
+        # `key in variables` is False, so the walk falls through to exp_b
+        # even though exp_a is assigned. Both experiments are exposed.
+        self.set_up()
+        exp_a = self.make_shared_key_experiment_variants(
+            1, "exp_a", "user_id",
+            [{"banner.size": "a_control"}, {"other.key": "x"}])
+        exp_b = self.make_shared_key_experiment(
+            2, "exp_b", "user_id", "b_control", "b_treatment")
+        context = self.create_shared_key_context(
+            [exp_a, exp_b], {"user_id": "uid-1"})
+
+        # Override exp_a to the treatment variant, which does not define the
+        # shared key.
+        context.set_override("exp_a", 1)
+        expected = ["b_control", "b_treatment"][
+            context.peek_treatment("exp_b")]
+
+        self.assertEqual(expected,
+                         context.get_variable_value("banner.size", "d"))
+        self.assertEqual(["exp_a", "exp_b"],
+                         [e.name for e in context.exposures])
+        context.close()
         self.set_up()
         config = ContextConfig()
         config.units = self.units

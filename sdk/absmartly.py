@@ -11,9 +11,8 @@ from sdk.context_config import ContextConfig
 from sdk.context_event_logger import ContextEventLogger
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 from sdk.default_context_data_provider import DefaultContextDataProvider
-from sdk.default_context_event_handler import \
-    DefaultContextEventHandler  # noqa: F401
-from sdk.default_context_publisher import DefaultContextPublisher
+from sdk.default_context_event_handler import DefaultContextEventHandler
+from sdk.default_context_publisher import DefaultContextPublisher  # noqa: F401
 from sdk.default_http_client import DefaultHTTPClient
 from sdk.default_http_client_config import DefaultHTTPClientConfig
 from sdk.default_variable_parser import DefaultVariableParser
@@ -83,8 +82,10 @@ class ABsmartly:
                     DefaultContextDataProvider(self.client)
 
             if self.context_publisher is None:
+                # DefaultContextEventHandler, as in v0.2.4, so isinstance
+                # checks against the legacy handler types still hold.
                 self.context_publisher = \
-                    DefaultContextPublisher(self.client)
+                    DefaultContextEventHandler(self.client)
 
         if self.variable_parser is None:
             self.variable_parser = DefaultVariableParser()

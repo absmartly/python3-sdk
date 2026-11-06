@@ -4,6 +4,8 @@ import unittest
 import warnings
 from concurrent.futures import Future
 
+from sdk.absmartly import ABsmartly
+from sdk.absmartly_config import ABsmartlyConfig
 from sdk.audience_matcher import AudienceMatcher
 from sdk.context import Context
 from sdk.context_config import ContextConfig
@@ -107,6 +109,13 @@ class LegacyEventHandlerTest(unittest.TestCase):
 
         with self.assertRaises(TypeError):
             Partial()
+
+    def test_sdk_default_publisher_is_a_legacy_handler(self):
+        sdk = ABsmartly(ABsmartlyConfig())
+        self.assertIsInstance(sdk.context_publisher,
+                              DefaultContextEventHandler)
+        self.assertIsInstance(sdk.context_publisher, ContextEventHandler)
+        self.assertIsInstance(sdk.context_publisher, DefaultContextPublisher)
 
     def test_default_handler_constructs_without_warning(self):
         with warnings.catch_warnings():

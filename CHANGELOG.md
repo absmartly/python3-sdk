@@ -19,7 +19,7 @@
 - `Context.cassignments` kept as a deprecated property (with setter) proxying `Context.custom_assignments`.
 
 ### Fixed
-- `DefaultVariableParser.parse` and `DefaultContextDataDeserializer.deserialize` return `None` on invalid input again, as in v0.2.4. Context logs an ERROR for an unparseable variant config, and treats `None` context data as a failed load (or a failed refresh) instead of hanging.
+- `DefaultVariableParser.parse` and `DefaultContextDataDeserializer.deserialize` return `None` on invalid input again, as in v0.2.4. Context logs an ERROR for an unparseable variant config, or one that is not a JSON object (no variables are indexed for it), and treats `None` context data as a failed load (or a failed refresh) instead of hanging.
 - `DefaultHTTPClient` accepts v0.2.4-style configs without `retry_status_forcelist` / `retry_allowed_methods` and uses the v0.2.4 policy for them.
 - `get_variable_value`/`peek_variable_value` with a key shared by several experiments follow the JS SDK: experiments are visited in id order, the value comes from the first one the unit is assigned to or overridden in, and each visited experiment is exposed.
 - Audience regex matching no longer runs in a thread pool or caps pattern length (the timeout could not interrupt a match); invalid patterns still evaluate to `None`.

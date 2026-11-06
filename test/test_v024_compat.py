@@ -138,10 +138,10 @@ class InvalidInputReturnsNoneTest(unittest.TestCase):
         payload = b"not json"
         self.assertIsNone(deserializer.deserialize(payload, 0, len(payload)))
 
-    def test_invalid_variant_config_logs_error_and_has_no_variables(self):
+    def data_with_config(self, config):
         variant0 = ExperimentVariant()
         variant0.name = "A"
-        variant0.config = "{invalid"
+        variant0.config = config
         experiment = Experiment()
         experiment.id = 1
         experiment.name = "exp"
@@ -158,13 +158,32 @@ class InvalidInputReturnsNoneTest(unittest.TestCase):
         experiment.customFieldValues = None
         data = ContextData()
         data.experiments = [experiment]
+        return data
 
+    def test_invalid_variant_config_logs_error_and_has_no_variables(self):
         logger = Recorder()
-        context = self.make(done_future(data), logger=logger)
+        context = self.make(done_future(self.data_with_config("{invalid")),
+                            logger=logger)
         self.assertTrue(context.is_ready())
         self.assertFalse(context.is_failed())
         self.assertEqual({}, context.get_variable_keys())
         self.assertIn(EventType.ERROR, [e for e, _ in logger.events])
+
+    def test_non_object_variant_config_logs_error_and_has_no_variables(self):
+        for config in ['"abc"', '[1, 2]', '5', 'true', 'null']:
+            with self.subTest(config=config):
+                logger = Recorder()
+                context = self.make(
+                    done_future(self.data_with_config(config)),
+                    logger=logger)
+                self.assertTrue(context.is_ready())
+                self.assertFalse(context.is_failed())
+                self.assertEqual({}, context.get_variable_keys())
+                self.assertEqual("x", context.get_variable_value("a", "x"))
+                self.assertEqual("x", context.get_variable_value(1, "x"))
+                self.assertEqual([EventType.ERROR],
+                                 [e for e, _ in logger.events
+                                  if e != EventType.READY])
 
     def test_none_data_fails_context_already_done(self):
         context = self.make(done_future(None))

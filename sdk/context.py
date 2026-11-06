@@ -383,7 +383,10 @@ class Context:
                             variant.name,
                             variant.config)
 
-                        if variables is None:
+                        # v0.2.4's parser contract is Optional[dict]: any
+                        # other JSON value would index its characters or
+                        # elements as variable keys.
+                        if not isinstance(variables, dict):
                             self.log_event(
                                 EventType.ERROR,
                                 f"Failed to parse variant config for {experiment.name}/{variant.name}"

@@ -231,14 +231,17 @@ button_color = context.get_variable_value("button.color", "red")
 
 #### Listing Variable Keys
 
-`get_variable_keys()` maps each variable key to the names of every experiment that defines it, ordered by experiment id, like the JavaScript SDK's `variableKeys()`.
+`get_variable_keys()` maps each variable key to the name of one experiment that defines it, keeping the v0.2.4 shape. When several experiments define the same key, it returns the lowest-id experiment (the first one variable lookups visit). Use `get_variable_keys_all()` to get every experiment defining each key, in experiment id order, matching the JavaScript SDK's `variableKeys()`.
 
 ```python
 keys = context.get_variable_keys()
+# {"button.color": "exp_test_abc", "banner.size": "exp_test_ab"}
+
+all_keys = context.get_variable_keys_all()
 # {"button.color": ["exp_test_abc"], "banner.size": ["exp_test_ab", "exp_test_banner"]}
 ```
 
-> **Note:** v0.2.4 returned one experiment name (a string) per key. Since 0.3.0 each value is a list, for parity with the other ABsmartly SDKs.
+> **Note:** v0.2.4 returned one experiment name per key, the last one in the payload. Since 0.3.0 `get_variable_keys()` returns the lowest-id experiment instead, and `get_variable_keys_all()` returns every experiment.
 
 ### Peek at Treatment Variants
 

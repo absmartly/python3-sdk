@@ -227,10 +227,12 @@ class Context:
                 error = None if data.cancelled() else _data_future_error(data)
                 if data.done() and data.cancelled() is False and \
                         error is None:
-                    self.set_data(data.result())
-                    # Log before settling, as the JS SDK does, so a caller
-                    # woken by the future already sees the event.
-                    self.log_event(EventType.READY, data.result())
+                    # A pre-ready refresh may already have installed newer
+                    # data; this older response must not replace it.
+                    if self.set_data(data.result(), keep_ready=True):
+                        # Log before settling, as the JS SDK does, so a
+                        # caller woken by the future already sees the event.
+                        self.log_event(EventType.READY, data.result())
                     self._settle_ready()
 
                     if self.get_pending_count() > 0:
@@ -364,7 +366,7 @@ class Context:
             raise ContextError('ABSmartly Context is closing',
                                'ABsmartly Context is finalizing.')
 
-    def set_data(self, data: ContextData):
+    def set_data(self, data: ContextData, keep_ready=False):
         index = {}
         index_variables = {}
         context_custom_fields = {}
@@ -437,6 +439,8 @@ class Context:
 
         try:
             self.data_lock.acquire_write()
+            if keep_ready and self.data is not None and not self.failed:
+                return False
 
             self.index = index
             self.index_variables = index_variables
@@ -462,6 +466,7 @@ class Context:
                     self.event_lock.release_write()
 
             self.set_refresh_timer()
+            return True
         finally:
             self.data_lock.release_write()
 

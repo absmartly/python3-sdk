@@ -25,7 +25,7 @@
 - Audience regex matching no longer runs in a thread pool or caps pattern length (the timeout could not interrupt a match); invalid patterns still evaluate to `None`.
 - `DefaultHTTPClient` keeps the v0.2.4 retry policy (GET/POST on 502/503, publish PUT not retried) with `raise_on_status=False`; the wider policy is opt-in via `DefaultHTTPClientConfig.retry_status_forcelist` / `retry_allowed_methods`.
 - A cached assignment records the attribute sequence after an unchanged audience re-check, so it is not re-evaluated on every read.
-- `refresh()` works before the context is ready and on a context whose first fetch failed, as in v0.2.4; a successful refresh clears the failed state so new exposures and queued goals are published (control exposures queued while failed are dropped).
+- `refresh()` works before the context is ready and on a context whose first fetch failed, as in v0.2.4; a successful refresh clears the failed state so new exposures and queued goals are published (control exposures queued while failed are dropped). If the initial fetch completes after a pre-ready refresh, it does not replace the refreshed data or log `READY`.
 - `close()` logs `EventType.CLOSE` again (as in v0.2.4), followed by the new `EventType.FINALIZE`.
 - A failed final publish no longer restarts the refresh timer; the events stay queued so `close()` can be retried.
 - The `ready`, `error`, `refresh` and `finalize` events are logged before the matching future settles, so callers woken by it already see the event.

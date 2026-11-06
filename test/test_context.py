@@ -2202,6 +2202,37 @@ class ContextTest(unittest.TestCase):
                          [e.name for e in published[0].exposures])
         self.assertEqual(["goal1"], [g.name for g in published[0].goals])
 
+    def test_late_initial_fetch_keeps_data_from_pre_ready_refresh(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = self.units
+        events = []
+
+        class Recorder(ContextEventLogger):
+            def handle_event(self, event_type, data):
+                events.append(event_type)
+
+        context = Context(self.clock, config, self.data_future,
+                          self.data_provider, self.event_handler, Recorder(),
+                          self.variable_parser, self.audience_matcher)
+
+        self.client.get_context_data = lambda: self.data_future_refresh
+        context.refresh()
+        self.assertIs(self.refresh_data, context.data)
+        self.assertEqual(1, context.get_treatment("exp_test_new"))
+        self.assertEqual(1, context.get_pending_count())
+
+        # The original request completing later with older data must not
+        # replace the refreshed data, re-expose, or log READY after REFRESH.
+        self.data_future.set_result(self.data)
+
+        self.assertIs(self.refresh_data, context.data)
+        self.assertEqual(1, context.get_treatment("exp_test_new"))
+        self.assertEqual(1, context.get_pending_count())
+        self.assertNotIn(EventType.READY, events)
+        self.assertIn(EventType.REFRESH, events)
+        context.close()
+
     def test_refresh_recovery_resolves_overridden_variables(self):
         self.set_up()
         config = ContextConfig()

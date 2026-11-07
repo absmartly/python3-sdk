@@ -1,19 +1,10 @@
-from concurrent.futures import Future
-from typing import Optional
-
-from sdk.client import Client
-from sdk.context import Context
 from sdk.context_event_handler import ContextEventHandler
-from sdk.json.context_data import ContextData
-from sdk.json.publish_event import PublishEvent
+from sdk.default_context_publisher import DefaultContextPublisher
 
 
-class DefaultContextEventHandler(ContextEventHandler):
+class DefaultContextEventHandler(DefaultContextPublisher, ContextEventHandler):
+    """Deprecated: use DefaultContextPublisher instead.
 
-    def __init__(self, client: Client):
-        self.client = client
-
-    def publish(self,
-                context: Context,
-                event: PublishEvent) -> Future[Optional[ContextData]]:
-        return self.client.publish(event)
+    Constructing it does not warn, so code written against v0.2.4 keeps
+    running under ``-W error::DeprecationWarning``.
+    """

@@ -216,9 +216,6 @@ class Context:
                         error is not None:
                     self.set_data_failed(error)
                     self.log_error(error)
-                    raise RuntimeError(
-                        "Failed to initialize ABSmartly Context"
-                    ) from error
 
             data_future.add_done_callback(when_finished)
         else:
@@ -256,7 +253,6 @@ class Context:
         try:
             ready_future.set_result(None)
         except InvalidStateError:
-            # Already settled by a pre-ready refresh or the initial fetch.
             pass
 
     @property
@@ -1011,9 +1007,6 @@ class Context:
         return attrs
 
     def _audience_matches(self, experiment: Experiment, assignment: Assignment):
-        """Returns (matches, attrs_seq) where attrs_seq is the attribute
-        sequence the cached assignment was re-checked against, or None when
-        no re-check was needed."""
         if experiment.audience is not None and len(experiment.audience) > 0:
             attrs_seq = self._attrs_seq
             if attrs_seq > (assignment.attrs_seq or 0):

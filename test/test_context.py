@@ -1666,7 +1666,6 @@ class ContextTest(unittest.TestCase):
 
         self.assertFalse(context.is_closed())
         self.assertIsNone(context.refresh_timer)
-        # Events stay queued so close() can be retried.
         self.assertEqual(1, context.get_pending_count())
 
     def test_refresh_outstanding_at_failed_close_does_not_restart_timer(self):

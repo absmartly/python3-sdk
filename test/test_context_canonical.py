@@ -341,7 +341,6 @@ class ContextTreatmentTests(ContextCanonicalTestBase):
         context.set_attribute("country", "PT")
         for _ in range(3):
             self.assertEqual(1, context.get_treatment("exp_test_ab"))
-        # Re-checked once after set_attribute, then served from the cache.
         self.assertEqual(1, len(calls))
         self.assertEqual(context._attrs_seq,
                          context.assignment_cache["exp_test_ab"].attrs_seq)

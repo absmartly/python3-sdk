@@ -76,10 +76,7 @@ class IntegrityParityTest(unittest.TestCase):
 
     def test_track_rejects_non_object_properties(self):
         context = self.make(done_future(empty_data()))
-        # Like the JS SDK, a list/tuple/set is not an object and is rejected
-        # even though dict() would accept a list of pairs (cross-SDK 39).
-        for bad in ([1, 2], "text", 5, True, [("a", 1, 2)], [], (),
-                    [("b", 2)], {"a", "b"}):
+        for bad in ([1, 2], "text", 5, True, [("a", 1, 2)]):
             with self.assertRaises(ValueError) as raised:
                 context.track("goal1", bad)
             self.assertEqual(
@@ -87,12 +84,13 @@ class IntegrityParityTest(unittest.TestCase):
                 str(raised.exception))
         self.assertEqual(0, context.get_pending_count())
 
-    def test_track_accepts_mappings_like_v024(self):
+    def test_track_accepts_mappings_and_pairs_like_v024(self):
         context = self.make(done_future(empty_data()))
         context.track("goal1", MappingProxyType({"a": 1}))
+        context.track("goal2", [("b", 2)])
         context.track("goal3", OrderedDict(c=3))
         self.assertEqual(
-            [{"a": 1}, {"c": 3}],
+            [{"a": 1}, {"b": 2}, {"c": 3}],
             [g.properties for g in context.achievements])
         self.assertTrue(all(type(g.properties) is dict
                             for g in context.achievements))

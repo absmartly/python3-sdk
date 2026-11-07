@@ -11,7 +11,7 @@
 - **BREAKING:** read methods now raise "ABSmartly Context is not yet ready" before the context is ready, and the closed error after close, instead of returning defaults. A context whose load failed is ready and returns control/default values.
 - JSON expr `in` operator is haystack-first (CONTAINS semantics); `eq(null, null)` returns null.
 - `set_unit` keeps numeric UIDs as numbers (hashed like the JS SDK, e.g. `125.75` hashes as `"126"`) and rejects values that are neither a string nor a number with "Unit '<type>' must be a string or a number.".
-- `track` raises "Goal '<name>' properties must be of type object." when properties cannot be converted with `dict()`; any `Mapping` or list of pairs is still accepted, as in v0.2.4.
+- `track` raises "Goal '<name>' properties must be of type object." when properties are not an object. A `Mapping` (e.g. `dict`, `MappingProxyType`, `OrderedDict`) is accepted; a `list`, `tuple`, `set` or other non-mapping is rejected, matching the JS SDK (cross-SDK scenario 39). This drops v0.2.4's acceptance of a list of pairs.
 
 ### Added
 - `Context.get_variable_keys_all()` returns every experiment defining each variable key, in experiment id order (matching the JS SDK's `variableKeys()`); `get_variable_keys()` keeps the v0.2.4 shape (one experiment name per key, the lowest id).
@@ -27,7 +27,7 @@
 - Audience regex matching no longer runs in a thread pool or caps pattern length (the timeout could not interrupt a match); invalid patterns still evaluate to `None`.
 - `DefaultHTTPClient` keeps the v0.2.4 retry policy (GET/POST on 502/503, publish PUT not retried) and its exhausted-retry behaviour (a `requests.exceptions.RetryError` once GET retries are exhausted); the wider policy is opt-in via `DefaultHTTPClientConfig.retry_status_forcelist` / `retry_allowed_methods`.
 - A cached assignment records the attribute sequence after an unchanged audience re-check, so it is not re-evaluated on every read.
-- `refresh()` works before the context is ready and on a context whose first fetch failed, as in v0.2.4; a successful refresh clears the failed state so new exposures and queued goals are published (control exposures queued while failed are dropped). If the initial fetch completes after a pre-ready refresh, it does not replace the refreshed data or log `READY`.
+- `refresh()` works before the context is ready and re-fetches data for a context that loaded successfully. On a context whose initial load failed, `refresh()` is now a no-op, matching the JS SDK (cross-SDK scenario 229): it does not re-fetch, logs no `refresh`/`error` event, the context stays failed, and any data offered for the refresh is not applied. If the initial fetch completes after a pre-ready refresh, it does not replace the refreshed data or log `READY`.
 - The default publisher built by `ABsmartly` is a `DefaultContextEventHandler` again, so v0.2.4 `isinstance` checks against `DefaultContextEventHandler` and `ContextEventHandler` still hold.
 - `close()` logs `EventType.CLOSE` again (as in v0.2.4), followed by the new `EventType.FINALIZE`.
 - A failed final publish no longer restarts the refresh timer; the events stay queued so `close()` can be retried.

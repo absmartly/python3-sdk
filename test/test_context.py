@@ -2211,38 +2211,44 @@ class ContextTest(unittest.TestCase):
         self.data_future.set_result(self.data)
         context.close()
 
-    def test_refresh_recovers_failed_context(self):
+    def test_refresh_on_failed_context_is_a_no_op(self):
+        # Like the JS SDK's _refresh, refresh() on a context whose initial
+        # load failed is a no-op: no re-fetch, no refresh/error event, the
+        # context stays failed, and data offered for the refresh is not
+        # applied (cross-SDK 229).
         self.set_up()
         config = ContextConfig()
         config.units = self.units
-        context = self.create_test_context(config, self.data_future_failed)
+
+        events = []
+
+        class Recorder(ContextEventLogger):
+            def handle_event(self, event_type, data):
+                events.append(event_type)
+
+        context = Context(self.clock, config, self.data_future_failed,
+                          self.data_provider, self.event_handler, Recorder(),
+                          self.variable_parser, self.audience_matcher)
         self.assertTrue(context.is_failed())
         self.assertEqual(0, context.get_treatment("exp_test_ab"))
-        context.track("goal1", {"amount": 1})
-        self.assertEqual(2, context.get_pending_count())
+        events.clear()
 
-        self.client.get_context_data = lambda: self.data_future_ready
+        fetched = []
+
+        def should_not_fetch():
+            fetched.append(True)
+            return self.data_future_ready
+
+        self.client.get_context_data = should_not_fetch
         context.refresh()
 
-        self.assertFalse(context.is_failed())
-        self.assertIsNone(context.ready_error)
-        self.assertIn("exp_test_ab", context.get_experiments())
-        self.assertNotEqual(0, context.get_treatment("exp_test_ab"))
-
-        published = []
-
-        def publish(event):
-            published.append(event)
-            future = Future()
-            future.set_result(None)
-            return future
-
-        self.client.publish = publish
+        self.assertEqual([], fetched)
+        self.assertEqual([], events)
+        self.assertTrue(context.is_failed())
+        self.assertTrue(context.is_ready())
+        self.assertIsNotNone(context.ready_error)
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
         context.close()
-        self.assertEqual(1, len(published))
-        self.assertEqual(["exp_test_ab"],
-                         [e.name for e in published[0].exposures])
-        self.assertEqual(["goal1"], [g.name for g in published[0].goals])
 
     def capture_publish(self):
         published = []
@@ -2255,41 +2261,6 @@ class ContextTest(unittest.TestCase):
 
         self.client.publish = publish
         return published
-
-    def test_recovery_keeps_exposures_queued_against_recovered_data(self):
-        self.set_up()
-        config = ContextConfig()
-        config.units = self.units
-        context = self.create_test_context(config, self.data_future_failed)
-        self.assertTrue(context.is_failed())
-
-        # Read the experiment on another thread the moment recovery releases
-        # the data write lock, before set_data has returned.
-        release_write = context.data_lock.release_write
-        reads = []
-
-        def release_and_read():
-            release_write()
-            if context.data is self.data and not reads:
-                reads.append(None)
-                thread = threading.Thread(target=lambda: reads.append(
-                    context.get_treatment("exp_test_ab")))
-                thread.start()
-                thread.join()
-
-        context.data_lock.release_write = release_and_read
-        self.client.get_context_data = lambda: self.data_future_ready
-        context.refresh()
-        context.data_lock.release_write = release_write
-
-        self.assertEqual([None, 1], reads)
-        self.assertFalse(context.is_failed())
-        self.assertEqual(1, context.get_pending_count())
-
-        published = self.capture_publish()
-        context.close()
-        self.assertEqual(["exp_test_ab"],
-                         [e.name for e in published[0].exposures])
 
     def test_refresh_before_ready_settles_waiters_and_survives_late_failure(
             self):
@@ -2355,7 +2326,10 @@ class ContextTest(unittest.TestCase):
         self.assertIn(EventType.REFRESH, events)
         context.close()
 
-    def test_refresh_recovery_resolves_overridden_variables(self):
+    def test_refresh_on_failed_context_does_not_recover_overrides(self):
+        # refresh() is a no-op on a failed context (cross-SDK 229): the
+        # override still resolves to a control exposure, but no experiment
+        # data is applied, so the variable stays at its default.
         self.set_up()
         config = ContextConfig()
         config.units = self.units
@@ -2368,17 +2342,11 @@ class ContextTest(unittest.TestCase):
         self.client.get_context_data = lambda: self.data_future_ready
         context.refresh()
 
+        self.assertTrue(context.is_failed())
         self.assertEqual(1, context.get_treatment("exp_test_ab"))
-        self.assertEqual("large",
+        self.assertEqual("DEFAULT",
                          context.peek_variable_value("banner.size", "DEFAULT"))
-
-        published = self.capture_publish()
         context.close()
-        exposures = published[0].exposures
-        self.assertEqual(["exp_test_ab"], [e.name for e in exposures])
-        self.assertTrue(exposures[0].overridden)
-        self.assertEqual(1, exposures[0].variant)
-        self.assertEqual(1, exposures[0].id)
 
     def test_read_methods_raise_after_finalize(self):
         self.set_up()

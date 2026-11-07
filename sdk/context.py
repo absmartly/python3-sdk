@@ -535,10 +535,17 @@ class Context:
         return self.is_closing()
 
     def refresh_async(self):
-        # As in v0.2.4, refresh only requires an open context: it works
-        # before ready, and a context whose first fetch failed re-fetches and
-        # recovers (set_data clears the failed state).
+        # Refresh only requires an open context: it works before ready.
         self.check_not_closed()
+
+        # Match the JS SDK's _refresh: a context whose initial load failed is a
+        # no-op. It does not re-fetch, logs no refresh/error event, stays
+        # failed, and any data offered for the refresh is not applied
+        # (cross-SDK scenario 229).
+        if self.failed:
+            result = Future()
+            result.set_result(None)
+            return result
 
         if self.refreshing.compare_and_set(False, True):
 
@@ -759,11 +766,15 @@ class Context:
     def track(self, goal_name: str, properties: dict, achieved_at: int = None):
         self.check_not_closed()
 
-        # Like v0.2.4, anything dict() accepts (a Mapping, MappingProxyType,
-        # a list of pairs) is converted; only unconvertible values raise.
+        # Match the JS SDK: goal properties must be an object/mapping. A
+        # list/tuple is rejected even though dict([]) would otherwise accept an
+        # empty list of pairs (cross-SDK scenario 39). Strings and bytes are
+        # likewise not mappings. Anything else dict() accepts (a Mapping,
+        # MappingProxyType) is converted; only unconvertible values raise.
         if properties is not None:
             try:
-                if isinstance(properties, (str, bytes)):
+                if isinstance(properties, (str, bytes, list, tuple, set,
+                                           frozenset)):
                     raise TypeError
                 properties = dict(properties)
             except (TypeError, ValueError):

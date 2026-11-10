@@ -219,6 +219,14 @@ class IntegrityParityTest(unittest.TestCase):
             self.assertEqual("12345", utils.unit_to_string(12345.0))
             self.assertEqual("1e+29", utils.unit_to_string(1e29))
 
+    def test_unit_hash_marks_md5_as_not_for_security(self):
+        from unittest import mock
+        with mock.patch("sdk.utils.hashlib.md5",
+                        wraps=utils.hashlib.md5) as md5:
+            self.assertEqual("CY9rzUYh03PK3k6DJie09g",
+                             utils.hash_unit("test"))
+        md5.assert_called_once_with(b"test", usedforsecurity=False)
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -61,5 +61,6 @@ def unit_to_string(value) -> str:
 
 
 def hash_unit(value) -> str:
-    digest = hashlib.md5(utf8_bytes(unit_to_string(value))).digest()
+    digest = hashlib.md5(utf8_bytes(unit_to_string(value)),
+                         usedforsecurity=False).digest()
     return base64_url_no_padding(digest)

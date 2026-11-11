@@ -3,6 +3,8 @@ import unittest
 from concurrent.futures import Future
 
 from sdk.audience_matcher import AudienceMatcher
+from sdk.absmartly import ABsmartly
+from sdk.absmartly_config import ABsmartlyConfig
 from sdk.client import Client
 from sdk.client_config import ClientConfig
 from sdk.context import Context
@@ -26,12 +28,16 @@ class ClientContextMock(Client):
     def __init__(self, config, http_client):
         super().__init__(config, http_client)
         self._publish_calls = []
+        self._refresh_data = None
 
     def get_context_data(self):
         future = Future()
-        data = ContextData()
-        data.experiments = []
-        future.set_result(data)
+        if self._refresh_data is not None:
+            future.set_result(self._refresh_data)
+        else:
+            data = ContextData()
+            data.experiments = []
+            future.set_result(data)
         return future
 
     def publish(self, event: PublishEvent):
@@ -330,6 +336,96 @@ class SystemAttributesTest(unittest.TestCase):
         payload = json.loads(bytes(self.serializer.serialize(event)))
         self.assertNotIn("attributes", payload)
         context.close()
+
+
+class FactorySystemAttributesTest(unittest.TestCase):
+    """The configured application/environment reach audiences through the
+    public ABsmartly factories, including when both a custom provider and a
+    custom publisher are supplied (the configured client must still be
+    retained). Reference: JavaScript SDK PR #68.
+    """
+
+    deser = DefaultContextDataDeserializer()
+
+    def build_sdk(self, custom_components):
+        client_config = ClientConfig()
+        client_config.endpoint = "https://sandbox.test.io/v1"
+        client_config.api_key = "gfsgsgsf"
+        client_config.application = "website"
+        client_config.environment = "production"
+        http_client = DefaultHTTPClient(DefaultHTTPClientConfig())
+        client = ClientContextMock(client_config, http_client)
+
+        config = ABsmartlyConfig()
+        config.client = client
+        if custom_components:
+            # Both components supplied: __init__ must still keep the client so
+            # the factories can read its application/environment names.
+            config.context_data_provider = \
+                DefaultContextDataProvider(client)
+            config.context_publisher = DefaultContextEventHandler(client)
+        return ABsmartly(config)
+
+    def full_on_environment_data(self):
+        experiment = {
+            "id": 1,
+            "name": "exp_test_ab",
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 3603515,
+            "seedLo": 233373850,
+            "split": [0.5, 0.5],
+            "trafficSeedHi": 449867249,
+            "trafficSeedLo": 455443629,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 1,
+            "applications": [{"name": "website"}],
+            "variants": [
+                {"name": "A", "config": None},
+                {"name": "B", "config": None},
+            ],
+            "audienceStrict": True,
+            "audience": json.dumps({
+                "filter": [
+                    {"eq": [{"var": "environment"}, {"value": "production"}]}
+                ]
+            }),
+        }
+        content = json.dumps({"experiments": [experiment]})
+        return self.deser.deserialize(
+            bytes(content, encoding="utf-8"), 0, len(content))
+
+    def context_config(self):
+        config = ContextConfig()
+        config.units = {
+            "session_id": "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}
+        return config
+
+    def test_create_context_default_components_sees_names(self):
+        for custom in (False, True):
+            with self.subTest(custom_components=custom):
+                sdk = self.build_sdk(custom)
+                sdk.client._refresh_data = self.full_on_environment_data()
+                context = sdk.create_context(self.context_config())
+                context.wait_until_ready()
+                self.assertEqual(1, context.get_treatment("exp_test_ab"))
+                self.assertEqual(
+                    {"application": "website", "environment": "production"},
+                    context._build_audience_attributes())
+                context.close()
+
+    def test_create_context_with_sees_names(self):
+        for custom in (False, True):
+            with self.subTest(custom_components=custom):
+                sdk = self.build_sdk(custom)
+                context = sdk.create_context_with(
+                    self.context_config(), self.full_on_environment_data())
+                self.assertTrue(context.is_ready())
+                self.assertEqual(1, context.get_treatment("exp_test_ab"))
+                self.assertEqual(
+                    {"application": "website", "environment": "production"},
+                    context._build_audience_attributes())
+                context.close()
 
 
 if __name__ == "__main__":

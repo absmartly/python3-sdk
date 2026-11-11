@@ -72,11 +72,13 @@ class ABsmartly:
         self.context_event_logger = config.context_event_logger
         self.variable_parser = config.variable_parser
         self.audience_deserializer = config.audience_deserializer
+        # Retained independently of the default-component branch below, so the
+        # configured application and environment names stay available to
+        # audiences even when both a provider and a publisher are supplied.
+        self.client = config.client
 
         if self.context_data_provider is None or \
                 self.context_publisher is None:
-            self.client = config.client
-
             if self.context_data_provider is None:
                 self.context_data_provider = \
                     DefaultContextDataProvider(self.client)
@@ -148,9 +150,9 @@ class ABsmartly:
 
     def _system_names(self):
         # The application and environment names configured on the client, so
-        # the context can evaluate audiences against them. A context built
-        # without a client (custom provider/publisher) simply has neither.
-        client = getattr(self, "client", None)
+        # the context can evaluate audiences against them. When no client was
+        # configured (a fully custom config) there are simply neither.
+        client = self.client
         if client is None:
             return None, None
         return getattr(client, "application", None), \

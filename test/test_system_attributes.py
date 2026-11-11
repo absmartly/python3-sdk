@@ -133,7 +133,7 @@ class SystemAttributesTest(unittest.TestCase):
                 return exposure
         return None
 
-    # §4.1: strict audience on the environment matches.
+    # §4.1
     def test_strict_audience_on_environment_matches(self):
         self.set_up()
         context = self.create_context(
@@ -145,7 +145,7 @@ class SystemAttributesTest(unittest.TestCase):
             "large", context.get_variable_value("banner.size", "default"))
         context.close()
 
-    # §4.2: strict audience on the application matches.
+    # §4.2
     def test_strict_audience_on_application_matches(self):
         self.set_up()
         context = self.create_context(
@@ -155,7 +155,7 @@ class SystemAttributesTest(unittest.TestCase):
                          .audienceMismatch)
         context.close()
 
-    # §4.3: no match -> variant 0, audienceMismatch true.
+    # §4.3
     def test_strict_audience_on_other_environment_gives_variant_0(self):
         self.set_up()
         context = self.create_context(
@@ -174,8 +174,7 @@ class SystemAttributesTest(unittest.TestCase):
                         .audienceMismatch)
         context.close()
 
-    # Full-on experiments match the configured environment instead of
-    # serving variant 0 (the regression from the brief).
+    # Full-on experiments match the configured environment.
     def test_full_on_matches_configured_environment(self):
         self.set_up()
         data = self.strict_audience_data(self.environment_is("production"))
@@ -188,8 +187,7 @@ class SystemAttributesTest(unittest.TestCase):
         self.assertTrue(exposure.fullOn)
         context.close()
 
-    # §4.4: user value set after creation overrides the configured one; a
-    # staging filter matches and a production filter does not.
+    # §4.4
     def test_user_set_environment_wins_set_after_creation(self):
         self.set_up()
         staging = self.create_context(
@@ -206,7 +204,7 @@ class SystemAttributesTest(unittest.TestCase):
                         .audienceMismatch)
         production.close()
 
-    # §4.4: an assignment cached before the attribute was set is invalidated.
+    # §4.4
     def test_cached_assignment_invalidated_when_attribute_set_later(self):
         self.set_up()
         context = self.create_context(
@@ -240,8 +238,7 @@ class SystemAttributesTest(unittest.TestCase):
         self.assertEqual(1, context.get_treatment("exp_test_ab"))
         context.close()
 
-    # §4.6: no environment configured -> no key in the map, no crash, a
-    # filter on environment does not match.
+    # §4.6
     def test_missing_environment_config_leaves_key_out(self):
         for environment in (None, ""):
             with self.subTest(environment=environment):
@@ -269,8 +266,7 @@ class SystemAttributesTest(unittest.TestCase):
             context._build_audience_attributes())
         context.close()
 
-    # §4.8: app_version is gone; a filter on it does not match even with an
-    # application version configured.
+    # §4.8
     def test_app_version_not_exposed_to_audiences(self):
         self.set_up()
         # The client always sends X-Application-Version, so "configured".
@@ -295,7 +291,7 @@ class SystemAttributesTest(unittest.TestCase):
         self.assertEqual(1, context.get_treatment("exp_test_ab"))
         context.close()
 
-    # §4: system attributes are not reported as user attributes.
+    # §4
     def test_system_attributes_not_reported_as_user_attributes(self):
         self.set_up()
         context = self.create_context(
@@ -306,8 +302,7 @@ class SystemAttributesTest(unittest.TestCase):
         self.assertIsNone(context.get_attribute("application"))
         context.close()
 
-    # §4.7: the serialized publish payload gets no application, environment
-    # or app_version attribute entries.
+    # §4.7
     def test_nothing_extra_published(self):
         self.set_up()
         context = self.create_context(
@@ -359,8 +354,7 @@ class FactorySystemAttributesTest(unittest.TestCase):
         config = ABsmartlyConfig()
         config.client = client
         if custom_components:
-            # Both components supplied: __init__ must still keep the client so
-            # the factories can read its application/environment names.
+            # Both components supplied: __init__ must still keep the client.
             config.context_data_provider = \
                 DefaultContextDataProvider(client)
             config.context_publisher = DefaultContextEventHandler(client)

@@ -72,9 +72,8 @@ class ABsmartly:
         self.context_event_logger = config.context_event_logger
         self.variable_parser = config.variable_parser
         self.audience_deserializer = config.audience_deserializer
-        # Retained independently of the default-component branch below, so the
-        # configured application and environment names stay available to
-        # audiences even when both a provider and a publisher are supplied.
+        # Retained independently of the default-component branch below so the
+        # configured names stay available to audiences.
         self.client = config.client
 
         if self.context_data_provider is None or \

@@ -174,7 +174,6 @@ class SystemAttributesTest(unittest.TestCase):
                         .audienceMismatch)
         context.close()
 
-    # Full-on experiments match the configured environment.
     def test_full_on_matches_configured_environment(self):
         self.set_up()
         data = self.strict_audience_data(self.environment_is("production"))
@@ -354,7 +353,6 @@ class FactorySystemAttributesTest(unittest.TestCase):
         config = ABsmartlyConfig()
         config.client = client
         if custom_components:
-            # Both components supplied: __init__ must still keep the client.
             config.context_data_provider = \
                 DefaultContextDataProvider(client)
             config.context_publisher = DefaultContextEventHandler(client)

@@ -135,7 +135,9 @@ class Context:
                  event_handler: ContextPublisher,
                  event_logger: ContextEventLogger,
                  variable_parser: VariableParser,
-                 audience_matcher: AudienceMatcher):
+                 audience_matcher: AudienceMatcher,
+                 application: Optional[str] = None,
+                 environment: Optional[str] = None):
         self.clock = clock
         self.publish_delay = config.publish_delay
         self.refresh_interval = config.refresh_interval
@@ -145,6 +147,18 @@ class Context:
         self.variable_parser = variable_parser
         self.audience_matcher = audience_matcher
         self.historic = config.historic
+
+        # The application and environment names configured in the SDK. The
+        # context always evaluates audiences (and assignment-rule conditions)
+        # with these, like the JS SDK; the collector already attaches them to
+        # every event server-side, so they are not published here. A user-set
+        # attribute with the same name always wins (see
+        # _build_audience_attributes).
+        self._system_attributes = {}
+        if isinstance(application, str) and len(application) > 0:
+            self._system_attributes["application"] = application
+        if isinstance(environment, str) and len(environment) > 0:
+            self._system_attributes["environment"] = environment
 
         self.units = {}
         self.index = {}
@@ -1000,8 +1014,17 @@ class Context:
         return self.get_custom_field_value_type(experiment_name, key)
 
     def _build_audience_attributes(self):
-        """Helper method to build audience attributes map from current attributes."""
-        attrs = {}
+        """Build the attribute map audiences and assignment-rule conditions
+        are evaluated against.
+
+        System values (``application`` / ``environment``) go in first, then
+        user-set attributes overlay them, so a value the caller sets with the
+        same name always wins, even one set after the context was created
+        (the ``_attrs_seq`` bump invalidates a cached assignment). These
+        system attributes are never published; the collector adds them to
+        every event server-side.
+        """
+        attrs = dict(self._system_attributes)
         for attr in self.attributes:
             attrs[attr.name] = attr.value
         return attrs

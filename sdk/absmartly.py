@@ -72,11 +72,10 @@ class ABsmartly:
         self.context_event_logger = config.context_event_logger
         self.variable_parser = config.variable_parser
         self.audience_deserializer = config.audience_deserializer
+        self.client = config.client
 
         if self.context_data_provider is None or \
                 self.context_publisher is None:
-            self.client = config.client
-
             if self.context_data_provider is None:
                 self.context_data_provider = \
                     DefaultContextDataProvider(self.client)
@@ -118,6 +117,7 @@ class ABsmartly:
         return self.context_data_provider.get_context_data()
 
     def create_context(self, config: ContextConfig) -> Context:
+        application, environment = self._system_names()
         return Context(SystemClockUTC(),
                        config,
                        self.context_data_provider.get_context_data(),
@@ -125,11 +125,14 @@ class ABsmartly:
                        self.context_publisher,
                        self.context_event_logger,
                        self.variable_parser,
-                       AudienceMatcher(self.audience_deserializer))
+                       AudienceMatcher(self.audience_deserializer),
+                       application,
+                       environment)
 
     def create_context_with(self,
                             config: ContextConfig,
                             data: ContextData) -> Context:
+        application, environment = self._system_names()
         future_data = Future()
         future_data.set_result(data)
         return Context(SystemClockUTC(), config,
@@ -138,7 +141,19 @@ class ABsmartly:
                        self.context_publisher,
                        self.context_event_logger,
                        self.variable_parser,
-                       AudienceMatcher(self.audience_deserializer))
+                       AudienceMatcher(self.audience_deserializer),
+                       application,
+                       environment)
+
+    def _system_names(self):
+        # The application and environment names configured on the client, so
+        # the context can evaluate audiences against them. When no client was
+        # configured (a fully custom config) there are simply neither.
+        client = self.client
+        if client is None:
+            return None, None
+        return getattr(client, "application", None), \
+            getattr(client, "environment", None)
 
 
 class ABSmartly(ABsmartly):

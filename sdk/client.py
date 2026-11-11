@@ -14,6 +14,12 @@ class Client:
         application = config.application
         environment = config.environment
 
+        # Kept so the context can evaluate audiences and assignment-rule
+        # conditions against the configured application and environment names
+        # (the collector adds them to every event server-side).
+        self.application = application
+        self.environment = environment
+
         self.url = endpoint + "/context"
         self.http_client = http_client
 

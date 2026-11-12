@@ -27,7 +27,7 @@ class Client:
                         "X-Application": application,
                         "X-Environment": environment,
                         "X-Application-Version": '0',
-                        "X-Agent": "absmartly-python-sdk"}
+                        "X-Agent": "absmartly-python-sdk/0.3.0"}
         self.query = {"application": application,
                       "environment": environment}
 

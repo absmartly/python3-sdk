@@ -54,6 +54,7 @@ class Assignment:
         # Computed while the context's data had failed to load: a placeholder
         # that is recomputed once a refresh recovers the context.
         self.data_failed: bool = False
+        self.rule_override: bool = False
 
 
 class ExperimentVariables:
@@ -147,6 +148,7 @@ class Context:
         self.variable_parser = variable_parser
         self.audience_matcher = audience_matcher
         self.historic = config.historic
+        self.include_system_attributes = config.include_system_attributes
 
         # The application and environment names configured in the SDK. The
         # context always evaluates audiences (and assignment-rule conditions)
@@ -744,6 +746,8 @@ class Context:
         event.exposures = exposures
         event.goals = achievements
         event.historic = self.historic
+        if self._system_attributes and getattr(self, "include_system_attributes", False):
+            event.systemAttributes = dict(self._system_attributes)
         return event
 
     def close(self):
@@ -1122,7 +1126,37 @@ class Context:
                             attrs)
                         if match is not None:
                             assignment.audience_mismatch = not match.result
-                    if experiment.data.audienceStrict and \
+                    rule_action = None
+                    if experiment.data.assignmentRules:
+                        rule_action = self.audience_matcher.evaluate_rules(
+                            experiment.data.assignmentRules,
+                            self._system_attributes.get("environment"),
+                            self._build_audience_attributes())
+                    if rule_action is not None and \
+                            (rule_action.variant is not None or
+                             rule_action.split is not None):
+                        if rule_action.variant is not None and \
+                                0 <= rule_action.variant < len(experiment.data.variants):
+                            assignment.variant = rule_action.variant
+                            assignment.assigned = False
+                            assignment.eligible = True
+                            assignment.rule_override = True
+                        elif rule_action.split is not None and \
+                                len(rule_action.split) == len(experiment.data.variants):
+                            if unit_type in self.units:
+                                uid = self.units[unit_type]
+                                unit_hash = self.get_unit_hash(unit_type, uid)
+                                assigner = self.get_variant_assigner(unit_type, unit_hash)
+                                assignment.variant = assigner.assign(
+                                    rule_action.split,
+                                    experiment.data.seedHi,
+                                    experiment.data.seedLo)
+                                assignment.assigned = False
+                                assignment.eligible = True
+                                assignment.rule_override = True
+                    if assignment.rule_override:
+                        pass
+                    elif experiment.data.audienceStrict and \
                             assignment.audience_mismatch:
                         assignment.variant = 0
                     elif experiment.data.fullOnVariant == 0:
@@ -1328,6 +1362,7 @@ class Context:
             exposure.fullOn = assignment.full_on
             exposure.custom = assignment.custom
             exposure.audienceMismatch = assignment.audience_mismatch
+            exposure.ruleOverride = getattr(assignment, "rule_override", False)
 
             self.pending_count.increment_and_get()
             self.exposures.append(exposure)

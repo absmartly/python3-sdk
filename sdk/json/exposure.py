@@ -13,3 +13,4 @@ class Exposure:
     fullOn: typing.Optional[bool] = False
     custom: typing.Optional[bool] = False
     audienceMismatch: typing.Optional[bool] = False
+    ruleOverride: typing.Optional[bool] = False

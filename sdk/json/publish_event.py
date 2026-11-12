@@ -14,3 +14,4 @@ class PublishEvent:
     goals: typing.Optional[list[GoalAchievement]] = None
     attributes: typing.Optional[list[Attribute]] = None
     historic: typing.Optional[bool] = False
+    systemAttributes: typing.Optional[dict] = None

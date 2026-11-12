@@ -1085,6 +1085,9 @@ class Context:
                 elif experiment is None:
                     if assignment.assigned is False:
                         return assignment
+                elif assignment.rule_override and \
+                        (assignment.attrs_seq or 0) < self._attrs_seq:
+                    pass
                 elif experiment_name not in self.custom_assignments or \
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:

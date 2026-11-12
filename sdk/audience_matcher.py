@@ -88,7 +88,7 @@ class AudienceMatcher:
             return None
         values = []
         for part in rule["percentages"].split("/"):
-            match = re.match(r"^[\\s]*([+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)", part)
+            match = re.fullmatch(r"\s*([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\s*", part)
             if match is None:
                 return None
             try:

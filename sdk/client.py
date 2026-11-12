@@ -1,7 +1,6 @@
 from sdk.client_config import ClientConfig
 from sdk.http_client import HTTPClient
 from sdk.json.publish_event import PublishEvent
-from sdk.version import AGENT, NAME, VERSION
 
 
 class Client:
@@ -14,42 +13,23 @@ class Client:
         api_key = config.api_key
         application = config.application
         environment = config.environment
-        application_version = config.application_version
 
         # Kept so the context can evaluate audiences and assignment-rule
         # conditions against the configured application and environment names
         # (the collector adds them to every event server-side).
         self.application = application
         self.environment = environment
-        self.application_version = application_version
+
         self.url = endpoint + "/context"
         self.http_client = http_client
 
         self.headers = {"X-API-Key": api_key,
                         "X-Application": application,
                         "X-Environment": environment,
-                        "X-Application-Version": application_version or '0',
-                        "X-Agent": AGENT}
+                        "X-Application-Version": '0',
+                        "X-Agent": "absmartly-python-sdk/0.3.0"}
         self.query = {"application": application,
                       "environment": environment}
-
-    def get_application(self):
-        return self.application
-
-    def get_application_version(self):
-        return self.application_version
-
-    def get_environment(self):
-        return self.environment
-
-    def get_agent_name(self):
-        return NAME
-
-    def get_agent_version(self):
-        return VERSION
-
-    def get_agent(self):
-        return AGENT
 
     def _handle_response(self, response):
         """Helper method to handle HTTP response and deserialize content."""

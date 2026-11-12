@@ -1,107 +1,63 @@
-from sdk.jsonexpr.expr_evaluator import ExprEvaluator
+import re
+from decimal import Decimal, InvalidOperation
 
 
-def _identifiers(value):
-    text = value
-    if text.startswith(("v", "V")):
-        text = text[1:]
-    text = text.split("+", 1)[0]
-    if not text:
+_VERSION = re.compile(r"^[0-9A-Za-z.-]+(?:\+[0-9A-Za-z.-]+)?$")
+
+
+def parse_version(value):
+    if isinstance(value, bool):
+        value = "true" if value else "false"
+    elif isinstance(value, (int, float, Decimal)):
+        value = str(value)
+    if not isinstance(value, str):
         return None
-    core, separator, prerelease = text.partition("-")
-    if not core:
+    value = value.strip()
+    if value[:1].lower() == "v":
+        value = value[1:]
+    value = value.split("+", 1)[0]
+    if not value or value.startswith("-") or value.endswith("-"):
         return None
-    return core.split("."), prerelease.split(".") if separator else []
-
-
-def _numeric(value):
-    return value.isdigit() and bool(value)
-
-
-def _compare_identifier(lhs, rhs):
-    left_numeric = _numeric(lhs)
-    right_numeric = _numeric(rhs)
-    if left_numeric and right_numeric:
-        left = lhs.lstrip("0") or "0"
-        right = rhs.lstrip("0") or "0"
-        return (left > right) - (left < right)
-    if left_numeric != right_numeric:
-        return -1 if left_numeric else 1
-    return (lhs > rhs) - (lhs < rhs)
-
-
-def compare_semver(lhs, rhs):
-    """Compare the SDK semantic-version representation, or return None."""
-    if not isinstance(lhs, str) or not isinstance(rhs, str) or not lhs or not rhs:
+    parts = value.split("-", 1)
+    core = parts[0].split(".")
+    if any(not p.isdigit() for p in core):
         return None
-    left = _identifiers(lhs)
-    right = _identifiers(rhs)
+    numbers = tuple(int(p) for p in core)
+    prerelease = ()
+    if len(parts) == 2:
+        if not parts[1]:
+            return None
+        prerelease = tuple(parts[1].split("."))
+        if any(not p or not re.fullmatch(r"[0-9A-Za-z-]+", p) for p in prerelease):
+            return None
+    return numbers, prerelease
+
+
+def compare_versions(lhs, rhs):
+    left = parse_version(lhs)
+    right = parse_version(rhs)
     if left is None or right is None:
         return None
-    left_core, left_pre = left
-    right_core, right_pre = right
-    for index in range(max(len(left_core), len(right_core))):
-        result = _compare_identifier(
-            left_core[index] if index < len(left_core) else "0",
-            right_core[index] if index < len(right_core) else "0",
-        )
-        if result:
-            return result
-    if not left_pre and not right_pre:
+    ln, rn = left[0], right[0]
+    for i in range(max(len(ln), len(rn))):
+        a = ln[i] if i < len(ln) else 0
+        b = rn[i] if i < len(rn) else 0
+        if a != b:
+            return 1 if a > b else -1
+    lp, rp = left[1], right[1]
+    if not lp and not rp:
         return 0
-    if not left_pre:
+    if not lp:
         return 1
-    if not right_pre:
+    if not rp:
         return -1
-    for index in range(max(len(left_pre), len(right_pre))):
-        if index >= len(left_pre):
-            return -1
-        if index >= len(right_pre):
-            return 1
-        result = _compare_identifier(left_pre[index], right_pre[index])
-        if result:
-            return result
-    return 0
-
-
-class SemverOperator:
-    def evaluate(self, evaluator: ExprEvaluator, args: object):
-        if not isinstance(args, list) or len(args) != 2:
-            return None
-        lhs = evaluator.evaluate(args[0])
-        rhs = evaluator.evaluate(args[1])
-        result = compare_semver(evaluator.string_convert(lhs), evaluator.string_convert(rhs))
-        return None if result is None else self.apply(result)
-
-    def apply(self, result):
-        raise NotImplementedError
-
-
-class SemverEqualsOperator(SemverOperator):
-    def apply(self, result):
-        return result == 0
-
-
-class SemverGreaterThanOperator(SemverOperator):
-    def apply(self, result):
-        return result > 0
-
-
-class SemverGreaterThanOrEqualOperator(SemverOperator):
-    def apply(self, result):
-        return result >= 0
-
-
-class SemverLessThanOperator(SemverOperator):
-    def apply(self, result):
-        return result < 0
-
-
-class SemverLessThanOrEqualOperator(SemverOperator):
-    def apply(self, result):
-        return result <= 0
-
-
-__all__ = ["compare_semver", "SemverEqualsOperator", "SemverGreaterThanOperator",
-           "SemverGreaterThanOrEqualOperator", "SemverLessThanOperator",
-           "SemverLessThanOrEqualOperator"]
+    for a, b in zip(lp, rp):
+        if a == b:
+            continue
+        an, bn = a.isdigit(), b.isdigit()
+        if an and bn:
+            return 1 if int(a) > int(b) else -1
+        if an != bn:
+            return -1 if an else 1
+        return 1 if a > b else -1
+    return (len(lp) > len(rp)) - (len(lp) < len(rp))

@@ -12,21 +12,33 @@ from sdk.jsonexpr.operators.match_operator import MatchOperator
 from sdk.jsonexpr.operators.not_operator import NotOperator
 from sdk.jsonexpr.operators.null_operator import NullOperator
 from sdk.jsonexpr.operators.or_combinator import OrCombinator
+from sdk.jsonexpr.operators.semver_operator import (
+    SemverEqualsOperator,
+    SemverGreaterThanOperator,
+    SemverGreaterThanOrEqualOperator,
+    SemverLessThanOperator,
+    SemverLessThanOrEqualOperator,
+)
 from sdk.jsonexpr.operators.value_operator import ValueOperator
 from sdk.jsonexpr.operators.var_operator import VarOperator
-from sdk.jsonexpr.semver import SemverEqualsOperator, SemverGreaterThanOperator
-from sdk.jsonexpr.semver import SemverGreaterThanOrEqualOperator
-from sdk.jsonexpr.semver import SemverLessThanOperator, SemverLessThanOrEqualOperator
 
 
 class JsonExpr:
     operators = {
-        "and": AndCombinator(), "or": OrCombinator(),
-        "value": ValueOperator(), "var": VarOperator(), "null": NullOperator(),
-        "not": NotOperator(), "in": InOperator(), "match": MatchOperator(),
-        "eq": EqualsOperator(), "gt": GreaterThanOperator(),
-        "gte": GreaterThanOrEqualOperator(), "lt": LessThanOperator(),
-        "lte": LessThanOrEqualOperator(), "semver_eq": SemverEqualsOperator(),
+        "and": AndCombinator(),
+        "or": OrCombinator(),
+        "value": ValueOperator(),
+        "var": VarOperator(),
+        "null": NullOperator(),
+        "not": NotOperator(),
+        "in": InOperator(),
+        "match": MatchOperator(),
+        "eq": EqualsOperator(),
+        "gt": GreaterThanOperator(),
+        "gte": GreaterThanOrEqualOperator(),
+        "lt": LessThanOperator(),
+        "lte": LessThanOrEqualOperator(),
+        "semver_eq": SemverEqualsOperator(),
         "semver_gt": SemverGreaterThanOperator(),
         "semver_gte": SemverGreaterThanOrEqualOperator(),
         "semver_lt": SemverLessThanOperator(),

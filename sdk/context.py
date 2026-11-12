@@ -55,6 +55,7 @@ class Assignment:
         # that is recomputed once a refresh recovers the context.
         self.data_failed: bool = False
         self.rule_override: bool = False
+        self.rule_key: Optional[str] = None
 
 
 class ExperimentVariables:
@@ -1089,8 +1090,7 @@ class Context:
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:
                     if experiment_matches(experiment.data, assignment):
-                        rules_changed = bool(experiment.data.assignmentRules) and \
-                            self._attrs_seq > (assignment.attrs_seq or 0)
+                        rules_changed = experiment.data.assignmentRules != assignment.rule_key
                         if rules_changed:
                             checked_seq = None
                         else:
@@ -1153,6 +1153,7 @@ class Context:
                             experiment.data.assignmentRules,
                             self._system_attributes.get("environment"),
                             self._build_audience_attributes())
+                        assignment.rule_key = experiment.data.assignmentRules
                     if rule_action is not None and \
                             (rule_action.variant is not None or
                              rule_action.split is not None):

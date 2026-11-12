@@ -743,11 +743,23 @@ class Context:
             event.attributes = list(self.attributes)
         else:
             event.attributes = None
+        if self.include_system_attributes:
+            now = self.clock.millis()
+            system = []
+            for name, value in (("sdk_name", "absmartly-python-sdk"),
+                                ("sdk_version", "0.3.0"),
+                                ("application", self._system_attributes.get("application")),
+                                ("environment", self._system_attributes.get("environment"))):
+                if value is not None:
+                    attr = Attribute()
+                    attr.name = name
+                    attr.value = value
+                    attr.setAt = now
+                    system.append(attr)
+            event.attributes = system + (event.attributes or [])
         event.exposures = exposures
         event.goals = achievements
         event.historic = self.historic
-        if self._system_attributes and getattr(self, "include_system_attributes", False):
-            event.systemAttributes = dict(self._system_attributes)
         return event
 
     def close(self):

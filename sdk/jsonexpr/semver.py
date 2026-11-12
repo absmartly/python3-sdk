@@ -15,12 +15,17 @@ def parse_version(value):
     value = value.strip()
     if value[:1].lower() == "v":
         value = value[1:]
-    value = value.split("+", 1)[0]
-    if not value or value.startswith("-") or value.endswith("-"):
+    if "+" in value:
+        base, metadata = value.split("+", 1)
+        if not metadata or any(not re.fullmatch(r"[0-9A-Za-z-]+", part)
+                               for part in metadata.split(".")):
+            return None
+        value = base
+    if not value or value.startswith("-"):
         return None
     parts = value.split("-", 1)
     core = parts[0].split(".")
-    if any(not p.isdigit() for p in core):
+    if any(not p or not p.isascii() or not p.isdecimal() for p in core):
         return None
     numbers = tuple(int(p) for p in core)
     prerelease = ()
@@ -56,7 +61,11 @@ def compare_versions(lhs, rhs):
             continue
         an, bn = a.isdigit(), b.isdigit()
         if an and bn:
-            return 1 if int(a) > int(b) else -1
+            if len(a) > 1 and a.startswith("0") or len(b) > 1 and b.startswith("0"):
+                return None
+            if int(a) != int(b):
+                return 1 if int(a) > int(b) else -1
+            continue
         if an != bn:
             return -1 if an else 1
         return 1 if a > b else -1

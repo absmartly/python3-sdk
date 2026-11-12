@@ -56,6 +56,7 @@ class Assignment:
         self.data_failed: bool = False
         self.rule_override: bool = False
         self.rule_key: Optional[str] = None
+        self.rule_variant: Optional[int] = None
 
 
 class ExperimentVariables:
@@ -1050,18 +1051,51 @@ class Context:
             attrs[attr.name] = attr.value
         return attrs
 
-    def _audience_matches(self, experiment: Experiment, assignment: Assignment):
-        if experiment.audience is not None and len(experiment.audience) > 0:
-            attrs_seq = self._attrs_seq
-            if attrs_seq > (assignment.attrs_seq or 0):
-                attrs = self._build_audience_attributes()
-                match = self.audience_matcher.evaluate(experiment.audience, attrs)
-                new_audience_mismatch = not match.result if match is not None else False
+    def _resolve_rule_variant(self, experiment: Experiment):
+        """The variant the first matching assignment rule selects, or None
+        when no rule matches or the matching rule does not fit the
+        experiment (a variant out of range, a split of the wrong length or
+        a split whose unit is not set)."""
+        if not experiment.assignmentRules:
+            return None
+        action = self.audience_matcher.evaluate_rules(
+            experiment.assignmentRules,
+            self._system_attributes.get("environment"),
+            self._build_audience_attributes())
+        if action is None:
+            return None
+        variant_count = len(experiment.variants or [])
+        if action.variant is not None:
+            return action.variant if action.variant < variant_count else None
+        unit_type = experiment.unitType
+        if len(action.split) != variant_count or unit_type not in self.units:
+            return None
+        unit_hash = self.get_unit_hash(unit_type, self.units[unit_type])
+        assigner = self.get_variant_assigner(unit_type, unit_hash)
+        return assigner.assign(action.split, experiment.seedHi,
+                               experiment.seedLo)
 
-                if new_audience_mismatch != assignment.audience_mismatch:
-                    return False, None
-                return True, attrs_seq
-        return True, None
+    def _rules_and_audience_match(self, experiment: Experiment,
+                                  assignment: Assignment):
+        # Like the JS SDK's audienceMatches: once attributes change, a cached
+        # assignment stays valid only while the rule outcome and (for an
+        # assignment no rule selected) the audience result are unchanged.
+        attrs_seq = self._attrs_seq
+        if attrs_seq <= (assignment.attrs_seq or 0):
+            return True, None
+        if experiment.assignmentRules and \
+                self._resolve_rule_variant(experiment) != \
+                assignment.rule_variant:
+            return False, None
+        if not assignment.rule_override and \
+                experiment.audience is not None and \
+                len(experiment.audience) > 0:
+            attrs = self._build_audience_attributes()
+            match = self.audience_matcher.evaluate(experiment.audience, attrs)
+            new_audience_mismatch = not match.result if match is not None else False
+            if new_audience_mismatch != assignment.audience_mismatch:
+                return False, None
+        return True, attrs_seq
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
         checked_seq = None
@@ -1086,24 +1120,20 @@ class Context:
                 elif experiment is None:
                     if assignment.assigned is False:
                         return assignment
-                elif assignment.rule_override and \
-                        (assignment.attrs_seq or 0) < self._attrs_seq:
-                    pass
-                elif experiment_name not in self.custom_assignments or \
+                elif assignment.rule_override or \
+                        experiment_name not in self.custom_assignments or \
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:
-                    if experiment_matches(experiment.data, assignment):
-                        rules_changed = experiment.data.assignmentRules != assignment.rule_key
-                        if rules_changed:
-                            checked_seq = None
+                    if experiment_matches(experiment.data, assignment) and \
+                            experiment.data.assignmentRules == \
+                            assignment.rule_key:
+                        matches, checked_seq = self._rules_and_audience_match(
+                            experiment.data, assignment)
+                        if matches:
+                            if checked_seq is None:
+                                return assignment
                         else:
-                            matches, checked_seq = self._audience_matches(
-                                experiment.data, assignment)
-                            if matches:
-                                if checked_seq is None:
-                                    return assignment
-                            else:
-                                checked_seq = None
+                            checked_seq = None
         finally:
             self.context_lock.release_read()
 
@@ -1150,35 +1180,14 @@ class Context:
                             attrs)
                         if match is not None:
                             assignment.audience_mismatch = not match.result
-                    rule_action = None
-                    if experiment.data.assignmentRules:
-                        rule_action = self.audience_matcher.evaluate_rules(
-                            experiment.data.assignmentRules,
-                            self._system_attributes.get("environment"),
-                            self._build_audience_attributes())
-                        assignment.rule_key = experiment.data.assignmentRules
-                    if rule_action is not None and \
-                            (rule_action.variant is not None or
-                             rule_action.split is not None):
-                        if rule_action.variant is not None and \
-                                0 <= rule_action.variant < len(experiment.data.variants):
-                            assignment.variant = rule_action.variant
-                            assignment.assigned = False
-                            assignment.eligible = True
-                            assignment.rule_override = True
-                        elif rule_action.split is not None and \
-                                len(rule_action.split) == len(experiment.data.variants):
-                            if unit_type in self.units:
-                                uid = self.units[unit_type]
-                                unit_hash = self.get_unit_hash(unit_type, uid)
-                                assigner = self.get_variant_assigner(unit_type, unit_hash)
-                                assignment.variant = assigner.assign(
-                                    rule_action.split,
-                                    experiment.data.seedHi,
-                                    experiment.data.seedLo)
-                                assignment.assigned = False
-                                assignment.eligible = True
-                                assignment.rule_override = True
+                    rule_variant = self._resolve_rule_variant(experiment.data)
+                    assignment.rule_key = experiment.data.assignmentRules
+                    assignment.rule_variant = rule_variant
+                    if rule_variant is not None:
+                        assignment.variant = rule_variant
+                        assignment.assigned = False
+                        assignment.eligible = True
+                        assignment.rule_override = True
                     if assignment.rule_override:
                         pass
                     elif experiment.data.audienceStrict and \

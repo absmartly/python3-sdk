@@ -1,7 +1,9 @@
+import json
 import unittest
 
 from sdk.audience_matcher import AudienceMatcher
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
+from test.test_system_attributes import SystemAttributesTest
 
 
 class AssignmentRulesTest(unittest.TestCase):
@@ -32,3 +34,50 @@ class AssignmentRulesTest(unittest.TestCase):
             None, {})
         self.assertAlmostEqual(0.333, action.split[0])
         self.assertAlmostEqual(0.667, action.split[1])
+
+
+class ContextAssignmentRulesTest(unittest.TestCase):
+    rules = json.dumps({"rules": [{
+        "type": "assign", "variant": 1,
+        "conditions": {"eq": [{"var": "tier"}, {"value": "gold"}]}}]})
+
+    def create_context(self, rules=None):
+        fixture = SystemAttributesTest()
+        fixture.set_up()
+        data = fixture.strict_audience_data([{"value": True}])
+        experiment = data.experiments[0]
+        experiment.audienceStrict = False
+        experiment.split = [1.0, 0.0]
+        experiment.assignmentRules = rules if rules is not None else self.rules
+        return fixture.create_context(data)
+
+    def test_rule_applies_after_attribute_starts_matching(self):
+        context = self.create_context()
+        context.set_attribute("tier", "free")
+        self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+
+        context.set_attribute("tier", "gold")
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        self.assertTrue(context.exposures[-1].ruleOverride)
+        self.assertEqual("large",
+                         context.get_variable_value("banner.size", "default"))
+
+        context.set_attribute("tier", "free")
+        self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+        context.close()
+
+    def test_unrelated_attribute_change_keeps_cached_assignment(self):
+        context = self.create_context()
+        context.set_attribute("tier", "gold")
+        first = context.get_assignment("exp_test_ab")
+        context.set_attribute("country", "pt")
+        self.assertIs(first, context.get_assignment("exp_test_ab"))
+        context.close()
+
+    def test_rule_win_stays_cached_with_different_custom_assignment(self):
+        context = self.create_context()
+        context.set_attribute("tier", "gold")
+        first = context.get_assignment("exp_test_ab")
+        context.set_custom_assignment("exp_test_ab", 0)
+        self.assertIs(first, context.get_assignment("exp_test_ab"))
+        context.close()

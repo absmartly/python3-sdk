@@ -50,7 +50,7 @@ class ClientTest(unittest.TestCase):
              "X-Application": "website",
              "X-Environment": "dev",
              "X-Application-Version": '0',
-             "X-Agent": "absmartly-python-sdk"})
+             "X-Agent": "absmartly-python-sdk/0.3.0"})
         http_client.get.reset_mock()
         client.publish(event)
         time.sleep(0.1)
@@ -90,7 +90,7 @@ class ClientTest(unittest.TestCase):
              "X-Application": "website",
              "X-Environment": "dev",
              "X-Application-Version": '0',
-             "X-Agent": "absmartly-python-sdk"})
+             "X-Agent": "absmartly-python-sdk/0.3.0"})
         http_client.get.reset_mock()
 
         result = future.result()
@@ -112,7 +112,7 @@ class ClientTest(unittest.TestCase):
                             "X-Application": "website",
                             "X-Environment": "dev",
                             "X-Application-Version": '0',
-                            "X-Agent": "absmartly-python-sdk"}
+                            "X-Agent": "absmartly-python-sdk/0.3.0"}
 
         deserializer = DefaultContextDataDeserializer()
         deserializer.deserialize = MagicMock(return_value=expected)

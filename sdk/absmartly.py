@@ -53,6 +53,8 @@ class ABsmartly:
         client_config.application = application
         client_config.environment = environment
         client_config.application_version = application_version
+
+        http_client_config = DefaultHTTPClientConfig()
         http_client_config.connection_timeout = timeout
         http_client_config.max_retries = retries
 

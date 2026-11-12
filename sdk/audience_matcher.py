@@ -15,7 +15,32 @@ class AudienceMatcher:
         self.deserializer = deserializer
         self.json_expr = JsonExpr()
 
-    def evaluate(self, audience: str, attributes: dict) -> Optional[Result]:
+    def evaluate_rules(self, rules: str, attributes: dict):
+        """Return the first matching assignment-rule variant, or None."""
+        try:
+            raw = self.deserializer.deserialize(rules.encode("utf-8"), 0, len(rules.encode("utf-8")))
+            if not isinstance(raw, dict) or not isinstance(raw.get("rules"), list):
+                return None
+            for rule in raw["rules"]:
+                if not isinstance(rule, dict) or rule.get("type") != "assign":
+                    continue
+                variant = rule.get("variant")
+                if not isinstance(variant, int) or isinstance(variant, bool):
+                    continue
+                conditions = rule.get("conditions")
+                if conditions is None:
+                    return variant
+                if not isinstance(conditions, (dict, list)):
+                    continue
+                try:
+                    if self.json_expr.evaluate_boolean_expr(conditions, attributes) is True:
+                        return variant
+                except Exception:
+                    continue
+        except Exception:
+            return None
+        return None
+
         bytes_arr = bytes(audience, encoding="utf-8")
         audience_map = self.deserializer.deserialize(bytes_arr,
                                                      0,

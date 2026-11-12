@@ -54,6 +54,9 @@ class Assignment:
         # Computed while the context's data had failed to load: a placeholder
         # that is recomputed once a refresh recovers the context.
         self.data_failed: bool = False
+        self.rule_override: bool = False
+        self.rule_variant = None
+        self.rule_key = None
 
 
 class ExperimentVariables:
@@ -1069,11 +1072,18 @@ class Context:
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:
                     if experiment_matches(experiment.data, assignment):
-                        matches, checked_seq = self._audience_matches(
-                            experiment.data, assignment)
-                        if matches:
-                            if checked_seq is None:
-                                return assignment
+                        rule = experiment.data.assignmentRules
+                        rule_current = assignment.rule_key
+                        rule_variant = assignment.rule_variant
+                        if rule != rule_current or self._attrs_seq > (assignment.attrs_seq or 0):
+                            rule_variant = self.audience_matcher.evaluate_rules(
+                                rule, self._build_audience_attributes()) if rule else None
+                        if rule_variant == assignment.rule_variant:
+                            matches, checked_seq = self._audience_matches(
+                                experiment.data, assignment)
+                            if matches:
+                                if checked_seq is None:
+                                    return assignment
                         else:
                             checked_seq = None
         finally:
@@ -1114,7 +1124,16 @@ class Context:
                 if experiment is not None:
                     unit_type = experiment.data.unitType
 
-                    if experiment.data.audience is not None and \
+                    rule = experiment.data.assignmentRules
+                    rule_variant = self.audience_matcher.evaluate_rules(
+                        rule, self._build_audience_attributes()) if rule else None
+                    assignment.rule_key = rule
+                    assignment.rule_variant = rule_variant
+                    if rule_variant is not None and \
+                            0 <= rule_variant < len(experiment.data.variants):
+                        assignment.variant = rule_variant
+                        assignment.rule_override = True
+                    elif experiment.data.audience is not None and \
                             len(experiment.data.audience) > 0:
                         attrs = self._build_audience_attributes()
                         match = self.audience_matcher.evaluate(
@@ -1328,6 +1347,7 @@ class Context:
             exposure.fullOn = assignment.full_on
             exposure.custom = assignment.custom
             exposure.audienceMismatch = assignment.audience_mismatch
+            exposure.ruleOverride = assignment.rule_override
 
             self.pending_count.increment_and_get()
             self.exposures.append(exposure)

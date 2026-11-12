@@ -105,6 +105,27 @@ class ContextAssignmentRulesTest(unittest.TestCase):
         self.fixture.client._refresh_data = empty
         context.refresh()
         self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+        exposures = [e for e in context.exposures if e.name == "exp_test_ab"]
+        self.assertEqual(1, len(exposures))
+        self.assertEqual(1, exposures[0].variant)
+        self.assertTrue(exposures[0].ruleOverride)
+        context.close()
+
+    def test_unexposed_rule_assignment_exposes_control_after_removal(self):
+        context = self.create_context()
+        context.set_attribute("tier", "gold")
+        self.assertEqual(1, context.peek_treatment("exp_test_ab"))
+
+        empty = ContextData()
+        empty.experiments = []
+        self.fixture.client._refresh_data = empty
+        context.refresh()
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+        exposures = [e for e in context.exposures if e.name == "exp_test_ab"]
+        self.assertEqual(1, len(exposures))
+        self.assertEqual(0, exposures[0].variant)
+        self.assertFalse(exposures[0].ruleOverride)
         context.close()
 
     def test_concurrent_split_rule_recheck_does_not_deadlock(self):

@@ -1158,10 +1158,17 @@ class Context:
         try:
             self.context_lock.acquire_write()
             experiment, failed = self._get_experiment_state(experiment_name)
+            previous = self.assignment_cache.get(experiment_name)
             assignment = Assignment()
             assignment.name = experiment_name
             assignment.eligible = True
             assignment.data_failed = failed
+            if experiment is None and previous is not None and \
+                    previous.rule_override and previous.exposed.value:
+                # A refresh removed the experiment of an exposed rule
+                # assignment: fall back to control without queuing a second
+                # exposure for the same experiment.
+                assignment.exposed.set(True)
 
             if exposed_at:
                 assignment.exposedAt = exposed_at

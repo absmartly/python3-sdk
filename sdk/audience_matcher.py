@@ -1,6 +1,6 @@
-import json
 import logging
 import math
+import re
 from typing import Optional
 
 from sdk.audience_deserializer import AudienceDeserializer
@@ -87,8 +87,11 @@ class AudienceMatcher:
             return None
         values = []
         for part in rule["percentages"].split("/"):
+            match = re.match(r"^[\\s]*([+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?)", part)
+            if match is None:
+                return None
             try:
-                value = float(part.strip().split()[0])
+                value = float(match.group(1))
             except (ValueError, IndexError):
                 return None
             if not math.isfinite(value) or value < 0:

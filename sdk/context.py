@@ -756,7 +756,10 @@ class Context:
                     attr.value = value
                     attr.setAt = now
                     system.append(attr)
-            event.attributes = system + (event.attributes or [])
+            user_attributes = {attribute.name for attribute in (event.attributes or [])}
+            event.attributes = [attribute for attribute in system
+                                if attribute.name not in user_attributes] + \
+                (event.attributes or [])
         event.exposures = exposures
         event.goals = achievements
         event.historic = self.historic
@@ -878,7 +881,8 @@ class Context:
                     self.queue_exposure(assignment)
 
                 if key in assignment.variables and \
-                        (assignment.assigned or assignment.overridden):
+                        (assignment.assigned or assignment.overridden or
+                         assignment.rule_override):
                     return assignment.variables[key]
         return default_value
 

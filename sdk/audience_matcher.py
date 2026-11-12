@@ -80,7 +80,8 @@ class AudienceMatcher:
         if rule.get("type") == "assign":
             variant = rule.get("variant")
             if isinstance(variant, bool) or not isinstance(variant, (int, float)) \
-                    or not math.isfinite(variant) or int(variant) != variant:
+                    or not math.isfinite(variant) or variant < 0 \
+                    or int(variant) != variant:
                 return None
             return RuleAction(variant=int(variant))
         if rule.get("type") != "split" or not isinstance(rule.get("percentages"), str):

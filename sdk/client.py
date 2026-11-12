@@ -13,12 +13,14 @@ class Client:
         api_key = config.api_key
         application = config.application
         environment = config.environment
+        application_version = getattr(config, "application_version", None)
 
         # Kept so the context can evaluate audiences and assignment-rule
         # conditions against the configured application and environment names
         # (the collector adds them to every event server-side).
         self.application = application
         self.environment = environment
+        self.application_version = application_version
 
         self.url = endpoint + "/context"
         self.http_client = http_client
@@ -26,12 +28,29 @@ class Client:
         self.headers = {"X-API-Key": api_key,
                         "X-Application": application,
                         "X-Environment": environment,
-                        "X-Application-Version": '0',
+                        "X-Application-Version": application_version or '0',
                         "X-Agent": "absmartly-python-sdk/0.3.0"}
         self.query = {"application": application,
                       "environment": environment}
 
-    def _handle_response(self, response):
+    def get_application(self):
+        return self.application
+
+    def get_application_version(self):
+        return self.application_version
+
+    def get_environment(self):
+        return self.environment
+
+    def get_agent_name(self):
+        return "absmartly-python-sdk"
+
+    def get_agent_version(self):
+        return "0.3.0"
+
+    def get_agent(self):
+        return "absmartly-python-sdk/0.3.0"
+
         """Helper method to handle HTTP response and deserialize content."""
         if response.status_code // 100 == 2:
             content = response.content

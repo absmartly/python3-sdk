@@ -30,4 +30,5 @@ class AssignmentRulesTest(unittest.TestCase):
         action = self.matcher.evaluate_rules(
             '{"rules":[{"type":"split","percentages":" 33.3 / 66.7 "}]}',
             None, {})
-        self.assertEqual([0.333, 0.667], action.split)
+        self.assertAlmostEqual(0.333, action.split[0])
+        self.assertAlmostEqual(0.667, action.split[1])

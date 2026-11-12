@@ -1125,6 +1125,7 @@ class Context:
                 if experiment is not None:
                     unit_type = experiment.data.unitType
 
+                    rule = experiment.data.assignmentRules
                     action = self.audience_matcher.evaluate_rules(
                         rule, self._build_audience_attributes()) if rule else None
                     rule_variant = action.get("variant") if action and action["type"] == "assign" else None

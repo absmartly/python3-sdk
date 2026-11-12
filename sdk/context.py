@@ -1076,8 +1076,9 @@ class Context:
                         rule_current = assignment.rule_key
                         rule_variant = assignment.rule_variant
                         if rule != rule_current or self._attrs_seq > (assignment.attrs_seq or 0):
-                            rule_variant = self.audience_matcher.evaluate_rules(
+                            action = self.audience_matcher.evaluate_rules(
                                 rule, self._build_audience_attributes()) if rule else None
+                            rule_variant = action.get("variant") if action and action["type"] == "assign" else None
                         if rule_variant == assignment.rule_variant:
                             matches, checked_seq = self._audience_matches(
                                 experiment.data, assignment)
@@ -1124,12 +1125,12 @@ class Context:
                 if experiment is not None:
                     unit_type = experiment.data.unitType
 
-                    rule = experiment.data.assignmentRules
-                    rule_variant = self.audience_matcher.evaluate_rules(
+                    action = self.audience_matcher.evaluate_rules(
                         rule, self._build_audience_attributes()) if rule else None
+                    rule_variant = action.get("variant") if action and action["type"] == "assign" else None
                     assignment.rule_key = rule
                     assignment.rule_variant = rule_variant
-                    if rule_variant is not None and \
+                    if action is not None and action["type"] == "assign" and \
                             0 <= rule_variant < len(experiment.data.variants):
                         assignment.variant = rule_variant
                         assignment.rule_override = True

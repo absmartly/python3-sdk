@@ -166,3 +166,38 @@ class ContextAssignmentRulesTest(unittest.TestCase):
         self.assertFalse(any(thread.is_alive() for thread in threads))
         self.assertEqual([1, 1], results)
         context.close()
+
+    def test_rule_assignment_after_experiment_removed_and_reintroduced(self):
+        context = self.create_context()
+        context.set_attribute("tier", "gold")
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        data = context.get_data()
+
+        empty = ContextData()
+        empty.experiments = []
+        self.fixture.client._refresh_data = empty
+        context.refresh()
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+
+        self.fixture.client._refresh_data = data
+        context.refresh()
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        exposures = [e for e in context.exposures if e.name == "exp_test_ab"]
+        self.assertEqual([(1, True), (1, True)],
+                         [(e.variant, e.ruleOverride) for e in exposures])
+        context.close()
+
+    def test_repeated_rule_transitions(self):
+        context = self.create_context()
+        for _ in range(3):
+            context.set_attribute("tier", "gold")
+            self.assertEqual(1, context.peek_treatment("exp_test_ab"))
+            self.assertEqual(
+                "large", context.peek_variable_value("banner.size", "default"))
+            context.set_attribute("tier", "free")
+            self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+            self.assertEqual(
+                "default", context.peek_variable_value("banner.size", "default"))
+        self.assertEqual([], context.exposures)
+        context.close()

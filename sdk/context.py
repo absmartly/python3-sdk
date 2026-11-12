@@ -1089,13 +1089,18 @@ class Context:
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:
                     if experiment_matches(experiment.data, assignment):
-                        matches, checked_seq = self._audience_matches(
-                            experiment.data, assignment)
-                        if matches:
-                            if checked_seq is None:
-                                return assignment
-                        else:
+                        rules_changed = bool(experiment.data.assignmentRules) and \
+                            self._attrs_seq > (assignment.attrs_seq or 0)
+                        if rules_changed:
                             checked_seq = None
+                        else:
+                            matches, checked_seq = self._audience_matches(
+                                experiment.data, assignment)
+                            if matches:
+                                if checked_seq is None:
+                                    return assignment
+                            else:
+                                checked_seq = None
         finally:
             self.context_lock.release_read()
 

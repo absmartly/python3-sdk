@@ -51,6 +51,7 @@ class Client:
     def get_agent(self):
         return "absmartly-python-sdk/0.3.0"
 
+    def _handle_response(self, response):
         """Helper method to handle HTTP response and deserialize content."""
         if response.status_code // 100 == 2:
             content = response.content

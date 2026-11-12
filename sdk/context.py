@@ -1135,6 +1135,16 @@ class Context:
                             0 <= rule_variant < len(experiment.data.variants):
                         assignment.variant = rule_variant
                         assignment.rule_override = True
+                    elif action is not None and action["type"] == "split" and \
+                            len(action["split"]) == len(experiment.data.variants):
+                        if unit_type in self.units:
+                            unit_hash = self.get_unit_hash(unit_type, self.units[unit_type])
+                            assigner = self.get_variant_assigner(unit_type, unit_hash)
+                            assignment.variant = assigner.assign(
+                                action["split"], experiment.data.seedHi, experiment.data.seedLo)
+                        else:
+                            assignment.variant = 0
+                        assignment.rule_override = True
                     elif experiment.data.audience is not None and \
                             len(experiment.data.audience) > 0:
                         attrs = self._build_audience_attributes()
@@ -1143,10 +1153,10 @@ class Context:
                             attrs)
                         if match is not None:
                             assignment.audience_mismatch = not match.result
-                    if experiment.data.audienceStrict and \
+                    if not assignment.rule_override and experiment.data.audienceStrict and \
                             assignment.audience_mismatch:
                         assignment.variant = 0
-                    elif experiment.data.fullOnVariant == 0:
+                    elif not assignment.rule_override and experiment.data.fullOnVariant == 0:
                         if experiment.data.unitType in self.units:
                             uid = self.units[experiment.data.unitType]
                             unit_hash = self.get_unit_hash(unit_type, uid)

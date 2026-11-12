@@ -1080,13 +1080,10 @@ class Context:
         # Like the JS SDK's audienceMatches: once attributes change, a cached
         # assignment stays valid only while the rule outcome and (for an
         # assignment no rule selected) the audience result are unchanged.
-        attrs_seq = self._attrs_seq
-        if attrs_seq <= (assignment.attrs_seq or 0):
-            return True, None
         if experiment.assignmentRules and \
                 self._resolve_rule_variant(experiment) != \
                 assignment.rule_variant:
-            return False, None
+            return False
         if not assignment.rule_override and \
                 experiment.audience is not None and \
                 len(experiment.audience) > 0:
@@ -1094,8 +1091,8 @@ class Context:
             match = self.audience_matcher.evaluate(experiment.audience, attrs)
             new_audience_mismatch = not match.result if match is not None else False
             if new_audience_mismatch != assignment.audience_mismatch:
-                return False, None
-        return True, attrs_seq
+                return False
+        return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
         checked_seq = None
@@ -1118,7 +1115,8 @@ class Context:
                             assignment.variant == override:
                         return assignment
                 elif experiment is None:
-                    if assignment.assigned is False:
+                    if assignment.assigned is False and \
+                            not assignment.rule_override:
                         return assignment
                 elif assignment.rule_override or \
                         experiment_name not in self.custom_assignments or \
@@ -1127,28 +1125,35 @@ class Context:
                     if experiment_matches(experiment.data, assignment) and \
                             experiment.data.assignmentRules == \
                             assignment.rule_key:
-                        matches, checked_seq = self._rules_and_audience_match(
-                            experiment.data, assignment)
-                        if matches:
-                            if checked_seq is None:
-                                return assignment
-                        else:
-                            checked_seq = None
+                        if self._attrs_seq <= (assignment.attrs_seq or 0):
+                            return assignment
+                        checked_seq = self._attrs_seq
         finally:
             self.context_lock.release_read()
 
         if checked_seq is not None:
-            # The audience result is unchanged: record the sequence it was
-            # checked at (JS sets assignment.attrsSeq), so later reads skip
-            # the re-evaluation. Done under the write lock, after releasing
-            # the read lock, since concurrent readers cannot all upgrade.
+            # Attributes changed since the assignment was computed: re-check
+            # its rule and audience results under the write lock, after
+            # releasing the read lock, since concurrent readers cannot all
+            # upgrade (resolving a split rule may compute a unit hash). When
+            # both are unchanged, record the sequence they were checked at
+            # (JS sets assignment.attrsSeq) so later reads skip the re-check.
             try:
                 self.context_lock.acquire_write()
-                if (assignment.attrs_seq or 0) < checked_seq:
-                    assignment.attrs_seq = checked_seq
+                if self.assignment_cache.get(experiment_name) is assignment:
+                    if (assignment.attrs_seq or 0) >= checked_seq:
+                        return assignment
+                    experiment = self.get_experiment(experiment_name)
+                    if experiment is not None and \
+                            experiment_matches(experiment.data, assignment) and \
+                            experiment.data.assignmentRules == \
+                            assignment.rule_key and \
+                            self._rules_and_audience_match(
+                                experiment.data, assignment):
+                        assignment.attrs_seq = checked_seq
+                        return assignment
             finally:
                 self.context_lock.release_write()
-            return assignment
 
         try:
             self.context_lock.acquire_write()

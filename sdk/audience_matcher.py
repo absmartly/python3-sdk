@@ -98,6 +98,9 @@ class AudienceMatcher:
             if not math.isfinite(value) or value < 0:
                 return None
             values.append(value)
+        # Same check as the backend's experiment split (and the JS and Java
+        # SDKs): the gap from 100 is rounded to two decimals and may be at
+        # most 0.01, so "33.33/33.33/33.33" is accepted.
         if not values or round(abs(100 - sum(values)), 2) > 0.01:
             return None
         return RuleAction(split=[value / 100 for value in values])

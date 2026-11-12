@@ -31,7 +31,8 @@ class ABsmartly:
         environment: str,
         timeout: int = 3,
         retries: int = 5,
-        event_logger: Optional[ContextEventLogger] = None
+        event_logger: Optional[ContextEventLogger] = None,
+        application_version: Optional[str] = None
     ) -> "ABsmartly":
         if not endpoint:
             raise ValueError("endpoint is required and cannot be empty")
@@ -51,8 +52,7 @@ class ABsmartly:
         client_config.api_key = api_key
         client_config.application = application
         client_config.environment = environment
-
-        http_client_config = DefaultHTTPClientConfig()
+        client_config.application_version = application_version
         http_client_config.connection_timeout = timeout
         http_client_config.max_retries = retries
 

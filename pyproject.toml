@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ABSmartly"
-version = "0.3.0"
+dynamic = ["version"]
 description = "ABSmartly Python SDK lib"
 readme = "README.md"
 authors = [{ name = "ABSmartly", email = "info@ABSmartly.com" }]
@@ -27,6 +27,9 @@ requires-python = ">=3.9"
 
 [project.optional-dependencies]
 dev = ["black", "bumpver", "isort", "pip-tools", "pytest"]
+
+[tool.setuptools.dynamic]
+version = { attr = "sdk.version.VERSION" }
 
 [project.urls]
 Homepage = "https://github.com/absmartly/python3-sdk"

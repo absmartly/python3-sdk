@@ -27,6 +27,7 @@ from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
 from sdk.utils import hash_unit, is_numeric
+from sdk.version import NAME as SDK_NAME, VERSION as SDK_VERSION
 from sdk.variable_parser import VariableParser
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,10 @@ class Assignment:
         # Computed while the context's data had failed to load: a placeholder
         # that is recomputed once a refresh recovers the context.
         self.data_failed: bool = False
+        self.rule_override: bool = False
+        self.rule_key: Optional[str] = None
+        self.rule_variant: Optional[int] = None
+        self.rule_missing_unit: bool = False
 
 
 class ExperimentVariables:
@@ -135,7 +140,9 @@ class Context:
                  event_handler: ContextPublisher,
                  event_logger: ContextEventLogger,
                  variable_parser: VariableParser,
-                 audience_matcher: AudienceMatcher):
+                 audience_matcher: AudienceMatcher,
+                 application: Optional[str] = None,
+                 environment: Optional[str] = None):
         self.clock = clock
         self.publish_delay = config.publish_delay
         self.refresh_interval = config.refresh_interval
@@ -145,6 +152,19 @@ class Context:
         self.variable_parser = variable_parser
         self.audience_matcher = audience_matcher
         self.historic = config.historic
+        self.include_system_attributes = config.include_system_attributes
+
+        # The application and environment names configured in the SDK. The
+        # context always evaluates audiences (and assignment-rule conditions)
+        # with these, like the JS SDK; the collector already attaches them to
+        # every event server-side, so they are not published here. A user-set
+        # attribute with the same name always wins (see
+        # _build_audience_attributes).
+        self._system_attributes = {}
+        if isinstance(application, str) and len(application) > 0:
+            self._system_attributes["application"] = application
+        if isinstance(environment, str) and len(environment) > 0:
+            self._system_attributes["environment"] = environment
 
         self.units = {}
         self.index = {}
@@ -302,7 +322,17 @@ class Context:
                     "Unit already set.",
                     f"Unit '{unit_type}' UID already set.")
 
+            added = unit_type not in self.units
             self.units[unit_type] = uid
+            if added:
+                # Like the JS SDK's unit(): an unexposed assignment for this
+                # unit type was resolved while the unit was missing, so drop
+                # it and let the next read resolve it with the unit. Exposed
+                # ones are kept, as re-resolving would expose them twice.
+                for name, assignment in list(self.assignment_cache.items()):
+                    if assignment.unit_type == unit_type and \
+                            not assignment.exposed.value:
+                        del self.assignment_cache[name]
         finally:
             self.context_lock.release_write()
 
@@ -727,6 +757,23 @@ class Context:
             event.attributes = list(self.attributes)
         else:
             event.attributes = None
+        if self.include_system_attributes:
+            now = self.clock.millis()
+            system = []
+            for name, value in (("sdk_name", SDK_NAME),
+                                ("sdk_version", SDK_VERSION),
+                                ("application", self._system_attributes.get("application")),
+                                ("environment", self._system_attributes.get("environment"))):
+                if value is not None:
+                    attr = Attribute()
+                    attr.name = name
+                    attr.value = value
+                    attr.setAt = now
+                    system.append(attr)
+            user_attributes = {attribute.name for attribute in (event.attributes or [])}
+            event.attributes = [attribute for attribute in system
+                                if attribute.name not in user_attributes] + \
+                (event.attributes or [])
         event.exposures = exposures
         event.goals = achievements
         event.historic = self.historic
@@ -848,7 +895,8 @@ class Context:
                     self.queue_exposure(assignment)
 
                 if key in assignment.variables and \
-                        (assignment.assigned or assignment.overridden):
+                        (assignment.assigned or assignment.overridden or
+                         assignment.rule_override):
                     return assignment.variables[key]
         return default_value
 
@@ -1000,24 +1048,77 @@ class Context:
         return self.get_custom_field_value_type(experiment_name, key)
 
     def _build_audience_attributes(self):
-        """Helper method to build audience attributes map from current attributes."""
-        attrs = {}
+        """Build the attribute map audiences and assignment-rule conditions
+        are evaluated against.
+
+        System values (``application`` / ``environment``) go in first, then
+        user-set attributes overlay them, so a value the caller sets with the
+        same name always wins, even one set after the context was created
+        (the ``_attrs_seq`` bump invalidates a cached assignment). These
+        system attributes are never published; the collector adds them to
+        every event server-side.
+        """
+        attrs = dict(self._system_attributes)
         for attr in self.attributes:
             attrs[attr.name] = attr.value
         return attrs
 
-    def _audience_matches(self, experiment: Experiment, assignment: Assignment):
-        if experiment.audience is not None and len(experiment.audience) > 0:
-            attrs_seq = self._attrs_seq
-            if attrs_seq > (assignment.attrs_seq or 0):
-                attrs = self._build_audience_attributes()
-                match = self.audience_matcher.evaluate(experiment.audience, attrs)
-                new_audience_mismatch = not match.result if match is not None else False
+    def _resolve_rule(self, experiment: Experiment,
+                      unit_pinned_missing: bool = False):
+        """The variant the first matching assignment rule selects and whether
+        it is the no-unit result, or (None, False)
+        when no rule matches or the matching rule does not fit the
+        experiment (a variant out of range or a split of the wrong length).
+        Like the JS SDK's _resolveRule, a split whose unit is not set (or is
+        pinned as missing) selects the experiment's no-unit result, its
+        fullOnVariant."""
+        if not experiment.assignmentRules:
+            return None, False
+        action = self.audience_matcher.evaluate_rules(
+            experiment.assignmentRules,
+            self._system_attributes.get("environment"),
+            self._build_audience_attributes())
+        if action is None:
+            return None, False
+        variant_count = len(experiment.variants or [])
+        if action.variant is not None:
+            if 0 <= action.variant < variant_count:
+                return action.variant, False
+            return None, False
+        unit_type = experiment.unitType
+        if len(action.split) != variant_count:
+            return None, False
+        if unit_pinned_missing or unit_type not in self.units:
+            return experiment.fullOnVariant, True
+        unit_hash = self.get_unit_hash(unit_type, self.units[unit_type])
+        assigner = self.get_variant_assigner(unit_type, unit_hash)
+        return assigner.assign(action.split, experiment.seedHi,
+                               experiment.seedLo), False
 
-                if new_audience_mismatch != assignment.audience_mismatch:
-                    return False, None
-                return True, attrs_seq
-        return True, None
+    def _rules_and_audience_match(self, experiment: Experiment,
+                                  assignment: Assignment):
+        # Like the JS SDK's audienceMatches: once attributes change, a cached
+        # assignment stays valid only while the rule outcome and (for an
+        # assignment no rule selected) the audience result are unchanged.
+        if experiment.assignmentRules:
+            # An exposed split resolved without its unit keeps resolving as
+            # if the unit were still missing, so a unit set afterwards cannot
+            # switch the variant the user already saw.
+            pinned = assignment.exposed.value and assignment.rule_missing_unit
+            rule_variant, missing_unit = self._resolve_rule(
+                experiment, pinned)
+            if rule_variant != assignment.rule_variant:
+                return False
+            assignment.rule_missing_unit = missing_unit
+        if not assignment.rule_override and \
+                experiment.audience is not None and \
+                len(experiment.audience) > 0:
+            attrs = self._build_audience_attributes()
+            match = self.audience_matcher.evaluate(experiment.audience, attrs)
+            new_audience_mismatch = not match.result if match is not None else False
+            if new_audience_mismatch != assignment.audience_mismatch:
+                return False
+        return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
         checked_seq = None
@@ -1040,34 +1141,45 @@ class Context:
                             assignment.variant == override:
                         return assignment
                 elif experiment is None:
-                    if assignment.assigned is False:
+                    if assignment.assigned is False and \
+                            not assignment.rule_override:
                         return assignment
-                elif experiment_name not in self.custom_assignments or \
+                elif assignment.rule_override or \
+                        experiment_name not in self.custom_assignments or \
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:
-                    if experiment_matches(experiment.data, assignment):
-                        matches, checked_seq = self._audience_matches(
-                            experiment.data, assignment)
-                        if matches:
-                            if checked_seq is None:
-                                return assignment
-                        else:
-                            checked_seq = None
+                    if experiment_matches(experiment.data, assignment) and \
+                            experiment.data.assignmentRules == \
+                            assignment.rule_key:
+                        if self._attrs_seq <= (assignment.attrs_seq or 0):
+                            return assignment
+                        checked_seq = self._attrs_seq
         finally:
             self.context_lock.release_read()
 
         if checked_seq is not None:
-            # The audience result is unchanged: record the sequence it was
-            # checked at (JS sets assignment.attrsSeq), so later reads skip
-            # the re-evaluation. Done under the write lock, after releasing
-            # the read lock, since concurrent readers cannot all upgrade.
+            # Attributes changed since the assignment was computed: re-check
+            # its rule and audience results under the write lock, after
+            # releasing the read lock, since concurrent readers cannot all
+            # upgrade (resolving a split rule may compute a unit hash). When
+            # both are unchanged, record the sequence they were checked at
+            # (JS sets assignment.attrsSeq) so later reads skip the re-check.
             try:
                 self.context_lock.acquire_write()
-                if (assignment.attrs_seq or 0) < checked_seq:
-                    assignment.attrs_seq = checked_seq
+                if self.assignment_cache.get(experiment_name) is assignment:
+                    if (assignment.attrs_seq or 0) >= checked_seq:
+                        return assignment
+                    experiment = self.get_experiment(experiment_name)
+                    if experiment is not None and \
+                            experiment_matches(experiment.data, assignment) and \
+                            experiment.data.assignmentRules == \
+                            assignment.rule_key and \
+                            self._rules_and_audience_match(
+                                experiment.data, assignment):
+                        assignment.attrs_seq = checked_seq
+                        return assignment
             finally:
                 self.context_lock.release_write()
-            return assignment
 
         try:
             self.context_lock.acquire_write()
@@ -1091,15 +1203,29 @@ class Context:
                 if experiment is not None:
                     unit_type = experiment.data.unitType
 
-                    if experiment.data.audience is not None and \
+                    rule_variant, assignment.rule_missing_unit = \
+                        self._resolve_rule(experiment.data)
+                    assignment.rule_key = experiment.data.assignmentRules
+                    assignment.rule_variant = rule_variant
+                    if rule_variant is not None:
+                        assignment.variant = rule_variant
+                        assignment.assigned = False
+                        assignment.eligible = True
+                        assignment.rule_override = True
+                    elif experiment.data.audience is not None and \
                             len(experiment.data.audience) > 0:
+                        # A rule win happens before audience evaluation (as
+                        # in the JS SDK), so the audience is only evaluated
+                        # when no rule selected the variant.
                         attrs = self._build_audience_attributes()
                         match = self.audience_matcher.evaluate(
                             experiment.data.audience,
                             attrs)
                         if match is not None:
                             assignment.audience_mismatch = not match.result
-                    if experiment.data.audienceStrict and \
+                    if assignment.rule_override:
+                        pass
+                    elif experiment.data.audienceStrict and \
                             assignment.audience_mismatch:
                         assignment.variant = 0
                     elif experiment.data.fullOnVariant == 0:
@@ -1305,6 +1431,7 @@ class Context:
             exposure.fullOn = assignment.full_on
             exposure.custom = assignment.custom
             exposure.audienceMismatch = assignment.audience_mismatch
+            exposure.ruleOverride = getattr(assignment, "rule_override", False)
 
             self.pending_count.increment_and_get()
             self.exposures.append(exposure)

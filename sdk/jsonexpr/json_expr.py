@@ -12,6 +12,13 @@ from sdk.jsonexpr.operators.match_operator import MatchOperator
 from sdk.jsonexpr.operators.not_operator import NotOperator
 from sdk.jsonexpr.operators.null_operator import NullOperator
 from sdk.jsonexpr.operators.or_combinator import OrCombinator
+from sdk.jsonexpr.operators.semver_operator import (
+    SemverEqualsOperator,
+    SemverGreaterThanOperator,
+    SemverGreaterThanOrEqualOperator,
+    SemverLessThanOperator,
+    SemverLessThanOrEqualOperator,
+)
 from sdk.jsonexpr.operators.value_operator import ValueOperator
 from sdk.jsonexpr.operators.var_operator import VarOperator
 
@@ -30,7 +37,12 @@ class JsonExpr:
         "gt": GreaterThanOperator(),
         "gte": GreaterThanOrEqualOperator(),
         "lt": LessThanOperator(),
-        "lte": LessThanOrEqualOperator()
+        "lte": LessThanOrEqualOperator(),
+        "semver_eq": SemverEqualsOperator(),
+        "semver_gt": SemverGreaterThanOperator(),
+        "semver_gte": SemverGreaterThanOrEqualOperator(),
+        "semver_lt": SemverLessThanOperator(),
+        "semver_lte": SemverLessThanOrEqualOperator(),
     }
 
     def evaluate_boolean_expr(self, expr: object, var: dict):

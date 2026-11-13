@@ -298,6 +298,14 @@ context.set_attributes({
 })
 ```
 
+Audience filters can also use `application` and `environment`, the application and environment names configured in the SDK. They are always available for audience evaluation, but they are not real attributes: they are omitted from published attributes by default (and included when `include_system_attributes=True`) and `get_attributes()` does not return them. Names that are not configured or empty are left out. An attribute you set with the same name, at any time, takes precedence:
+
+```python
+context.set_attribute("environment", "staging")  # audiences now see "staging"
+```
+
+The SDK no longer exposes an automatic `app_version` to audiences. An `app_version` you set yourself with `set_attribute("app_version", ...)` is still evaluated and published like any other attribute.
+
 ### Custom Assignments
 
 Sometimes it may be necessary to override the automatic selection of a variant. For example, if you wish to have your variant chosen based on data from an API call. This can be accomplished using the `set_custom_assignment()` method.

@@ -13,6 +13,11 @@
 - `set_unit` keeps numeric UIDs as numbers (hashed like the JS SDK, e.g. `125.75` hashes as `"126"`) and rejects values that are neither a string nor a number with "Unit '<type>' must be a string or a number.".
 - `track` raises "Goal '<name>' properties must be of type object." when properties cannot be converted with `dict()`; any `Mapping` or list of pairs is still accepted, as in v0.2.4.
 
+### Changed
+- Audiences and assignment-rule conditions are now always evaluated with `application` and `environment` set to the application and environment names configured in the SDK. They are layered under any user-set attributes (system values first, then your attributes overlay them), so a value you set with the same name — at any time, including after the context is created — always wins. Names that are not configured or empty are left out of the evaluation map. These system attributes are **omitted from published attributes by default** (and included when `include_system_attributes=True`); `get_attributes()` does not return them. The SDK never adds `app_version` for audiences (an `app_version` you set yourself is still evaluated and published like any other attribute).
+
+  **This changes assignment for running experiments.** A unit in an experiment with Audience enforced (`audienceStrict`) and an `environment` or `application` condition currently gets variant 0, even when it matches the condition and even when the experiment is full-on. After upgrading, a matching unit is randomised normally (or gets the full-on variant). Those experiments are broken today; this release fixes them, but their exposures will change.
+
 ### Added
 - `Context.get_variable_keys_all()` returns every experiment defining each variable key, in experiment id order (matching the JS SDK's `variableKeys()`); `get_variable_keys()` keeps the v0.2.4 shape (one experiment name per key, the lowest id).
 - `ContextError(RuntimeError)` / `ContextValueError(ValueError)`: lifecycle and unit errors keep their v0.2.4 messages (`'ABSmartly Context is closed'`, `'ABSmartly Context is closing'`, `'ABSmartly Context is not yet ready'`, `'Unit already set.'`, `'Unit UID must not be blank.'`) and expose the cross-SDK wording as `canonical_message`.

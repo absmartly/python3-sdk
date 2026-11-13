@@ -27,6 +27,7 @@ from sdk.json.publish_event import PublishEvent
 from sdk.json.unit import Unit
 from sdk.time.clock import Clock
 from sdk.utils import hash_unit, is_numeric
+from sdk.version import NAME as SDK_NAME, VERSION as SDK_VERSION
 from sdk.variable_parser import VariableParser
 
 logger = logging.getLogger(__name__)
@@ -57,6 +58,7 @@ class Assignment:
         self.rule_override: bool = False
         self.rule_key: Optional[str] = None
         self.rule_variant: Optional[int] = None
+        self.rule_missing_unit: bool = False
 
 
 class ExperimentVariables:
@@ -758,8 +760,8 @@ class Context:
         if self.include_system_attributes:
             now = self.clock.millis()
             system = []
-            for name, value in (("sdk_name", "absmartly-python-sdk"),
-                                ("sdk_version", "0.3.0"),
+            for name, value in (("sdk_name", SDK_NAME),
+                                ("sdk_version", SDK_VERSION),
                                 ("application", self._system_attributes.get("application")),
                                 ("environment", self._system_attributes.get("environment"))):
                 if value is not None:
@@ -1061,39 +1063,53 @@ class Context:
             attrs[attr.name] = attr.value
         return attrs
 
-    def _resolve_rule_variant(self, experiment: Experiment):
-        """The variant the first matching assignment rule selects, or None
+    def _resolve_rule(self, experiment: Experiment,
+                      unit_pinned_missing: bool = False):
+        """The variant the first matching assignment rule selects and whether
+        it is the no-unit result, or (None, False)
         when no rule matches or the matching rule does not fit the
-        experiment (a variant out of range, a split of the wrong length or
-        a split whose unit is not set)."""
+        experiment (a variant out of range or a split of the wrong length).
+        Like the JS SDK's _resolveRule, a split whose unit is not set (or is
+        pinned as missing) selects the experiment's no-unit result, its
+        fullOnVariant."""
         if not experiment.assignmentRules:
-            return None
+            return None, False
         action = self.audience_matcher.evaluate_rules(
             experiment.assignmentRules,
             self._system_attributes.get("environment"),
             self._build_audience_attributes())
         if action is None:
-            return None
+            return None, False
         variant_count = len(experiment.variants or [])
         if action.variant is not None:
-            return action.variant if action.variant < variant_count else None
+            if 0 <= action.variant < variant_count:
+                return action.variant, False
+            return None, False
         unit_type = experiment.unitType
-        if len(action.split) != variant_count or unit_type not in self.units:
-            return None
+        if len(action.split) != variant_count:
+            return None, False
+        if unit_pinned_missing or unit_type not in self.units:
+            return experiment.fullOnVariant, True
         unit_hash = self.get_unit_hash(unit_type, self.units[unit_type])
         assigner = self.get_variant_assigner(unit_type, unit_hash)
         return assigner.assign(action.split, experiment.seedHi,
-                               experiment.seedLo)
+                               experiment.seedLo), False
 
     def _rules_and_audience_match(self, experiment: Experiment,
                                   assignment: Assignment):
         # Like the JS SDK's audienceMatches: once attributes change, a cached
         # assignment stays valid only while the rule outcome and (for an
         # assignment no rule selected) the audience result are unchanged.
-        if experiment.assignmentRules and \
-                self._resolve_rule_variant(experiment) != \
-                assignment.rule_variant:
-            return False
+        if experiment.assignmentRules:
+            # An exposed split resolved without its unit keeps resolving as
+            # if the unit were still missing, so a unit set afterwards cannot
+            # switch the variant the user already saw.
+            pinned = assignment.exposed.value and assignment.rule_missing_unit
+            rule_variant, missing_unit = self._resolve_rule(
+                experiment, pinned)
+            if rule_variant != assignment.rule_variant:
+                return False
+            assignment.rule_missing_unit = missing_unit
         if not assignment.rule_override and \
                 experiment.audience is not None and \
                 len(experiment.audience) > 0:
@@ -1187,7 +1203,8 @@ class Context:
                 if experiment is not None:
                     unit_type = experiment.data.unitType
 
-                    rule_variant = self._resolve_rule_variant(experiment.data)
+                    rule_variant, assignment.rule_missing_unit = \
+                        self._resolve_rule(experiment.data)
                     assignment.rule_key = experiment.data.assignmentRules
                     assignment.rule_variant = rule_variant
                     if rule_variant is not None:

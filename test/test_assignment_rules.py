@@ -260,15 +260,16 @@ class CrossSdkRuleScenariosTest(unittest.TestCase):
     """Cross-SDK conformance scenarios; expected results were recorded from
     the JavaScript SDK (@absmartly/javascript-sdk 1.14.0)."""
 
-    def create_context(self, experiment):
+    def create_context(self, *experiments, units=None):
         fixture = SystemAttributesTest()
         fixture.set_up()
         self.fixture = fixture
-        content = json.dumps({"experiments": [experiment]})
+        content = json.dumps({"experiments": list(experiments)})
         data = fixture.deser.deserialize(
             bytes(content, encoding="utf-8"), 0, len(content))
         config = ContextConfig()
-        config.units = {"session_id": "svk-unit-1"}
+        config.units = units if units is not None else \
+            {"session_id": "svk-unit-1"}
         config.publish_delay = -1
         config.refresh_interval = 0
         data_future = Future()
@@ -358,4 +359,70 @@ class CrossSdkRuleScenariosTest(unittest.TestCase):
             "overridden": False, "fullOn": False, "custom": False,
             "audienceMismatch": False, "ruleOverride": False,
         }, self.exposure_fields(context.exposures[1]))
+        context.close()
+
+    def test_split_rule_without_unit_gives_no_unit_result(self):
+        # Scenario 309: a split rule that matches while the experiment's
+        # unit is missing selects the no-unit result (fullOnVariant) as a
+        # rule override, like JS _resolveRule, and the exposed variant stays
+        # pinned once the unit is set.
+        context = self.create_context(
+            self.experiment(441, "exp_rules_late_pinned",
+                            [{"name": "late", "type": "split",
+                              "percentages": "50/50"}],
+                            seedHi=24301, seedLo=5003, split=[1, 0],
+                            trafficSeedHi=2827, trafficSeedLo=9011,
+                            trafficSplit=[0, 1], audience=None),
+            units={"user_id": "parity-user"})
+        self.assertEqual(0, context.get_treatment("exp_rules_late_pinned"))
+        self.assertEqual({
+            "id": 441, "name": "exp_rules_late_pinned", "unit": "session_id",
+            "variant": 0, "assigned": False, "eligible": True,
+            "overridden": False, "fullOn": False, "custom": False,
+            "audienceMismatch": False, "ruleOverride": True,
+        }, self.exposure_fields(context.exposures[0]))
+        context.set_unit("session_id", "late-unit-1")
+        self.assertEqual(0, context.get_treatment("exp_rules_late_pinned"))
+        context.set_attribute("tier", "gold")
+        self.assertEqual(0, context.get_treatment("exp_rules_late_pinned"))
+        self.assertEqual(1, context.get_pending_count())
+        context.close()
+
+    def test_split_rule_without_unit_gives_full_on_variant(self):
+        context = self.create_context(
+            self.experiment(442, "exp_rules_full_on",
+                            [{"type": "split", "percentages": "50/50"}],
+                            fullOnVariant=1),
+            units={"user_id": "parity-user"})
+        self.assertEqual(1, context.get_treatment("exp_rules_full_on"))
+        self.assertTrue(context.exposures[0].ruleOverride)
+        context.close()
+
+    def test_wrong_count_split_and_negative_assign_stop_rules(self):
+        # Scenario 312: a split of the wrong length and an assign rule with
+        # a negative variant both match but are out of bounds, so rule
+        # evaluation stops there and the unit gets its normal assignment.
+        def experiment(id, name, rules):
+            return self.experiment(id, name, rules, seedHi=0, seedLo=0,
+                                   split=[0.0, 1.0], trafficSeedHi=0,
+                                   trafficSeedLo=0, trafficSplit=[0, 1],
+                                   audience=None)
+        fallback = {"name": "fallback", "type": "assign", "variant": 0}
+        context = self.create_context(
+            experiment(460, "exp_rules_wrong_count",
+                       [{"name": "three", "type": "split",
+                         "percentages": "50/25/25"}, fallback]),
+            experiment(461, "exp_rules_negative",
+                       [{"name": "neg", "type": "assign", "variant": -1},
+                        fallback]))
+        for id, name in ((460, "exp_rules_wrong_count"),
+                         (461, "exp_rules_negative")):
+            self.assertEqual(1, context.get_treatment(name))
+            self.assertEqual({
+                "id": id, "name": name, "unit": "session_id",
+                "variant": 1, "assigned": True, "eligible": True,
+                "overridden": False, "fullOn": False, "custom": False,
+                "audienceMismatch": False, "ruleOverride": False,
+            }, self.exposure_fields(context.exposures[-1]))
+        self.assertEqual(2, context.get_pending_count())
         context.close()

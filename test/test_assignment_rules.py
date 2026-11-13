@@ -1,8 +1,11 @@
 import json
 import threading
 import unittest
+from concurrent.futures import Future
 
 from sdk.audience_matcher import AudienceMatcher
+from sdk.context import Context
+from sdk.context_config import ContextConfig
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 from sdk.json.context_data import ContextData
 from test.test_system_attributes import SystemAttributesTest
@@ -105,11 +108,12 @@ class ContextAssignmentRulesTest(unittest.TestCase):
         self.fixture.client._refresh_data = empty
         context.refresh()
         self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+        # As in the JS SDK, the rebuilt unknown-experiment assignment is a
+        # new assignment, so it is exposed again.
         self.assertEqual(0, context.get_treatment("exp_test_ab"))
         exposures = [e for e in context.exposures if e.name == "exp_test_ab"]
-        self.assertEqual(1, len(exposures))
-        self.assertEqual(1, exposures[0].variant)
-        self.assertTrue(exposures[0].ruleOverride)
+        self.assertEqual([(1, True), (0, False)],
+                         [(e.variant, e.ruleOverride) for e in exposures])
         context.close()
 
     def test_unexposed_rule_assignment_exposes_control_after_removal(self):
@@ -184,7 +188,7 @@ class ContextAssignmentRulesTest(unittest.TestCase):
         self.assertEqual(1, context.get_treatment("exp_test_ab"))
         self.assertEqual(1, context.get_treatment("exp_test_ab"))
         exposures = [e for e in context.exposures if e.name == "exp_test_ab"]
-        self.assertEqual([(1, True), (1, True)],
+        self.assertEqual([(1, True), (0, False), (1, True)],
                          [(e.variant, e.ruleOverride) for e in exposures])
         context.close()
 
@@ -249,4 +253,109 @@ class ContextAssignmentRulesTest(unittest.TestCase):
         exposures = [e for e in context.exposures if e.name == "exp_test_ab"]
         self.assertEqual([(1, True)],
                          [(e.variant, e.ruleOverride) for e in exposures])
+        context.close()
+
+
+class CrossSdkRuleScenariosTest(unittest.TestCase):
+    """Cross-SDK conformance scenarios; expected results were recorded from
+    the JavaScript SDK (@absmartly/javascript-sdk 1.14.0)."""
+
+    def create_context(self, experiment):
+        fixture = SystemAttributesTest()
+        fixture.set_up()
+        self.fixture = fixture
+        content = json.dumps({"experiments": [experiment]})
+        data = fixture.deser.deserialize(
+            bytes(content, encoding="utf-8"), 0, len(content))
+        config = ContextConfig()
+        config.units = {"session_id": "svk-unit-1"}
+        config.publish_delay = -1
+        config.refresh_interval = 0
+        data_future = Future()
+        data_future.set_result(data)
+        return Context(
+            fixture.clock, config, data_future,
+            fixture.data_provider, fixture.event_handler, None,
+            fixture.variable_parser, fixture.audience_matcher,
+            fixture.application, fixture.environment)
+
+    def experiment(self, id, name, rules, **extra):
+        experiment = {
+            "id": id,
+            "name": name,
+            "iteration": 1,
+            "unitType": "session_id",
+            "seedHi": 3603515,
+            "seedLo": 233373850,
+            "split": [0.5, 0.5],
+            "trafficSeedHi": 449867249,
+            "trafficSeedLo": 455443629,
+            "trafficSplit": [0.0, 1.0],
+            "fullOnVariant": 0,
+            "applications": [{"name": "website"}],
+            "variants": [{"name": "A", "config": None},
+                         {"name": "B", "config": None}],
+            "audienceStrict": False,
+            "audience": "",
+            "assignmentRules": json.dumps({"rules": rules}),
+        }
+        experiment.update(extra)
+        return experiment
+
+    def exposure_fields(self, exposure):
+        return {
+            "id": exposure.id, "name": exposure.name, "unit": exposure.unit,
+            "variant": exposure.variant, "assigned": exposure.assigned,
+            "eligible": exposure.eligible, "overridden": exposure.overridden,
+            "fullOn": exposure.fullOn, "custom": exposure.custom,
+            "audienceMismatch": exposure.audienceMismatch,
+            "ruleOverride": exposure.ruleOverride,
+        }
+
+    def test_rule_takes_precedence_over_strict_audience_mismatch(self):
+        # Scenario 236: a rule win happens before audience evaluation, so
+        # the audience is not evaluated and audienceMismatch stays false.
+        context = self.create_context(self.experiment(
+            7, "exp_rule_audience",
+            [{"name": "a", "type": "assign", "variant": 1}],
+            audienceStrict=True,
+            audience=json.dumps({"filter": [
+                {"eq": [{"var": "tier"}, {"value": "gold"}]}]})))
+        self.assertEqual(1, context.get_treatment("exp_rule_audience"))
+        self.assertEqual(1, len(context.exposures))
+        self.assertEqual({
+            "id": 7, "name": "exp_rule_audience", "unit": "session_id",
+            "variant": 1, "assigned": False, "eligible": True,
+            "overridden": False, "fullOn": False, "custom": False,
+            "audienceMismatch": False, "ruleOverride": True,
+        }, self.exposure_fields(context.exposures[0]))
+        context.close()
+
+    def test_rule_variant_of_removed_experiment_is_rebuilt(self):
+        # Scenario 239 (javascript-sdk#67): once a refresh removes the
+        # experiment, the cached rule-won assignment is dropped and rebuilt
+        # as unknown, which is a new assignment and is exposed again.
+        context = self.create_context(self.experiment(
+            10, "exp_rule_removed",
+            [{"name": "us", "type": "assign", "variant": 1,
+              "conditions": {"eq": [{"var": "country"},
+                                    {"value": "US"}]}}]))
+        context.set_attribute("country", "US")
+        self.assertEqual(1, context.get_treatment("exp_rule_removed"))
+        self.assertTrue(context.exposures[0].ruleOverride)
+        self.assertEqual(1, context.get_pending_count())
+
+        empty = ContextData()
+        empty.experiments = []
+        self.fixture.client._refresh_data = empty
+        context.refresh()
+        self.assertEqual(0, context.peek_treatment("exp_rule_removed"))
+        self.assertEqual(0, context.get_treatment("exp_rule_removed"))
+        self.assertEqual(2, context.get_pending_count())
+        self.assertEqual({
+            "id": 0, "name": "exp_rule_removed", "unit": None,
+            "variant": 0, "assigned": False, "eligible": True,
+            "overridden": False, "fullOn": False, "custom": False,
+            "audienceMismatch": False, "ruleOverride": False,
+        }, self.exposure_fields(context.exposures[1]))
         context.close()

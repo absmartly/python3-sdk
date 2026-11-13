@@ -1168,17 +1168,10 @@ class Context:
         try:
             self.context_lock.acquire_write()
             experiment, failed = self._get_experiment_state(experiment_name)
-            previous = self.assignment_cache.get(experiment_name)
             assignment = Assignment()
             assignment.name = experiment_name
             assignment.eligible = True
             assignment.data_failed = failed
-            if experiment is None and previous is not None and \
-                    previous.rule_override and previous.exposed.value:
-                # A refresh removed the experiment of an exposed rule
-                # assignment: fall back to control without queuing a second
-                # exposure for the same experiment.
-                assignment.exposed.set(True)
 
             if exposed_at:
                 assignment.exposedAt = exposed_at
@@ -1194,14 +1187,6 @@ class Context:
                 if experiment is not None:
                     unit_type = experiment.data.unitType
 
-                    if experiment.data.audience is not None and \
-                            len(experiment.data.audience) > 0:
-                        attrs = self._build_audience_attributes()
-                        match = self.audience_matcher.evaluate(
-                            experiment.data.audience,
-                            attrs)
-                        if match is not None:
-                            assignment.audience_mismatch = not match.result
                     rule_variant = self._resolve_rule_variant(experiment.data)
                     assignment.rule_key = experiment.data.assignmentRules
                     assignment.rule_variant = rule_variant
@@ -1210,6 +1195,17 @@ class Context:
                         assignment.assigned = False
                         assignment.eligible = True
                         assignment.rule_override = True
+                    elif experiment.data.audience is not None and \
+                            len(experiment.data.audience) > 0:
+                        # A rule win happens before audience evaluation (as
+                        # in the JS SDK), so the audience is only evaluated
+                        # when no rule selected the variant.
+                        attrs = self._build_audience_attributes()
+                        match = self.audience_matcher.evaluate(
+                            experiment.data.audience,
+                            attrs)
+                        if match is not None:
+                            assignment.audience_mismatch = not match.result
                     if assignment.rule_override:
                         pass
                     elif experiment.data.audienceStrict and \

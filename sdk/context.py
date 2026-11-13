@@ -320,7 +320,17 @@ class Context:
                     "Unit already set.",
                     f"Unit '{unit_type}' UID already set.")
 
+            added = unit_type not in self.units
             self.units[unit_type] = uid
+            if added:
+                # Like the JS SDK's unit(): an unexposed assignment for this
+                # unit type was resolved while the unit was missing, so drop
+                # it and let the next read resolve it with the unit. Exposed
+                # ones are kept, as re-resolving would expose them twice.
+                for name, assignment in list(self.assignment_cache.items()):
+                    if assignment.unit_type == unit_type and \
+                            not assignment.exposed.value:
+                        del self.assignment_cache[name]
         finally:
             self.context_lock.release_write()
 

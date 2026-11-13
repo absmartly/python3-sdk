@@ -201,3 +201,29 @@ class ContextAssignmentRulesTest(unittest.TestCase):
                 "default", context.peek_variable_value("banner.size", "default"))
         self.assertEqual([], context.exposures)
         context.close()
+
+    def create_context_without_unit(self, rules):
+        context = self.create_context(rules)
+        context.units.pop("session_id")
+        context.hashed_units.clear()
+        context.assigners.clear()
+        context.assignment_cache.clear()
+        return context
+
+    def test_split_rule_applies_once_unit_is_set(self):
+        rules = json.dumps({"rules": [{"type": "split", "percentages": "0/100"}]})
+        context = self.create_context_without_unit(rules)
+        self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+        context.set_unit("session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec")
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        self.assertTrue(context.exposures[-1].ruleOverride)
+        context.close()
+
+    def test_exposed_assignment_stays_pinned_when_unit_is_set(self):
+        rules = json.dumps({"rules": [{"type": "split", "percentages": "0/100"}]})
+        context = self.create_context_without_unit(rules)
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+        context.set_unit("session_id", "e791e240fcd3df7d238cfc285f475e8152fcc0ec")
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+        self.assertEqual(1, len(context.exposures))
+        context.close()

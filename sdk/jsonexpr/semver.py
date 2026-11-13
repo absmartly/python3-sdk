@@ -1,41 +1,52 @@
 import re
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 
 
-_VERSION = re.compile(r"^[0-9A-Za-z.-]+(?:\+[0-9A-Za-z.-]+)?$")
+_NUMERIC = re.compile(r"[0-9]+")
+
+
+def _to_string(value):
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, (int, float, Decimal)):
+        return str(value)
+    return value if isinstance(value, str) else None
 
 
 def parse_version(value):
-    if isinstance(value, bool):
-        value = "true" if value else "false"
-    elif isinstance(value, (int, float, Decimal)):
-        value = str(value)
-    if not isinstance(value, str):
+    # Like the JavaScript SDK's parseSemver: a leading "v" and any build
+    # metadata are dropped, and the core is split on "." without further
+    # validation, so a non-numeric part (as in "abc") is compared as an
+    # identifier rather than rejected.
+    value = _to_string(value)
+    if not value:
         return None
-    value = value.strip()
-    if value[:1].lower() == "v":
+    if value[0] in "vV":
         value = value[1:]
-    if "+" in value:
-        base, metadata = value.split("+", 1)
-        if not metadata or any(not re.fullmatch(r"[0-9A-Za-z-]+", part)
-                               for part in metadata.split(".")):
-            return None
-        value = base
-    if not value or value.startswith("-"):
+    value = value.split("+", 1)[0]
+    if not value:
         return None
-    parts = value.split("-", 1)
-    core = parts[0].split(".")
-    if any(not p or not p.isascii() or not p.isdecimal() for p in core):
+    core, _, prerelease = value.partition("-")
+    if not core:
         return None
-    numbers = tuple(int(p) for p in core)
-    prerelease = ()
-    if len(parts) == 2:
-        if not parts[1]:
-            return None
-        prerelease = tuple(parts[1].split("."))
-        if any(not p or not re.fullmatch(r"[0-9A-Za-z-]+", p) for p in prerelease):
-            return None
-    return numbers, prerelease
+    return core.split("."), prerelease
+
+
+def _compare_identifiers(a, b):
+    a_numeric = _NUMERIC.fullmatch(a) is not None
+    b_numeric = _NUMERIC.fullmatch(b) is not None
+    if a_numeric and b_numeric:
+        a, b = a.lstrip("0") or "0", b.lstrip("0") or "0"
+        if len(a) != len(b):
+            return 1 if len(a) > len(b) else -1
+    elif a_numeric:
+        return -1
+    elif b_numeric:
+        return 1
+    else:
+        # JS compares strings by UTF-16 code unit.
+        a, b = a.encode("utf-16-be"), b.encode("utf-16-be")
+    return (a > b) - (a < b)
 
 
 def compare_versions(lhs, rhs):
@@ -45,10 +56,10 @@ def compare_versions(lhs, rhs):
         return None
     ln, rn = left[0], right[0]
     for i in range(max(len(ln), len(rn))):
-        a = ln[i] if i < len(ln) else 0
-        b = rn[i] if i < len(rn) else 0
-        if a != b:
-            return 1 if a > b else -1
+        result = _compare_identifiers(ln[i] if i < len(ln) else "0",
+                                      rn[i] if i < len(rn) else "0")
+        if result != 0:
+            return result
     lp, rp = left[1], right[1]
     if not lp and not rp:
         return 0
@@ -56,17 +67,9 @@ def compare_versions(lhs, rhs):
         return 1
     if not rp:
         return -1
+    lp, rp = lp.split("."), rp.split(".")
     for a, b in zip(lp, rp):
-        if a == b:
-            continue
-        an, bn = a.isdigit(), b.isdigit()
-        if an and bn:
-            if len(a) > 1 and a.startswith("0") or len(b) > 1 and b.startswith("0"):
-                return None
-            if int(a) != int(b):
-                return 1 if int(a) > int(b) else -1
-            continue
-        if an != bn:
-            return -1 if an else 1
-        return 1 if a > b else -1
+        result = _compare_identifiers(a, b)
+        if result != 0:
+            return result
     return (len(lp) > len(rp)) - (len(lp) < len(rp))

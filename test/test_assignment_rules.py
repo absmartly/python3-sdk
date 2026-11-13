@@ -227,3 +227,26 @@ class ContextAssignmentRulesTest(unittest.TestCase):
         self.assertEqual(0, context.get_treatment("exp_test_ab"))
         self.assertEqual(1, len(context.exposures))
         context.close()
+
+    def test_repeated_set_unit_after_refresh_reintroduction(self):
+        uid = "e791e240fcd3df7d238cfc285f475e8152fcc0ec"
+        rules = json.dumps({"rules": [{"type": "split", "percentages": "0/100"}]})
+        context = self.create_context_without_unit(rules)
+        data = context.get_data()
+        self.assertEqual(0, context.peek_treatment("exp_test_ab"))
+
+        empty = ContextData()
+        empty.experiments = []
+        self.fixture.client._refresh_data = empty
+        context.refresh()
+        self.fixture.client._refresh_data = data
+        context.refresh()
+
+        context.set_unit("session_id", uid)
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        context.set_unit("session_id", uid)
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        exposures = [e for e in context.exposures if e.name == "exp_test_ab"]
+        self.assertEqual([(1, True)],
+                         [(e.variant, e.ruleOverride) for e in exposures])
+        context.close()

@@ -1,6 +1,7 @@
 from sdk.client_config import ClientConfig
 from sdk.http_client import HTTPClient
 from sdk.json.publish_event import PublishEvent
+from sdk.version import AGENT, NAME, VERSION
 
 
 class Client:
@@ -29,7 +30,7 @@ class Client:
                         "X-Application": application,
                         "X-Environment": environment,
                         "X-Application-Version": application_version or '0',
-                        "X-Agent": "absmartly-python-sdk/0.3.0"}
+                        "X-Agent": AGENT}
         self.query = {"application": application,
                       "environment": environment}
 
@@ -43,13 +44,13 @@ class Client:
         return self.environment
 
     def get_agent_name(self):
-        return "absmartly-python-sdk"
+        return NAME
 
     def get_agent_version(self):
-        return "0.3.0"
+        return VERSION
 
     def get_agent(self):
-        return "absmartly-python-sdk/0.3.0"
+        return AGENT
 
     def _handle_response(self, response):
         """Helper method to handle HTTP response and deserialize content."""

@@ -426,3 +426,107 @@ class CrossSdkRuleScenariosTest(unittest.TestCase):
             }, self.exposure_fields(context.exposures[-1]))
         self.assertEqual(2, context.get_pending_count())
         context.close()
+
+
+class RuleRefreshRevalidationTest(CrossSdkRuleScenariosTest):
+    """A refresh that changes the assignment-rules text but not the outcome
+    keeps the cached (and already exposed) assignment, like the JS SDK's
+    audienceMatches; an actual change of result still rebuilds it."""
+
+    def refresh_with(self, context, *experiments):
+        content = json.dumps({"experiments": list(experiments)})
+        self.fixture.client._refresh_data = self.fixture.deser.deserialize(
+            bytes(content, encoding="utf-8"), 0, len(content))
+        context.refresh()
+
+    def count_rule_evaluations(self, context):
+        calls = []
+        evaluate_rules = context.audience_matcher.evaluate_rules
+
+        def counting(*args):
+            calls.append(args)
+            return evaluate_rules(*args)
+
+        context.audience_matcher.evaluate_rules = counting
+        return calls
+
+    us_rule = {"name": "us", "type": "assign", "variant": 1,
+               "conditions": {"eq": [{"var": "country"}, {"value": "US"}]}}
+
+    def test_same_outcome_refresh_keeps_exposed_assignment(self):
+        context = self.create_context(
+            self.experiment(20, "exp_rule_refresh", [self.us_rule]))
+        context.set_attribute("country", "US")
+        self.assertEqual(1, context.get_treatment("exp_rule_refresh"))
+        first = context.get_assignment("exp_rule_refresh")
+
+        renamed = dict(self.us_rule, name="renamed", futureField={"x": 1})
+        experiment = self.experiment(20, "exp_rule_refresh", [renamed])
+        experiment["assignmentRules"] = json.dumps(
+            {"rules": [renamed], "futureTop": True}, indent=2)
+        self.refresh_with(context, experiment)
+
+        calls = self.count_rule_evaluations(context)
+        self.assertEqual(1, context.get_treatment("exp_rule_refresh"))
+        self.assertIs(first, context.get_assignment("exp_rule_refresh"))
+        self.assertEqual(1, len(calls))
+        for _ in range(100):
+            self.assertEqual(1, context.get_treatment("exp_rule_refresh"))
+        self.assertEqual(1, len(calls))
+        self.assertEqual(1, context.get_pending_count())
+        context.close()
+
+    def test_changed_outcome_refresh_rebuilds(self):
+        context = self.create_context(
+            self.experiment(21, "exp_rule_changed", [self.us_rule],
+                            split=[0.0, 1.0]))
+        context.set_attribute("country", "US")
+        self.assertEqual(1, context.get_treatment("exp_rule_changed"))
+
+        self.refresh_with(context, self.experiment(
+            21, "exp_rule_changed", [dict(self.us_rule, variant=0)],
+            split=[0.0, 1.0]))
+        self.assertEqual(0, context.get_treatment("exp_rule_changed"))
+        self.assertEqual([(1, True), (0, True)],
+                         [(e.variant, e.ruleOverride)
+                          for e in context.exposures])
+        context.close()
+
+    def test_removed_winning_rule_rebuilds(self):
+        context = self.create_context(
+            self.experiment(22, "exp_rule_gone", [self.us_rule],
+                            split=[1.0, 0.0]))
+        context.set_attribute("country", "US")
+        self.assertEqual(1, context.get_treatment("exp_rule_gone"))
+
+        for rules in ("", None):
+            with self.subTest(rules=rules):
+                experiment = self.experiment(22, "exp_rule_gone", [],
+                                             split=[1.0, 0.0])
+                experiment["assignmentRules"] = rules
+                self.refresh_with(context, experiment)
+                self.assertEqual(0, context.get_treatment("exp_rule_gone"))
+                self.assertFalse(context.exposures[-1].ruleOverride)
+        self.assertEqual([(1, True), (0, False)],
+                         [(e.variant, e.ruleOverride)
+                          for e in context.exposures])
+        context.close()
+
+    def test_added_rule_rebuilds_only_when_it_matches(self):
+        context = self.create_context(
+            self.experiment(23, "exp_rule_added", [], split=[1.0, 0.0]))
+        context.set_attribute("country", "PT")
+        self.assertEqual(0, context.get_treatment("exp_rule_added"))
+        first = context.get_assignment("exp_rule_added")
+
+        self.refresh_with(context, self.experiment(
+            23, "exp_rule_added", [self.us_rule], split=[1.0, 0.0]))
+        self.assertEqual(0, context.get_treatment("exp_rule_added"))
+        self.assertIs(first, context.get_assignment("exp_rule_added"))
+
+        context.set_attribute("country", "US")
+        self.assertEqual(1, context.get_treatment("exp_rule_added"))
+        self.assertEqual([(0, False), (1, True)],
+                         [(e.variant, e.ruleOverride)
+                          for e in context.exposures])
+        context.close()

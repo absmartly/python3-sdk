@@ -82,6 +82,13 @@ def experiment_matches(experiment: Experiment, assignment: Assignment):
            list(assignment.traffic_split or [])
 
 
+def _rule_key(experiment: Experiment):
+    # The assignment rules a cached assignment was checked against; no rules
+    # (None or "") are the same key, like the JS SDK's ruleKey. The
+    # environment is fixed per context, so unlike JS it is not part of it.
+    return experiment.assignmentRules or ""
+
+
 def _js_number(value):
     # JS Number(string): surrounding whitespace is ignored, an empty string is
     # 0, hex/octal/binary prefixes are accepted, and anything unparseable is
@@ -1147,36 +1154,46 @@ class Context:
                         experiment_name not in self.custom_assignments or \
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:
-                    if experiment_matches(experiment.data, assignment) and \
-                            experiment.data.assignmentRules == \
-                            assignment.rule_key:
-                        if self._attrs_seq <= (assignment.attrs_seq or 0):
+                    if experiment_matches(experiment.data, assignment):
+                        if _rule_key(experiment.data) == \
+                                assignment.rule_key and \
+                                self._attrs_seq <= (assignment.attrs_seq or 0):
                             return assignment
                         checked_seq = self._attrs_seq
         finally:
             self.context_lock.release_read()
 
         if checked_seq is not None:
-            # Attributes changed since the assignment was computed: re-check
-            # its rule and audience results under the write lock, after
-            # releasing the read lock, since concurrent readers cannot all
-            # upgrade (resolving a split rule may compute a unit hash). When
-            # both are unchanged, record the sequence they were checked at
-            # (JS sets assignment.attrsSeq) so later reads skip the re-check.
+            # Attributes or the assignment rules changed since the assignment
+            # was computed: re-check its rule and audience results under the
+            # write lock, after releasing the read lock, since concurrent
+            # readers cannot all upgrade (resolving a split rule may compute a
+            # unit hash). When both are unchanged, record the rules and the
+            # sequence they were checked at (JS sets assignment.ruleKey and
+            # attrsSeq) so later reads skip the re-check and the assignment
+            # keeps its exposed state, as in the JS SDK's audienceMatches.
             try:
                 self.context_lock.acquire_write()
                 if self.assignment_cache.get(experiment_name) is assignment:
-                    if (assignment.attrs_seq or 0) >= checked_seq:
-                        return assignment
                     experiment = self.get_experiment(experiment_name)
                     if experiment is not None and \
-                            experiment_matches(experiment.data, assignment) and \
-                            experiment.data.assignmentRules == \
-                            assignment.rule_key and \
-                            self._rules_and_audience_match(
-                                experiment.data, assignment):
-                        assignment.attrs_seq = checked_seq
-                        return assignment
+                            experiment_matches(experiment.data, assignment):
+                        rule_key = _rule_key(experiment.data)
+                        if rule_key == assignment.rule_key and \
+                                (assignment.attrs_seq or 0) >= checked_seq:
+                            return assignment
+                        # Rules removed from an assignment a rule decided:
+                        # rebuild it, as JS does.
+                        rules_removed = rule_key != assignment.rule_key and \
+                            not rule_key and \
+                            (assignment.rule_variant is not None or
+                             assignment.rule_override)
+                        if not rules_removed and \
+                                self._rules_and_audience_match(
+                                    experiment.data, assignment):
+                            assignment.rule_key = rule_key
+                            assignment.attrs_seq = checked_seq
+                            return assignment
             finally:
                 self.context_lock.release_write()
 
@@ -1204,7 +1221,7 @@ class Context:
 
                     rule_variant, assignment.rule_missing_unit = \
                         self._resolve_rule(experiment.data)
-                    assignment.rule_key = experiment.data.assignmentRules
+                    assignment.rule_key = _rule_key(experiment.data)
                     assignment.rule_variant = rule_variant
                     if rule_variant is not None:
                         assignment.variant = rule_variant

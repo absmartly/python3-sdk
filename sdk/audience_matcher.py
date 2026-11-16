@@ -9,6 +9,18 @@ from sdk.jsonexpr.json_expr import JsonExpr
 logger = logging.getLogger(__name__)
 
 
+# JS parseFloat: skip leading StrWhiteSpaceChar, then read the longest
+# StrDecimalLiteral prefix; trailing text is ignored ("20abc" is 20).
+_PARSE_FLOAT = re.compile(
+    r"[\t\n\v\f\r \u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\ufeff]*"
+    r"([+-]?(?:Infinity|(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?))")
+
+
+def _parse_float(text):
+    match = _PARSE_FLOAT.match(text)
+    return float(match.group(1)) if match is not None else None
+
+
 class Result:
     def __init__(self, result: bool):
         self.result = result
@@ -101,14 +113,8 @@ class AudienceMatcher:
             return None
         values = []
         for part in rule["percentages"].split("/"):
-            match = re.fullmatch(r"\s*([+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)\s*", part)
-            if match is None:
-                return None
-            try:
-                value = float(match.group(1))
-            except (ValueError, IndexError):
-                return None
-            if not math.isfinite(value) or value < 0:
+            value = _parse_float(part)
+            if value is None or not math.isfinite(value) or value < 0:
                 return None
             values.append(value)
         # Same check as the backend's experiment split (and the JS and Java

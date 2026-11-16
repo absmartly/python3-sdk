@@ -40,15 +40,39 @@ class AssignmentRulesTest(unittest.TestCase):
                 action = self.matcher.evaluate_rules(rules, None, {})
                 self.assertEqual(accepted, action is not None)
 
-    def test_split_percentages_require_complete_numeric_parts(self):
-        for percentages in ("50garbage/50", "50/50x"):
-            rules = '{"rules":[{"type":"split","percentages":"' + percentages + '"}]}'
-            self.assertIsNone(self.matcher.evaluate_rules(rules, None, {}))
-        action = self.matcher.evaluate_rules(
-            '{"rules":[{"type":"split","percentages":" 33.3 / 66.7 "}]}',
-            None, {})
-        self.assertAlmostEqual(0.333, action.split[0])
-        self.assertAlmostEqual(0.667, action.split[1])
+    def test_split_percentages_parse_like_js_parse_float(self):
+        # Each part is read like JS parseFloat: leading whitespace is
+        # skipped and the longest numeric prefix is used, so trailing text is
+        # ignored. Expected splits recorded with Node from javascript-sdk's
+        # parseSplitPercentages.
+        cases = (
+            ("20abc/80", [0.2, 0.8]),
+            ("50/50x", [0.5, 0.5]),
+            ("50garbage/50", [0.5, 0.5]),
+            (" 33.3 / 66.7 ", [0.33299999999999996, 0.667]),
+            ("1e/99", [0.01, 0.99]),
+            ("0x10/100", [0, 1]),
+            ("+50/50", [0.5, 0.5]),
+            (".5/99.5", [0.005, 0.995]),
+            ("50.0.1/50", [0.5, 0.5]),
+            ("\ufeff50/\u00a050", [0.5, 0.5]),
+            ("5e1/5e1", [0.5, 0.5]),
+            ("abc/def", None),
+            ("Infinity/0", None),
+            ("-Infinity/100", None),
+            ("/100", None),
+            ("50/50/", None),
+            ("1_0/90", None),
+            ("-10/110", None),
+            ("\u0665\u0660/50", None),
+        )
+        for percentages, expected in cases:
+            with self.subTest(percentages=percentages):
+                rules = json.dumps({"rules": [{"type": "split",
+                                               "percentages": percentages}]})
+                action = self.matcher.evaluate_rules(rules, None, {})
+                self.assertEqual(expected,
+                                 action.split if action is not None else None)
 
 
 class ContextAssignmentRulesTest(unittest.TestCase):

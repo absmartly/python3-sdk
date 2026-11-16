@@ -178,6 +178,7 @@ class Context:
         self.index_variables = {}
         self.context_custom_fields = {}
         self.assignment_cache = {}
+        self._parsed_rules = {}
         self.custom_assignments = {}
         self.overrides = {}
 
@@ -1086,8 +1087,18 @@ class Context:
         fullOnVariant."""
         if not experiment.assignmentRules:
             return None, False
-        action = self.audience_matcher.evaluate_rules(
-            experiment.assignmentRules,
+        # Parsed once per rules text, like JS's entry.rules; only a refresh
+        # that changes the text parses it again.
+        cached = self._parsed_rules.get(experiment.name)
+        if cached is None or cached[0] != experiment.assignmentRules:
+            cached = (experiment.assignmentRules,
+                      self.audience_matcher.parse_rules(
+                          experiment.assignmentRules))
+            self._parsed_rules[experiment.name] = cached
+        if cached[1] is None:
+            return None, False
+        action = self.audience_matcher.evaluate_parsed_rules(
+            cached[1],
             self._system_attributes.get("environment"),
             self._build_audience_attributes())
         if action is None:

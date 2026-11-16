@@ -465,13 +465,20 @@ class RuleRefreshRevalidationTest(CrossSdkRuleScenariosTest):
 
     def count_rule_evaluations(self, context):
         calls = []
-        evaluate_rules = context.audience_matcher.evaluate_rules
+        evaluate = context.audience_matcher.evaluate_parsed_rules
+        parse = context.audience_matcher.parse_rules
 
         def counting(*args):
             calls.append(args)
-            return evaluate_rules(*args)
+            return evaluate(*args)
 
-        context.audience_matcher.evaluate_rules = counting
+        def parsing(*args):
+            self.parses.append(args)
+            return parse(*args)
+
+        self.parses = []
+        context.audience_matcher.evaluate_parsed_rules = counting
+        context.audience_matcher.parse_rules = parsing
         return calls
 
     us_rule = {"name": "us", "type": "assign", "variant": 1,
@@ -497,6 +504,12 @@ class RuleRefreshRevalidationTest(CrossSdkRuleScenariosTest):
         for _ in range(100):
             self.assertEqual(1, context.get_treatment("exp_rule_refresh"))
         self.assertEqual(1, len(calls))
+        self.assertEqual(1, len(self.parses))
+        for i in range(20):
+            context.set_attribute("unrelated", i)
+            self.assertEqual(1, context.get_treatment("exp_rule_refresh"))
+        self.assertEqual(21, len(calls))
+        self.assertEqual(1, len(self.parses))
         self.assertEqual(1, context.get_pending_count())
         context.close()
 

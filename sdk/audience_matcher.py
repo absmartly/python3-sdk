@@ -59,11 +59,22 @@ class AudienceMatcher:
                     return Result(False)
         return None
 
-    def evaluate_rules(self, assignment_rules, environment, attributes):
+    def parse_rules(self, assignment_rules):
+        """The list of rules in the assignment-rules JSON, or None when it is
+        missing or malformed (JS AudienceMatcher.parseRules)."""
         rules_map = self._deserialize(assignment_rules)
         if not isinstance(rules_map, dict) or not isinstance(rules_map.get("rules"), list):
             return None
-        for rule in rules_map["rules"]:
+        return rules_map["rules"]
+
+    def evaluate_rules(self, assignment_rules, environment, attributes):
+        rules = self.parse_rules(assignment_rules)
+        if rules is None:
+            return None
+        return self.evaluate_parsed_rules(rules, environment, attributes)
+
+    def evaluate_parsed_rules(self, rules, environment, attributes):
+        for rule in rules:
             if not isinstance(rule, dict):
                 continue
             action = self._rule_action(rule)

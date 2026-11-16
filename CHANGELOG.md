@@ -21,6 +21,9 @@
 - `X-Application-Version` carries the configured `application_version` (the new `ABsmartly.create(..., application_version=...)` argument or the `application_version` client-config environment variable) only when it is 1-18 ASCII digits after trimming; anything else, such as `"2.4.1"`, is sent as `"0"`, as before, because the collector reads the header as a number. `Client.get_application_version()` returns the configured value unchanged.
 
 ### Added
+- Assignment rules (`assignmentRules` in the context data), evaluated like the JS SDK: the first matching `assign` or `split` rule (scoped by the configured environment) decides the variant before the audience and is exposed with `ruleOverride: true`. Split percentages are read like JS `parseFloat` (`"20abc/80"` is 20/80); malformed or unknown rules are skipped without affecting other experiments.
+- `semver_eq`, `semver_gt`, `semver_gte`, `semver_lt` and `semver_lte` audience operators; numbers are converted like the JS SDK (`1e-7` compares as `"0.0000001"`).
+- `ContextConfig.include_system_attributes` (default `False`) adds `sdk_name` and `sdk_version` to published attributes.
 - `Context.get_variable_keys_all()` returns every experiment defining each variable key, in experiment id order (matching the JS SDK's `variableKeys()`); `get_variable_keys()` keeps the v0.2.4 shape (one experiment name per key, the lowest id).
 - `ContextError(RuntimeError)` / `ContextValueError(ValueError)`: lifecycle and unit errors keep their v0.2.4 messages (`'ABSmartly Context is closed'`, `'ABSmartly Context is closing'`, `'ABSmartly Context is not yet ready'`, `'Unit already set.'`, `'Unit UID must not be blank.'`) and expose the cross-SDK wording as `canonical_message`.
 - `sdk.utils`: `hash_unit`, `utf8_bytes`, `base64_url_no_padding`, `is_object`, `is_numeric`, `is_promise`.

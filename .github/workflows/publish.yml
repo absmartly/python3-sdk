@@ -30,11 +30,19 @@ jobs:
             exit 1
           fi
 
+      # PYPIRC_TOKEN is the repository secret earlier releases (up to 0.2.4) were
+      # published with: a base64-encoded .pypirc holding the PyPI credentials.
       - name: Build and publish
         env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+          PYPIRC_TOKEN: ${{ secrets.PYPIRC_TOKEN }}
         run: |
+          if [ -z "$PYPIRC_TOKEN" ]; then
+            echo "::error::The PYPIRC_TOKEN secret is not set"
+            exit 1
+          fi
           python -m pip install --upgrade pip build twine
           python -m build
-          python -m twine upload dist/*
+          python -m twine check dist/*
+          umask 077
+          echo "$PYPIRC_TOKEN" | base64 --decode > "$RUNNER_TEMP/pypirc"
+          python -m twine upload --non-interactive --config-file "$RUNNER_TEMP/pypirc" dist/*

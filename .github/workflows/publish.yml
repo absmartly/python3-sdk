@@ -20,6 +20,16 @@ jobs:
         with:
           python-version: '3.x'
 
+      - name: Check the tag matches the package version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          VERSION=$(python -c 'import runpy; print(runpy.run_path("sdk/version.py")["VERSION"])')
+          if [ "$TAG" != "v$VERSION" ]; then
+            echo "::error::Tag $TAG does not match package version $VERSION (expected v$VERSION)"
+            exit 1
+          fi
+
       - name: Build and publish
         env:
           TWINE_USERNAME: __token__

@@ -1,3 +1,4 @@
+import importlib.metadata
 import os
 import time
 import unittest
@@ -114,6 +115,31 @@ class ClientTest(unittest.TestCase):
             self.assertEqual("9.8.7", client.get_agent_version())
             self.assertEqual("absmartly-python-sdk/9.8.7", client.get_agent())
         self.assertEqual("absmartly-python-sdk/9.8.7",
+                         client.headers["X-Agent"])
+
+    def test_agent_is_derived_from_version(self):
+        # A release only edits VERSION; the agent must follow it.
+        import sdk.version
+        with open(sdk.version.__file__, encoding="utf-8") as f:
+            source = f.read()
+        self.assertIn('VERSION = "%s"' % sdk.version.VERSION, source)
+        namespace = {}
+        exec(compile(source.replace('VERSION = "%s"' % sdk.version.VERSION,
+                                    'VERSION = "9.8.7"'),
+                     sdk.version.__file__, "exec"), namespace)
+        self.assertEqual("absmartly-python-sdk/9.8.7", namespace["AGENT"])
+
+    def test_agent_matches_built_package_metadata(self):
+        try:
+            installed = importlib.metadata.version("ABSmartly")
+        except importlib.metadata.PackageNotFoundError:
+            self.skipTest("ABSmartly is not installed")
+        from sdk.version import VERSION
+        self.assertEqual(installed, VERSION)
+        config = ClientConfig()
+        config.endpoint = "https://localhost/v1"
+        client = Client(config, Mock())
+        self.assertEqual("absmartly-python-sdk/" + installed,
                          client.headers["X-Agent"])
 
     def test_create_with_defaults(self):

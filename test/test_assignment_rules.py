@@ -593,3 +593,71 @@ class MalformedRuleVariantTest(CrossSdkRuleScenariosTest):
                                  context.exposures[-1].ruleOverride)
                 self.assertEqual(1, context.get_treatment("exp_healthy"))
                 context.close()
+
+
+class RuleMutationCoverageTest(CrossSdkRuleScenariosTest):
+    """Distinguishing cases for mutants that survived the review's mutation
+    run (split seeds, unknown rule types, rule environment scope)."""
+
+    # Per-UID [split seeds, traffic seeds] variants of a 50/50 split,
+    # computed with javascript-sdk's VariantAssigner and hashUnit.
+    js_split_vectors = {
+        "split-uid-0": (1, 0), "split-uid-1": (0, 1), "split-uid-2": (1, 1),
+        "split-uid-3": (1, 0), "split-uid-6": (0, 1), "split-uid-8": (0, 0),
+        "split-uid-9": (1, 0), "split-uid-10": (0, 1),
+    }
+
+    def test_split_rule_uses_experiment_seeds(self):
+        for uid, (expected, traffic_seed_variant) in \
+                self.js_split_vectors.items():
+            with self.subTest(uid=uid):
+                context = self.create_context(
+                    self.experiment(50, "exp_split_seed",
+                                    [{"type": "split", "percentages": "50/50"}],
+                                    split=[1.0, 0.0]),
+                    units={"session_id": uid})
+                self.assertEqual(expected,
+                                 context.get_treatment("exp_split_seed"))
+                self.assertTrue(context.exposures[0].ruleOverride)
+                context.close()
+        # The vectors tell the experiment seeds from the traffic seeds.
+        self.assertTrue(any(a != b for a, b in self.js_split_vectors.values()))
+
+    def test_unknown_rule_type_is_skipped(self):
+        context = self.create_context(
+            self.experiment(51, "exp_unknown_type",
+                            [{"name": "future", "type": "future_action",
+                              "variant": 0},
+                             {"name": "known", "type": "assign",
+                              "variant": 1}],
+                            split=[1.0, 0.0]),
+            self.experiment(52, "exp_healthy", [], split=[0.0, 1.0]))
+        self.assertEqual(1, context.get_treatment("exp_unknown_type"))
+        self.assertTrue(context.exposures[-1].ruleOverride)
+        self.assertEqual(1, context.get_treatment("exp_healthy"))
+        self.assertFalse(context.exposures[-1].ruleOverride)
+        context.close()
+
+    def test_rule_scope_uses_configured_environment_not_attribute(self):
+        # The fixture's configured environment is "production". A user
+        # "environment" attribute overlays conditions but not the rule's
+        # environments scope.
+        scoped = {"name": "prod_only", "type": "assign", "variant": 1,
+                  "environments": ["production"]}
+        conditioned = {"name": "staging_attr", "type": "assign",
+                       "variant": 1,
+                       "conditions": {"eq": [{"var": "environment"},
+                                             {"value": "staging"}]}}
+        staging_scope = {"name": "staging_only", "type": "assign",
+                         "variant": 1, "environments": ["staging"]}
+        context = self.create_context(
+            self.experiment(53, "exp_scope_prod", [scoped], split=[1.0, 0.0]),
+            self.experiment(54, "exp_cond_staging", [conditioned],
+                            split=[1.0, 0.0]),
+            self.experiment(55, "exp_scope_staging", [staging_scope],
+                            split=[1.0, 0.0]))
+        context.set_attribute("environment", "staging")
+        self.assertEqual(1, context.get_treatment("exp_scope_prod"))
+        self.assertEqual(1, context.get_treatment("exp_cond_staging"))
+        self.assertEqual(0, context.get_treatment("exp_scope_staging"))
+        context.close()

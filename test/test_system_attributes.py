@@ -332,6 +332,67 @@ class SystemAttributesTest(unittest.TestCase):
         context.close()
 
 
+    def published_attributes(self, include_system_attributes):
+        self.set_up()
+        config = ContextConfig()
+        config.units = dict(self.units)
+        config.include_system_attributes = include_system_attributes
+        data_future = Future()
+        data_future.set_result(
+            self.strict_audience_data(self.environment_is("production")))
+        context = Context(
+            self.clock, config, data_future,
+            self.data_provider, self.event_handler, None,
+            self.variable_parser, self.audience_matcher,
+            self.application, self.environment)
+        context.set_attribute("tier", "gold")
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        context.publish()
+        event = self.client._publish_calls[0]
+        payload = json.loads(bytes(self.serializer.serialize(event)))
+        context.close()
+        return [(attr["name"], attr["value"])
+                for attr in payload.get("attributes", [])]
+
+    def test_include_system_attributes_publishes_sdk_metadata_only(self):
+        # application/environment are evaluation-only (the collector adds
+        # them server-side), even with include_system_attributes=True.
+        self.assertEqual([("tier", "gold")], self.published_attributes(False))
+        self.assertEqual([("sdk_name", "absmartly-python-sdk"),
+                          ("sdk_version", "0.3.0"),
+                          ("tier", "gold")],
+                         self.published_attributes(True))
+
+    def test_include_system_attributes_keeps_user_set_names(self):
+        self.set_up()
+        config = ContextConfig()
+        config.units = dict(self.units)
+        config.include_system_attributes = True
+        data_future = Future()
+        data_future.set_result(
+            self.strict_audience_data(self.environment_is("staging")))
+        context = Context(
+            self.clock, config, data_future,
+            self.data_provider, self.event_handler, None,
+            self.variable_parser, self.audience_matcher,
+            self.application, self.environment)
+        context.set_attribute("application", "my-app")
+        context.set_attribute("environment", "staging")
+        context.set_attribute("app_version", "1.2.3")
+        context.set_attribute("sdk_name", "mine")
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        context.publish()
+        event = self.client._publish_calls[0]
+        payload = json.loads(bytes(self.serializer.serialize(event)))
+        self.assertEqual([("sdk_version", "0.3.0"),
+                          ("application", "my-app"),
+                          ("environment", "staging"),
+                          ("app_version", "1.2.3"),
+                          ("sdk_name", "mine")],
+                         [(attr["name"], attr["value"])
+                          for attr in payload["attributes"]])
+        context.close()
+
 class FactorySystemAttributesTest(unittest.TestCase):
     """The configured application/environment reach audiences through the
     public ABsmartly factories, including when both a custom provider and a

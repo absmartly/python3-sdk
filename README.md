@@ -298,7 +298,7 @@ context.set_attributes({
 })
 ```
 
-Audience filters can also use `application` and `environment`, the application and environment names configured in the SDK. They are always available for audience evaluation, but they are not real attributes: they are omitted from published attributes by default (and included when `include_system_attributes=True`) and `get_attributes()` does not return them. Names that are not configured or empty are left out. An attribute you set with the same name, at any time, takes precedence:
+Audience filters can also use `application` and `environment`, the application and environment names configured in the SDK. They are always available for audience evaluation, but they are not real attributes: they are never added to published attributes (the collector adds them server-side), not even with `include_system_attributes=True`, which only publishes `sdk_name` and `sdk_version`, and `get_attributes()` does not return them. Names that are not configured or empty are left out. An attribute you set with the same name, at any time, takes precedence:
 
 ```python
 context.set_attribute("environment", "staging")  # audiences now see "staging"

@@ -760,16 +760,15 @@ class Context:
         if self.include_system_attributes:
             now = self.clock.millis()
             system = []
+            # Only the SDK metadata: application and environment are
+            # evaluation-only, the collector adds them server-side.
             for name, value in (("sdk_name", SDK_NAME),
-                                ("sdk_version", SDK_VERSION),
-                                ("application", self._system_attributes.get("application")),
-                                ("environment", self._system_attributes.get("environment"))):
-                if value is not None:
-                    attr = Attribute()
-                    attr.name = name
-                    attr.value = value
-                    attr.setAt = now
-                    system.append(attr)
+                                ("sdk_version", SDK_VERSION)):
+                attr = Attribute()
+                attr.name = name
+                attr.value = value
+                attr.setAt = now
+                system.append(attr)
             user_attributes = {attribute.name for attribute in (event.attributes or [])}
             event.attributes = [attribute for attribute in system
                                 if attribute.name not in user_attributes] + \

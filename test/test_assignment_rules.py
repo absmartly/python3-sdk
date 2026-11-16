@@ -575,7 +575,8 @@ class MalformedRuleVariantTest(CrossSdkRuleScenariosTest):
             ("string", '"1"', 1, True),
             ("finite_big_int", "1" + "0" * 300, 0, False),
             ("max_double_int", str(int(1.7976931348623157e308)), 0, False),
-            ("integral_float", "1.0", 1, True),
+            ("integral_float", "0.0", 0, True),
+            ("integral_exponent", "0e0", 0, True),
         )
         for label, variant, expected, rule_override in cases:
             with self.subTest(variant=label):
@@ -660,4 +661,97 @@ class RuleMutationCoverageTest(CrossSdkRuleScenariosTest):
         self.assertEqual(1, context.get_treatment("exp_scope_prod"))
         self.assertEqual(1, context.get_treatment("exp_cond_staging"))
         self.assertEqual(0, context.get_treatment("exp_scope_staging"))
+        context.close()
+
+
+class ForwardCompatibilityTest(CrossSdkRuleScenariosTest):
+    """Unknown payload fields at every level and any assignmentRules value
+    degrade only the experiment that carries them."""
+
+    rules_values = (
+        ("omitted", KeyError), ("null", None), ("empty", ""), ("braces", "{}"),
+        ("invalid", "{x"), ("object", {"rules": []}), ("number", 5),
+        ("bool", True), ("list", [1]), ("rules_not_list", '{"rules":5}'),
+        ("bool_type", '{"rules":[{"type":true,"variant":0}]}'),
+        ("number_type", '{"rules":[{"type":0,"variant":0}]}'),
+        ("unknown_operator", '{"rules":[{"type":"assign","variant":0,'
+                             '"conditions":{"future_op":[1]}}]}'),
+    )
+
+    def payload(self, rules):
+        future = self.experiment(
+            1, "exp_future", [], split=[0.0, 1.0],
+            futureScalar=1, futureObject={"x": [1]}, futureArray=[{"y": 1}],
+            applications=[{"name": "website", "future": {"z": 1}}],
+            variants=[{"name": "A", "config": None, "future": [1]},
+                      {"name": "B", "config": "{\"k\":1}", "future": {}}],
+            customFieldValues=[{"name": "f", "type": "string", "value": "v",
+                                "future": 1}],
+            holdouts=[{"id": 9, "future": True}], switchback={"future": 1})
+        if rules is KeyError:
+            del future["assignmentRules"]
+        else:
+            future["assignmentRules"] = rules
+        return future, self.experiment(2, "exp_plain", [], split=[0.0, 1.0])
+
+    def test_unknown_fields_and_rule_values_are_ignored(self):
+        for label, rules in self.rules_values:
+            with self.subTest(rules=label):
+                context = self.create_context(*self.payload(rules))
+                self.assertTrue(context.is_ready())
+                self.assertFalse(context.is_failed())
+                self.assertEqual(1, context.get_treatment("exp_future"))
+                self.assertEqual(1, context.get_variable_value("k", 0))
+                self.assertEqual("v", context.get_custom_field_value(
+                    "exp_future", "f"))
+                self.assertEqual(1, context.get_treatment("exp_plain"))
+                self.assertEqual([False, False],
+                                 [e.ruleOverride for e in context.exposures])
+                context.close()
+
+    def test_unknown_root_fields_are_ignored(self):
+        content = json.dumps({"experiments": list(self.payload(KeyError)),
+                              "futureRoot": {"a": [1]}, "futureFlag": True})
+        fixture = SystemAttributesTest()
+        fixture.set_up()
+        data = fixture.deser.deserialize(
+            bytes(content, encoding="utf-8"), 0, len(content))
+        self.assertIsNotNone(data)
+        self.assertEqual(["exp_future", "exp_plain"],
+                         [e.name for e in data.experiments])
+
+
+class RuleTraversalTest(CrossSdkRuleScenariosTest):
+
+    def test_condition_exception_tries_next_rule(self):
+        context = self.create_context(self.experiment(
+            60, "exp_throwing_condition",
+            [{"name": "boom", "type": "assign", "variant": 0,
+              "conditions": {"boom": []}},
+             {"name": "next", "type": "assign", "variant": 1}],
+            split=[1.0, 0.0]))
+        evaluate = context.audience_matcher.json_expr.evaluate_boolean_expr
+
+        def throwing(expr, attributes):
+            if "boom" in expr:
+                raise RuntimeError("boom")
+            return evaluate(expr, attributes)
+
+        context.audience_matcher.json_expr.evaluate_boolean_expr = throwing
+        self.assertEqual(1, context.get_treatment("exp_throwing_condition"))
+        self.assertTrue(context.exposures[0].ruleOverride)
+        context.close()
+
+    def test_rule_wins_over_zero_traffic(self):
+        # Scenario 306: a rule is applied even when the unit is outside the
+        # experiment's traffic.
+        context = self.create_context(self.experiment(
+            61, "exp_rule_no_traffic",
+            [{"name": "all", "type": "assign", "variant": 1}],
+            trafficSplit=[1.0, 0.0]))
+        self.assertEqual(1, context.get_treatment("exp_rule_no_traffic"))
+        self.assertEqual((1, True, True),
+                         (context.exposures[0].variant,
+                          context.exposures[0].eligible,
+                          context.exposures[0].ruleOverride))
         context.close()

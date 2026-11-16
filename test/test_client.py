@@ -39,8 +39,58 @@ class ClientTest(unittest.TestCase):
         self.assertEqual("absmartly-python-sdk", client.get_agent_name())
         self.assertEqual("0.3.0", client.get_agent_version())
         self.assertEqual("absmartly-python-sdk/0.3.0", client.get_agent())
-        self.assertEqual("2.4.1", client.headers["X-Application-Version"])
+        # The collector reads X-Application-Version as a number, so a dotted
+        # version is sent as "0"; the getter keeps the configured value.
+        self.assertEqual("0", client.headers["X-Application-Version"])
         self.assertEqual("absmartly-python-sdk/0.3.0", client.headers["X-Agent"])
+
+    def test_application_version_header_is_numeric(self):
+        # The collector binds X-Application-Version to a long, so only a
+        # trimmed string of 1-18 ASCII digits is sent (the Java SDK policy);
+        # anything else is sent as "0". The getter keeps the configured value.
+        for configured, expected in ((None, "0"),
+                                     ("", "0"),
+                                     ("   ", "0"),
+                                     ("2.4.1", "0"),
+                                     (1004, "1004"),
+                                     ("1004", "1004"),
+                                     (" 1004 ", "1004"),
+                                     ("0", "0"),
+                                     ("-5", "0"),
+                                     (-5, "0"),
+                                     ("+5", "0"),
+                                     ("\u0661\u0662", "0"),
+                                     ("123456789012345678", "123456789012345678"),
+                                     ("1234567890123456789", "0"),
+                                     (12345678901234567890, "0"),
+                                     (True, "0"),
+                                     (3.0, "0")):
+            with self.subTest(configured=configured):
+                config = ClientConfig()
+                config.endpoint = "https://localhost/v1"
+                config.api_key = "test-api-key"
+                config.application = "website"
+                config.environment = "dev"
+                config.application_version = configured
+                http_client = DefaultHTTPClient(DefaultHTTPClientConfig())
+                prepared = []
+
+                def send(request, **kwargs):
+                    prepared.append(request)
+                    response = Response()
+                    response.status_code = 200
+                    response._content = b"{}"
+                    return response
+
+                http_client.http_client.send = send
+                client = Client(config, http_client)
+                self.assertEqual(configured, client.get_application_version())
+                client.get_context_data().result()
+                client.publish(PublishEvent()).result()
+                self.assertEqual(2, len(prepared))
+                for request in prepared:
+                    self.assertEqual(
+                        expected, request.headers["X-Application-Version"])
 
     @unittest.skipIf(tomllib is None, "tomllib requires Python 3.11")
     def test_agent_follows_package_version(self):

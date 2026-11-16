@@ -3,6 +3,22 @@ from sdk.http_client import HTTPClient
 from sdk.json.publish_event import PublishEvent
 from sdk.version import AGENT, NAME, VERSION
 
+_MAX_APPLICATION_VERSION_DIGITS = 18
+
+
+def _application_version_header(value):
+    # The collector reads X-Application-Version as a long, so (like the Java
+    # SDK) only a trimmed string of 1-18 ASCII digits is sent; anything else,
+    # such as a dotted "2.4.1", is sent as "0" rather than failing every
+    # fetch and publish.
+    if isinstance(value, bool) or not isinstance(value, (str, int)):
+        return "0"
+    text = str(value).strip()
+    if 0 < len(text) <= _MAX_APPLICATION_VERSION_DIGITS and \
+            text.isascii() and text.isdigit():
+        return text
+    return "0"
+
 
 class Client:
 
@@ -29,7 +45,8 @@ class Client:
         self.headers = {"X-API-Key": api_key,
                         "X-Application": application,
                         "X-Environment": environment,
-                        "X-Application-Version": application_version or '0',
+                        "X-Application-Version":
+                            _application_version_header(application_version),
                         "X-Agent": AGENT}
         self.query = {"application": application,
                       "environment": environment}

@@ -76,13 +76,27 @@ class AudienceMatcher:
         return None
 
     @staticmethod
+    def _integer_variant(variant):
+        # JS Number.isInteger on the JSON value: bools and fractions are not
+        # integers, and neither is a value beyond the double range, which
+        # JSON.parse makes +/-Infinity (float() raises for such an int).
+        if isinstance(variant, bool):
+            return None
+        if isinstance(variant, int):
+            try:
+                float(variant)
+            except OverflowError:
+                return None
+            return variant
+        if isinstance(variant, float) and variant.is_integer():
+            return int(variant)
+        return None
+
+    @staticmethod
     def _rule_action(rule):
         if rule.get("type") == "assign":
-            variant = rule.get("variant")
-            if isinstance(variant, bool) or not isinstance(variant, (int, float)) \
-                    or not math.isfinite(variant) or int(variant) != variant:
-                return None
-            return RuleAction(variant=int(variant))
+            variant = AudienceMatcher._integer_variant(rule.get("variant"))
+            return RuleAction(variant=variant) if variant is not None else None
         if rule.get("type") != "split" or not isinstance(rule.get("percentages"), str):
             return None
         values = []

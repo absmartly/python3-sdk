@@ -530,3 +530,42 @@ class RuleRefreshRevalidationTest(CrossSdkRuleScenariosTest):
                          [(e.variant, e.ruleOverride)
                           for e in context.exposures])
         context.close()
+
+
+class MalformedRuleVariantTest(CrossSdkRuleScenariosTest):
+    """A malformed assign variant never escapes treatment: like JS
+    Number.isInteger, a non-integer (fraction, bool, non-finite, or an
+    integer too large for a double, which JSON.parse makes Infinity) skips
+    the rule, while a finite out-of-range integer still matches and stops
+    rule evaluation (the unit gets its normal assignment)."""
+
+    def test_malformed_variants(self):
+        later = {"name": "later", "type": "assign", "variant": 1}
+        cases = (
+            ("huge_int", "9" * 401, 1, True),
+            ("overflow_float", "1e400", 1, True),
+            ("negative_overflow_float", "-1e400", 1, True),
+            ("negative_huge_int", "-" + "9" * 401, 1, True),
+            ("fraction", "1.5", 1, True),
+            ("bool", "true", 1, True),
+            ("string", '"1"', 1, True),
+            ("finite_big_int", "1" + "0" * 300, 0, False),
+            ("max_double_int", str(int(1.7976931348623157e308)), 0, False),
+            ("integral_float", "1.0", 1, True),
+        )
+        for label, variant, expected, rule_override in cases:
+            with self.subTest(variant=label):
+                rules = ('{"rules":[{"name":"bad","type":"assign","variant":'
+                         + variant + '},' + json.dumps(later) + ']}')
+                bad = self.experiment(30, "exp_bad_variant", [],
+                                      split=[1.0, 0.0])
+                bad["assignmentRules"] = rules
+                healthy = self.experiment(31, "exp_healthy", [],
+                                          split=[0.0, 1.0])
+                context = self.create_context(bad, healthy)
+                self.assertEqual(expected,
+                                 context.get_treatment("exp_bad_variant"))
+                self.assertEqual(rule_override,
+                                 context.exposures[-1].ruleOverride)
+                self.assertEqual(1, context.get_treatment("exp_healthy"))
+                context.close()

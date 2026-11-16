@@ -610,8 +610,8 @@ class MalformedRuleVariantTest(CrossSdkRuleScenariosTest):
 
 
 class RuleMutationCoverageTest(CrossSdkRuleScenariosTest):
-    """Distinguishing cases for mutants that survived the review's mutation
-    run (split seeds, unknown rule types, rule environment scope)."""
+    """Split rules hash with the experiment seeds, unknown rule types are
+    skipped, and rule scope uses the configured environment."""
 
     # Per-UID [split seeds, traffic seeds] variants of a 50/50 split,
     # computed with javascript-sdk's VariantAssigner and hashUnit.

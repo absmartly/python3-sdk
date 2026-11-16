@@ -1,15 +1,41 @@
+import math
 import re
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Context, Decimal
 
 
 _NUMERIC = re.compile(r"[0-9]+")
+_TRAILING_ZEROS = re.compile(r"\.?0{0,15}$")
+_FIFTEEN_PLACES = Decimal(1).scaleb(-15)
+# Below 1e21, 21 integer digits and 15 decimals fit exactly.
+_FIXED = Context(prec=40, rounding=ROUND_HALF_UP)
+
+
+def _number_to_string(value):
+    # JS Evaluator.stringConvert: x.toFixed(15).replace(/\.?0{0,15}$/, "").
+    # Numbers are doubles there, so ints out of range are +/-Infinity.
+    try:
+        value = float(value)
+    except OverflowError:
+        value = math.inf if value > 0 else -math.inf
+    if math.isnan(value):
+        text = "NaN"
+    elif math.isinf(value):
+        text = "Infinity" if value > 0 else "-Infinity"
+    elif abs(value) >= 1e21:
+        # toFixed falls back to ToString, the shortest round-trip form.
+        text = repr(value)
+    else:
+        # toFixed rounds the exact binary value half up, and -0 prints "0".
+        exact = Decimal(value if value != 0 else 0.0)
+        text = format(exact.quantize(_FIFTEEN_PLACES, context=_FIXED), "f")
+    return _TRAILING_ZEROS.sub("", text, count=1)
 
 
 def _to_string(value):
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float, Decimal)):
-        return str(value)
+        return _number_to_string(value)
     return value if isinstance(value, str) else None
 
 

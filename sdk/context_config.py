@@ -13,6 +13,7 @@ class ContextConfig:
     attributes: Optional[Dict] = None
     units: Optional[Dict] = None
     historic: bool = False
+    include_system_attributes: bool = False
 
     @property
     def cassigmnents(self):

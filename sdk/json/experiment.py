@@ -22,3 +22,4 @@ class Experiment:
     audienceStrict: typing.Optional[bool] = False
     audience: typing.Optional[str] = None
     customFieldValues: typing.Optional[list[CustomFieldValue]] = None
+    assignmentRules: typing.Optional[str] = None

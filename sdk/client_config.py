@@ -13,6 +13,7 @@ class ClientConfig:
         self.endpoint = os.environ.get(prefix + "endpoint")
         self.environment = os.environ.get(prefix + "environment")
         self.application = os.environ.get(prefix + "application")
+        self.application_version = os.environ.get(prefix + "application_version")
         self.api_key = os.environ.get(prefix + "api_key")
         self.serializer = DefaultContextEventSerializer()
         self.deserializer = DefaultContextDataDeserializer()

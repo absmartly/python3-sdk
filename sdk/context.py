@@ -765,7 +765,13 @@ class Context:
         else:
             event.attributes = None
         if self.include_system_attributes:
-            now = self.clock.millis()
+            # Stamped with the earliest event in the batch, like JS: the
+            # collector only applies attributes with setAt <= an event's time.
+            now = min([event.publishedAt] +
+                      [e.exposedAt for e in exposures or []
+                       if e.exposedAt is not None] +
+                      [a.achievedAt for a in achievements or []
+                       if a.achievedAt is not None])
             system = []
             # Only the SDK metadata: application and environment are
             # evaluation-only, the collector adds them server-side.

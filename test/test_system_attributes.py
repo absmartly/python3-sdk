@@ -393,6 +393,38 @@ class SystemAttributesTest(unittest.TestCase):
                           for attr in payload["attributes"]])
         context.close()
 
+    def test_sdk_metadata_stamped_with_earliest_event(self):
+        # Like JS _buildAttributes: the collector applies attributes with
+        # setAt <= an event's time, so the SDK metadata takes the earliest
+        # exposure/goal time in the batch.
+        self.set_up()
+        config = ContextConfig()
+        config.units = dict(self.units)
+        config.include_system_attributes = True
+        data_future = Future()
+        data_future.set_result(
+            self.strict_audience_data(self.environment_is("production")))
+        context = Context(
+            self.clock, config, data_future,
+            self.data_provider, self.event_handler, None,
+            self.variable_parser, self.audience_matcher,
+            self.application, self.environment)
+        self.clock.value = 1_620_000_000_500
+        context.track("goal", None)
+        self.clock.value = 1_620_000_000_200
+        self.assertEqual(1, context.get_treatment("exp_test_ab"))
+        self.clock.value = 1_620_000_000_900
+        context.set_attribute("tier", "gold")
+        context.publish()
+        event = self.client._publish_calls[0]
+        payload = json.loads(bytes(self.serializer.serialize(event)))
+        self.assertEqual([("sdk_name", 1_620_000_000_200),
+                          ("sdk_version", 1_620_000_000_200),
+                          ("tier", 1_620_000_000_900)],
+                         [(attr["name"], attr["setAt"])
+                          for attr in payload["attributes"]])
+        context.close()
+
 class FactorySystemAttributesTest(unittest.TestCase):
     """The configured application/environment reach audiences through the
     public ABsmartly factories, including when both a custom provider and a

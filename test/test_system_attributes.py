@@ -409,20 +409,42 @@ class SystemAttributesTest(unittest.TestCase):
             self.data_provider, self.event_handler, None,
             self.variable_parser, self.audience_matcher,
             self.application, self.environment)
-        self.clock.value = 1_620_000_000_500
-        context.track("goal", None)
+        context.set_attribute("tier", "gold")
+
+        def publish_stamps():
+            self.clock.value = 1_620_000_000_900
+            context.publish()
+            event = self.client._publish_calls[-1]
+            payload = json.loads(bytes(self.serializer.serialize(event)))
+            return [(attr["name"], attr["setAt"])
+                    for attr in payload["attributes"]
+                    if attr["name"] != "tier"]
+
+        # The exposure is earliest.
         self.clock.value = 1_620_000_000_200
         self.assertEqual(1, context.get_treatment("exp_test_ab"))
-        self.clock.value = 1_620_000_000_900
-        context.set_attribute("tier", "gold")
-        context.publish()
-        event = self.client._publish_calls[0]
-        payload = json.loads(bytes(self.serializer.serialize(event)))
+        self.clock.value = 1_620_000_000_500
+        context.track("goal", None)
         self.assertEqual([("sdk_name", 1_620_000_000_200),
-                          ("sdk_version", 1_620_000_000_200),
-                          ("tier", 1_620_000_000_900)],
-                         [(attr["name"], attr["setAt"])
-                          for attr in payload["attributes"]])
+                          ("sdk_version", 1_620_000_000_200)],
+                         publish_stamps())
+
+        # The goal is earliest.
+        self.clock.value = 1_620_000_000_100
+        context.track("goal", None)
+        self.clock.value = 1_620_000_000_300
+        context.set_override("exp_test_ab", 0)
+        self.assertEqual(0, context.get_treatment("exp_test_ab"))
+        self.assertEqual([("sdk_name", 1_620_000_000_100),
+                          ("sdk_version", 1_620_000_000_100)],
+                         publish_stamps())
+
+        # Only a goal.
+        self.clock.value = 1_620_000_000_150
+        context.track("goal", None)
+        self.assertEqual([("sdk_name", 1_620_000_000_150),
+                          ("sdk_version", 1_620_000_000_150)],
+                         publish_stamps())
         context.close()
 
 class FactorySystemAttributesTest(unittest.TestCase):

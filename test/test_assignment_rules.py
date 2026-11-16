@@ -170,16 +170,19 @@ class ContextAssignmentRulesTest(unittest.TestCase):
         # Hold both readers inside rule resolution together, so a re-check
         # that computed the unit hash under the read lock would deadlock.
         together = threading.Barrier(2, timeout=0.5)
-        evaluate_rules = context.audience_matcher.evaluate_rules
+        evaluate_rules = context.audience_matcher.evaluate_parsed_rules
+        calls = []
 
         def evaluate_rules_together(*args):
+            calls.append(args)
             try:
                 together.wait()
             except threading.BrokenBarrierError:
                 pass
             return evaluate_rules(*args)
 
-        context.audience_matcher.evaluate_rules = evaluate_rules_together
+        context.audience_matcher.evaluate_parsed_rules = \
+            evaluate_rules_together
         results = []
 
         def read():
@@ -193,6 +196,7 @@ class ContextAssignmentRulesTest(unittest.TestCase):
             thread.join(timeout=5)
         self.assertFalse(any(thread.is_alive() for thread in threads))
         self.assertEqual([1, 1], results)
+        self.assertGreaterEqual(len(calls), 1)
         context.close()
 
     def test_rule_assignment_after_experiment_removed_and_reintroduced(self):

@@ -37,7 +37,6 @@ logger = logging.getLogger(__name__)
 # Resolutions get_treatment and variable lookups try when set_unit keeps
 # retiring the assignment they resolved, as in the Java SDK.
 _MAX_EXPOSURE_ATTEMPTS = 3
-_RETRY = object()
 
 
 class Assignment:
@@ -1043,7 +1042,8 @@ class Context:
         self.check_ready(True)
         return self._variable_value(key, default_value, False)
 
-    def _variable_value(self, key: str, default_value: object, expose: bool):
+    def _variable_value(self, key: str, default_value: object, expose: bool,
+                        attempt: int = 1):
         # Port of the JS SDK's _variableValue/_peekVariable: walk every
         # experiment defining the key (sorted by id) and return the value from
         # the first one the unit is assigned to or overridden in, queuing an
@@ -1052,16 +1052,6 @@ class Context:
         # when nothing else does its control value is returned instead of
         # the default (JS _resolveVariableValue). The first held-out
         # candidate is kept even if it lacks the key.
-        for attempt in range(_MAX_EXPOSURE_ATTEMPTS):
-            value = self._resolve_variable_value(
-                key, default_value, expose,
-                attempt + 1 < _MAX_EXPOSURE_ATTEMPTS)
-            if value is not _RETRY:
-                return value
-        return default_value
-
-    def _resolve_variable_value(self, key: str, default_value: object,
-                                expose: bool, can_retry: bool):
         experiments = Concurrency.get_rw(
             self.data_lock, self.index_variables, key) or []
         suppressed_fallback = None
@@ -1069,10 +1059,12 @@ class Context:
             assignment = self.get_assignment(experiment.data.name)
             if assignment.variables is not None:
                 if expose and not assignment.exposed.value and \
-                        not self._expose(assignment) and can_retry:
-                    # set_unit evicted a candidate in between, so the key
+                        not self._expose(assignment) and \
+                        attempt < _MAX_EXPOSURE_ATTEMPTS:
+                    # set_unit retired a candidate in between, so the key
                     # may resolve differently: walk it again.
-                    return _RETRY
+                    return self._variable_value(key, default_value, expose,
+                                                attempt + 1)
 
                 if key in assignment.variables and \
                         (assignment.assigned or assignment.overridden or
@@ -1104,12 +1096,15 @@ class Context:
 
     def get_treatment(self, experiment_name: str, exposed_at: int = None):
         self.check_ready(True)
-        for _ in range(_MAX_EXPOSURE_ATTEMPTS):
-            assignment = self.get_assignment(experiment_name,
-                                             exposed_at=exposed_at)
-            if assignment.exposed.value or self._expose(assignment):
-                break
-            # set_unit evicted it in between: resolve it again.
+        assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
+        if not assignment.exposed.value and not self._expose(assignment):
+            # set_unit retired it in between: resolve it again, a bounded
+            # number of times.
+            for _ in range(_MAX_EXPOSURE_ATTEMPTS - 1):
+                assignment = self.get_assignment(experiment_name,
+                                                 exposed_at=exposed_at)
+                if assignment.exposed.value or self._expose(assignment):
+                    break
         return assignment.variant
 
     def get_variable_keys(self):
@@ -1341,23 +1336,21 @@ class Context:
                     if assignment.overridden and \
                             assignment.variant == override and \
                             (experiment is None or
-                             (experiment.holdouts is None and
-                              assignment.holdouts is None) or
+                             experiment.holdouts is assignment.holdouts or
                              _holdout_set_matches(experiment, assignment)):
                         return assignment
                 elif experiment is None:
                     if assignment.assigned is False and \
                             not assignment.rule_override:
                         return assignment
-                elif assignment.suppressed or assignment.rule_override or \
+                elif assignment.rule_override or \
                         experiment_name not in self.custom_assignments or \
                         self.custom_assignments[experiment_name] == \
-                        assignment.variant:
+                        assignment.variant or assignment.suppressed:
                     # A suppressed assignment is forced to control, so a
                     # custom assignment that differs from it is not staleness.
                     if experiment_matches(experiment.data, assignment) and \
-                            ((experiment.holdouts is None and
-                              assignment.holdouts is None) or
+                            (experiment.holdouts is assignment.holdouts or
                              _holdout_set_matches(experiment, assignment)):
                         if _rule_key(experiment.data) == \
                                 assignment.rule_key and \
@@ -1724,9 +1717,12 @@ class Context:
 
         holdout_assignments = assignment.holdout_assignments
         if holdout_assignments:
-            for holdout_assignment in holdout_assignments:
+            for holdout, holdout_assignment in zip(assignment.holdouts,
+                                                   holdout_assignments):
                 if holdout_assignment is not None and \
                         not holdout_assignment.exposed.value:
+                    # Named from the snapshot, like JS holdouts[i].data.name.
+                    holdout_assignment.name = holdout.name
                     if holdout_assignment.exposedAt is None:
                         holdout_assignment.exposedAt = assignment.exposedAt
                     self.queue_exposure(holdout_assignment)

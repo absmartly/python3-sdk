@@ -561,6 +561,19 @@ class HoldoutMutationProbeTest(HoldoutTestCase):
                           ("holdout_b", 1)],
                          [(e.name, e.variant) for e in context.exposures])
 
+    def test_holdout_exposure_is_named_from_the_pinned_snapshot(self):
+        # JS publishes holdouts[i].data.name from the covering experiment's
+        # snapshot: a same-iteration rename before the first exposure wins.
+        context = self.create_context(context_data(
+            [self.covered(1, "exp_a", [11])], [self.holdout_b(id=11)]))
+        context.peek_treatment("exp_a")
+        self.refresh(context, context_data(
+            [self.covered(1, "exp_a", [11]), self.covered(2, "exp_b", [11])],
+            [self.holdout_b(id=11, name="renamed")]))
+        context.get_treatment("exp_b")
+        self.assertEqual(["exp_b", "renamed"],
+                         [e.name for e in context.exposures])
+
     def test_exposure_carries_the_treatment_exposed_at(self):
         context = self.create_context(context_data(
             [self.covered(1, "exp", [11])], [self.holdout_b(id=11)]))

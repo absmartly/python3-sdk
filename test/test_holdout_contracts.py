@@ -753,3 +753,64 @@ class HoldoutLifecycleRaceTest(HoldoutTestCase):
         context.get_treatment("exp_time")
         self.assertEqual([111, 111],
                          [e.exposedAt for e in context.exposures])
+
+
+class HoldoutRevalidationTest(HoldoutTestCase):
+
+    def test_refresh_with_split_change_same_iteration_does_not_re_expose(self):
+        context = self.create_context(
+            context_data([self.covered(1, "exp_split_edit", [11])],
+                         [self.holdout_a()]),
+            units={UNIT_TYPE: UID_NOT_HELD_OUT})
+        context.get_treatment("exp_split_edit")
+        self.assertEqual(2, context.get_pending_count())
+        self.refresh(context, context_data(
+            [self.covered(1, "exp_split_edit", [11])],
+            [holdout(11, "holdout_a", HOLDOUT_A_SEEDS, split=[0.05, 0.95])]))
+        context.get_treatment("exp_split_edit")
+        self.assertEqual(2, context.get_pending_count())
+
+    def test_refresh_between_cache_check_and_revalidation_rebuilds_on_iteration_bump(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "exp_rv", [11])], [self.holdout_a()]))
+        self.assertEqual(0, context.peek_treatment("exp_rv"))
+        # A new attribute sends the next read through the write-lock
+        # revalidation; the refresh lands between the two checks.
+        context.set_attribute("country", "US")
+        original = context._get_experiment_state
+
+        def refresh_after_read(name):
+            state = original(name)
+            context._get_experiment_state = original
+            context.set_data(context_data(
+                [self.covered(1, "exp_rv", [11])],
+                [holdout(11, "holdout_a", HOLDOUT_B_SEEDS, iteration=2)]))
+            return state
+
+        context._get_experiment_state = refresh_after_read
+        assignment = context.get_assignment("exp_rv")
+        self.assertEqual(2, assignment.holdouts[0].iteration)
+        self.assertEqual(NORMAL_VARIANT, assignment.variant)
+
+    def test_installing_data_without_holdouts_never_matches_holdouts(self):
+        calls = []
+        original = context_module._applicable_holdouts
+
+        def counting(*args):
+            calls.append(args)
+            return original(*args)
+
+        context_module._applicable_holdouts = counting
+        self.addCleanup(setattr, context_module, "_applicable_holdouts",
+                        original)
+        for holdouts in (None, [], [{"id": 11}]):
+            context = self.create_context(context_data(
+                [self.covered(1, "exp", [11]), experiment(2, "exp_2")],
+                holdouts))
+            self.refresh(context, context_data([experiment(1, "exp")],
+                                               holdouts))
+            context.get_treatment("exp")
+        self.assertEqual([], calls)
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_a()]))
+        self.assertEqual(1, len(calls))

@@ -769,6 +769,13 @@ class HoldoutRevalidationTest(HoldoutTestCase):
             [holdout(11, "holdout_a", HOLDOUT_A_SEEDS, split=[0.05, 0.95])]))
         context.get_treatment("exp_split_edit")
         self.assertEqual(2, context.get_pending_count())
+        # A rename makes a new snapshot, so the (id, iteration) comparison
+        # itself must ignore the split.
+        self.refresh(context, context_data(
+            [self.covered(1, "exp_split_edit", [11])],
+            [holdout(11, "renamed", HOLDOUT_A_SEEDS, split=[0.2, 0.8])]))
+        context.get_treatment("exp_split_edit")
+        self.assertEqual(2, context.get_pending_count())
 
     def test_refresh_between_cache_check_and_revalidation_rebuilds_on_iteration_bump(self):
         context = self.create_context(context_data(
@@ -860,3 +867,36 @@ class SuppressedFallbackTest(HoldoutTestCase):
         for _ in range(3):
             self.assertEqual(0, context.get_treatment("exp_aud"))
         self.assertEqual([], calls)
+
+
+class HoldoutRefreshCostTest(HoldoutTestCase):
+
+    def test_cached_reads_match_the_holdout_set_by_identity_after_refresh(self):
+        payload = context_data([self.covered(1, "exp", [11])],
+                               [self.holdout_b(id=11)])
+        context = self.create_context(payload)
+        context.get_treatment("exp")
+        self.refresh(context, context_data(
+            [self.covered(1, "exp", [11])],
+            [self.holdout_b(id=11, seedHi=99)]))
+        calls = []
+        original = context_module._holdout_set_matches
+        context_module._holdout_set_matches = \
+            lambda *args: calls.append(args) or original(*args)
+        self.addCleanup(setattr, context_module, "_holdout_set_matches",
+                        original)
+        for _ in range(5):
+            self.assertEqual(NORMAL_VARIANT, context.get_treatment("exp"))
+        self.assertEqual([], calls)
+
+    def test_renamed_or_bumped_holdout_gets_a_new_snapshot(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11)]))
+        before = context.get_experiment("exp").holdouts
+        for change in ({"name": "renamed"}, {"iteration": 2}):
+            self.refresh(context, context_data(
+                [self.covered(1, "exp", [11])],
+                [dict(self.holdout_b(id=11), **change)]))
+            after = context.get_experiment("exp").holdouts
+            self.assertIsNot(before, after)
+            before = after

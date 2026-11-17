@@ -217,6 +217,14 @@ def _holdout_set_matches(experiment, assignment: Assignment):
     return True
 
 
+def _same_holdouts(previous, holdouts):
+    if previous is None or holdouts is None:
+        return previous is holdouts
+    return len(previous) == len(holdouts) and all(
+        (a.id, a.iteration, a.name) == (b.id, b.iteration, b.name)
+        for a, b in zip(previous, holdouts))
+
+
 def _rule_key(experiment: Experiment):
     # The assignment rules a cached assignment was checked against; no rules
     # (None or "") are the same key, like the JS SDK's ruleKey. The
@@ -546,14 +554,22 @@ class Context:
         index_variables = {}
         context_custom_fields = {}
         holdouts_by_id = _index_holdouts(getattr(data, "holdouts", None))
+        previous_index = self.index if holdouts_by_id else None
 
         for experiment in data.experiments:
             experiment_variables = ExperimentVariables()
             experiment_variables.data = experiment
             experiment_variables.variables = []
             if holdouts_by_id:
-                experiment_variables.holdouts = _applicable_holdouts(
+                holdouts = _applicable_holdouts(
                     getattr(experiment, "holdoutIds", None), holdouts_by_id)
+                previous = previous_index.get(experiment.name)
+                if previous is not None and \
+                        _same_holdouts(previous.holdouts, holdouts):
+                    # Kept when unchanged, so cached reads still match the
+                    # holdout set by identity after a refresh.
+                    holdouts = previous.holdouts
+                experiment_variables.holdouts = holdouts
 
             for variant in experiment.variants:
                 if variant.config is not None and len(variant.config) > 0:

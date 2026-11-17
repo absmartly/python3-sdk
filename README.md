@@ -280,6 +280,27 @@ context.set_overrides({
 })
 ```
 
+### Holdouts
+
+A holdout keeps a share of your units out of a group of experiments, so you can measure their combined effect. Holdouts are configured in the ABsmartly web console; the SDK applies them automatically, with no code changes.
+
+The context data lists the holdouts, and each experiment lists the holdouts covering it in `holdoutIds`. For each covering holdout, the unit is placed in one of the holdout's arms (its unit is the covered experiment's unit) and stays there for the life of the context, unless the holdout's iteration changes.
+
+- Arm 0 holds the unit out of every covered experiment.
+- In a holdout with three arms, arm 1 holds the unit out of covered experiments that are not full-on; full-on experiments are assigned normally.
+- Any other arm leaves the experiment to its normal assignment.
+
+A unit held out by any of the experiment's holdouts gets the control variant (0) and the control variable values:
+
+```python
+treatment = context.get_treatment("exp_covered_by_holdout")  # 0 when held out
+color = context.get_variable_value("button.color", "red")  # control value when held out
+```
+
+The held-out experiment publishes no exposure of its own. Instead, each read of a covered experiment (`get_treatment`, `get_variable_value`) publishes one exposure per holdout and unit type, named after the holdout, with the unit's arm as its variant. `peek_treatment` and `peek_variable_value` publish nothing.
+
+An override (`set_override`) or a matching assignment rule still decides the variant of a held-out unit, and the holdout exposures are still published. Custom assignments, audiences, full-on variants and traffic do not apply to a held-out unit.
+
 ## Advanced
 
 ### Context Attributes

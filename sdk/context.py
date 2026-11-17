@@ -3,6 +3,7 @@ import logging
 import math
 import threading
 import warnings
+from collections.abc import Mapping
 from concurrent.futures import CancelledError, Future, InvalidStateError
 from typing import Optional
 
@@ -33,6 +34,12 @@ from sdk.variable_parser import VariableParser
 logger = logging.getLogger(__name__)
 
 
+# Resolutions get_treatment and variable lookups try when set_unit keeps
+# retiring the assignment they resolved, as in the Java SDK.
+_MAX_EXPOSURE_ATTEMPTS = 3
+_RETRY = object()
+
+
 class Assignment:
     def __init__(self):
         self.id: Optional[int] = 0
@@ -59,11 +66,41 @@ class Assignment:
         self.rule_key: Optional[str] = None
         self.rule_variant: Optional[int] = None
         self.rule_missing_unit: bool = False
+        # Holdouts (see Context._resolve_holdouts): the experiment's
+        # applicable holdouts when the assignment was resolved, the holdout
+        # assignment pinned for each (None while the unit was missing), and
+        # whether any of them holds the unit out.
+        self.suppressed: bool = False
+        self.holdouts: Optional[list] = None
+        self.holdout_assignments: Optional[list] = None
+        # On a holdout's own assignment: len(split) when `variant` was
+        # resolved, which gives the arm its meaning (see _is_held_out_by).
+        self.holdout_arm_count: Optional[int] = None
+        # Evicted by set_unit before it was exposed: a caller still holding
+        # it must not expose it (see Context._expose).
+        self.retired: bool = False
 
 
 class ExperimentVariables:
     data: Optional[Experiment]
     variables: Optional[list[dict]]
+    # The holdouts covering the experiment, sorted by id; None when it has
+    # none (or none of its holdoutIds names a usable holdout).
+    holdouts: Optional[list] = None
+
+
+class _Holdout:
+    # A validated ContextData.holdouts entry, built once per installed
+    # payload.
+    __slots__ = ("id", "name", "iteration", "seed_hi", "seed_lo", "split")
+
+    def __init__(self, id, name, iteration, seed_hi, seed_lo, split):
+        self.id = id
+        self.name = name
+        self.iteration = iteration
+        self.seed_hi = seed_hi
+        self.seed_lo = seed_lo
+        self.split = split
 
 class ContextCustomFieldValue:
     type: Optional[str]
@@ -80,6 +117,107 @@ def experiment_matches(experiment: Experiment, assignment: Assignment):
            experiment.fullOnVariant == assignment.full_on_variant and \
            list(experiment.trafficSplit or []) == \
            list(assignment.traffic_split or [])
+
+
+def _field(entry, name, default=None):
+    # A holdout entry is a Mapping (how the default deserializer keeps it)
+    # or any object with the same attributes, like sdk.json.holdout.Holdout.
+    if isinstance(entry, Mapping):
+        return entry.get(name, default)
+    return getattr(entry, name, default)
+
+
+def _int_id(value):
+    # Ids, seeds: JSON numbers that are integers; booleans are not numbers.
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    return None
+
+
+def _parse_holdout(entry):
+    """A usable _Holdout for a ContextData.holdouts entry, or None.
+
+    Like the JS SDK (context.ts _init), an entry without a non-empty split is
+    ignored; so is one whose id, seeds or split are not numbers, which JS
+    would hash into garbage. Unknown keys are ignored.
+    """
+    if entry is None or isinstance(entry, (str, bytes, int, float, list)):
+        return None
+    holdout_id = _int_id(_field(entry, "id"))
+    split = _field(entry, "split")
+    if holdout_id is None or not isinstance(split, (list, tuple)) or \
+            len(split) == 0 or \
+            any(isinstance(x, bool) or not isinstance(x, (int, float))
+                for x in split):
+        return None
+    seed_hi = _field(entry, "seedHi")
+    seed_lo = _field(entry, "seedLo")
+    seed_hi = 0 if seed_hi is None else _int_id(seed_hi)
+    seed_lo = 0 if seed_lo is None else _int_id(seed_lo)
+    if seed_hi is None or seed_lo is None:
+        return None
+    return _Holdout(holdout_id, _field(entry, "name"),
+                    _field(entry, "iteration", 0), seed_hi, seed_lo,
+                    tuple(split))
+
+
+def _index_holdouts(holdouts):
+    # JS indexes by id with the last entry winning.
+    holdouts_by_id = {}
+    if isinstance(holdouts, (list, tuple)):
+        for entry in holdouts:
+            holdout = _parse_holdout(entry)
+            if holdout is not None:
+                holdouts_by_id[holdout.id] = holdout
+    return holdouts_by_id
+
+
+def _applicable_holdouts(holdout_ids, holdouts_by_id):
+    # The experiment's holdouts, deduplicated and sorted by id like the JS
+    # SDK's insertUniqueSorted; ids naming no usable holdout are ignored.
+    if not isinstance(holdout_ids, (list, tuple)):
+        return None
+    resolved = {}
+    for holdout_id in holdout_ids:
+        holdout = holdouts_by_id.get(_int_id(holdout_id))
+        if holdout is not None:
+            resolved[holdout.id] = holdout
+    if not resolved:
+        return None
+    return [resolved[key] for key in sorted(resolved)]
+
+
+def _is_held_out_by(holdout_variant, holdout_arm_count, full_on_variant):
+    # JS isHeldOutBy: arm 0 always holds the experiment out; in a 3-arm
+    # holdout arm 1 holds out only experiments that are not full-on. The
+    # arity comes from the split, never from holdoutType.
+    if holdout_variant == 0:
+        return True
+    if holdout_arm_count == 3 and holdout_variant == 1:
+        return full_on_variant == 0
+    return False
+
+
+def _holdout_set_matches(experiment, assignment: Assignment):
+    # JS holdoutSetMatches: (id, iteration) per holdout, in order. A seed or
+    # split edit in the same iteration must not re-resolve (and re-expose).
+    fresh = experiment.holdouts
+    pinned = assignment.holdouts
+    if fresh is None and pinned is None:
+        return True
+    fresh = fresh or ()
+    pinned = pinned or ()
+    if len(fresh) != len(pinned):
+        return False
+    for fresh_holdout, pinned_holdout in zip(fresh, pinned):
+        if fresh_holdout.id != pinned_holdout.id or \
+                fresh_holdout.iteration != pinned_holdout.iteration:
+            return False
+    return True
 
 
 def _rule_key(experiment: Experiment):
@@ -179,6 +317,11 @@ class Context:
         self.context_custom_fields = {}
         self.assignment_cache = {}
         self._parsed_rules = {}
+        # Holdouts by id from the installed data, and each holdout's own
+        # assignment per (holdout id, unit type), kept across refreshes and
+        # valid while the holdout's iteration is unchanged.
+        self._holdouts_by_id = {}
+        self._holdout_assignments = {}
         self.custom_assignments = {}
         self.overrides = {}
 
@@ -339,7 +482,7 @@ class Context:
                 # ones are kept, as re-resolving would expose them twice.
                 for name, assignment in list(self.assignment_cache.items()):
                     if assignment.unit_type == unit_type and \
-                            not assignment.exposed.value:
+                            self._retire(assignment):
                         del self.assignment_cache[name]
         finally:
             self.context_lock.release_write()
@@ -405,11 +548,15 @@ class Context:
         index = {}
         index_variables = {}
         context_custom_fields = {}
+        holdouts_by_id = _index_holdouts(getattr(data, "holdouts", None))
 
         for experiment in data.experiments:
             experiment_variables = ExperimentVariables()
             experiment_variables.data = experiment
             experiment_variables.variables = []
+            if holdouts_by_id:
+                experiment_variables.holdouts = _applicable_holdouts(
+                    getattr(experiment, "holdoutIds", None), holdouts_by_id)
 
             for variant in experiment.variants:
                 if variant.config is not None and len(variant.config) > 0:
@@ -480,6 +627,7 @@ class Context:
             self.index = index
             self.index_variables = index_variables
             self.context_custom_fields = context_custom_fields
+            self._holdouts_by_id = holdouts_by_id
             self.data = data
             self.ready_error = None
 
@@ -627,6 +775,7 @@ class Context:
                 return
             self.index = {}
             self.index_variables = {}
+            self._holdouts_by_id = {}
             self.data = ContextData()
             self.failed = True
             self.ready_error = exception
@@ -899,18 +1048,43 @@ class Context:
         # experiment defining the key (sorted by id) and return the value from
         # the first one the unit is assigned to or overridden in, queuing an
         # exposure for each experiment visited on the way.
+        # A held-out experiment never wins the key over an assigned one, but
+        # when nothing else does its control value is returned instead of
+        # the default (JS _resolveVariableValue). The first held-out
+        # candidate is kept even if it lacks the key.
+        for attempt in range(_MAX_EXPOSURE_ATTEMPTS):
+            value = self._resolve_variable_value(
+                key, default_value, expose,
+                attempt + 1 < _MAX_EXPOSURE_ATTEMPTS)
+            if value is not _RETRY:
+                return value
+        return default_value
+
+    def _resolve_variable_value(self, key: str, default_value: object,
+                                expose: bool, can_retry: bool):
         experiments = Concurrency.get_rw(
             self.data_lock, self.index_variables, key) or []
+        suppressed_fallback = None
         for experiment in list(experiments):
             assignment = self.get_assignment(experiment.data.name)
             if assignment.variables is not None:
-                if expose and not assignment.exposed.value:
-                    self.queue_exposure(assignment)
+                if expose and not assignment.exposed.value and \
+                        not self._expose(assignment) and can_retry:
+                    # set_unit evicted a candidate in between, so the key
+                    # may resolve differently: walk it again.
+                    return _RETRY
 
                 if key in assignment.variables and \
                         (assignment.assigned or assignment.overridden or
                          assignment.rule_override):
                     return assignment.variables[key]
+
+                if assignment.suppressed and not assignment.overridden and \
+                        not assignment.rule_override and \
+                        suppressed_fallback is None:
+                    suppressed_fallback = assignment.variables
+        if suppressed_fallback is not None and key in suppressed_fallback:
+            return suppressed_fallback[key]
         return default_value
 
     def peek_treatment(self, experiment_name: str):
@@ -930,9 +1104,12 @@ class Context:
 
     def get_treatment(self, experiment_name: str, exposed_at: int = None):
         self.check_ready(True)
-        assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
-        if not assignment.exposed.value:
-            self.queue_exposure(assignment)
+        for _ in range(_MAX_EXPOSURE_ATTEMPTS):
+            assignment = self.get_assignment(experiment_name,
+                                             exposed_at=exposed_at)
+            if assignment.exposed.value or self._expose(assignment):
+                break
+            # set_unit evicted it in between: resolve it again.
         return assignment.variant
 
     def get_variable_keys(self):
@@ -1133,7 +1310,8 @@ class Context:
             if rule_variant != assignment.rule_variant:
                 return False
             assignment.rule_missing_unit = missing_unit
-        if not assignment.rule_override and \
+        # A held-out assignment never evaluated its audience.
+        if not assignment.rule_override and not assignment.suppressed and \
                 experiment.audience is not None and \
                 len(experiment.audience) > 0:
             attrs = self._build_audience_attributes()
@@ -1161,17 +1339,26 @@ class Context:
                 elif experiment_name in self.overrides:
                     override = self.overrides[experiment_name]
                     if assignment.overridden and \
-                            assignment.variant == override:
+                            assignment.variant == override and \
+                            (experiment is None or
+                             (experiment.holdouts is None and
+                              assignment.holdouts is None) or
+                             _holdout_set_matches(experiment, assignment)):
                         return assignment
                 elif experiment is None:
                     if assignment.assigned is False and \
                             not assignment.rule_override:
                         return assignment
-                elif assignment.rule_override or \
+                elif assignment.suppressed or assignment.rule_override or \
                         experiment_name not in self.custom_assignments or \
                         self.custom_assignments[experiment_name] == \
                         assignment.variant:
-                    if experiment_matches(experiment.data, assignment):
+                    # A suppressed assignment is forced to control, so a
+                    # custom assignment that differs from it is not staleness.
+                    if experiment_matches(experiment.data, assignment) and \
+                            ((experiment.holdouts is None and
+                              assignment.holdouts is None) or
+                             _holdout_set_matches(experiment, assignment)):
                         if _rule_key(experiment.data) == \
                                 assignment.rule_key and \
                                 self._attrs_seq <= (assignment.attrs_seq or 0):
@@ -1194,7 +1381,8 @@ class Context:
                 if self.assignment_cache.get(experiment_name) is assignment:
                     experiment = self.get_experiment(experiment_name)
                     if experiment is not None and \
-                            experiment_matches(experiment.data, assignment):
+                            experiment_matches(experiment.data, assignment) and \
+                            _holdout_set_matches(experiment, assignment):
                         rule_key = _rule_key(experiment.data)
                         if rule_key == assignment.rule_key and \
                                 (assignment.attrs_seq or 0) >= checked_seq:
@@ -1225,6 +1413,11 @@ class Context:
             if exposed_at:
                 assignment.exposedAt = exposed_at
 
+            if experiment is not None and experiment.holdouts is not None:
+                # Resolved for overrides and rule wins too: their holdouts
+                # still publish exposures (JS _assign).
+                self._resolve_holdouts(experiment, assignment)
+
             if experiment_name in self.overrides:
                 if experiment is not None:
                     assignment.id = experiment.data.id
@@ -1241,10 +1434,16 @@ class Context:
                     assignment.rule_key = _rule_key(experiment.data)
                     assignment.rule_variant = rule_variant
                     if rule_variant is not None:
+                        # A matching rule wins over holdout suppression, like
+                        # an override (JS _assign, scenario 305).
                         assignment.variant = rule_variant
                         assignment.assigned = False
                         assignment.eligible = True
                         assignment.rule_override = True
+                    elif assignment.suppressed:
+                        # Held out: control, not assigned. The audience,
+                        # full-on, traffic and custom assignment are skipped.
+                        pass
                     elif experiment.data.audience is not None and \
                             len(experiment.data.audience) > 0:
                         # A rule win happens before audience evaluation (as
@@ -1256,7 +1455,7 @@ class Context:
                             attrs)
                         if match is not None:
                             assignment.audience_mismatch = not match.result
-                    if assignment.rule_override:
+                    if assignment.rule_override or assignment.suppressed:
                         pass
                     elif experiment.data.audienceStrict and \
                             assignment.audience_mismatch:
@@ -1440,6 +1639,99 @@ class Context:
         self.flush().add_done_callback(accept)
         return closing_future
 
+    def _resolve_holdouts(self, experiment: ExperimentVariables,
+                          assignment: Assignment):
+        # Each holdout is evaluated with the covered experiment's unit type,
+        # never the holdout's own (scenario 227). A missing unit leaves a
+        # None entry, which never suppresses; set_unit evicts the assignment
+        # so it is resolved again once the unit is there.
+        unit_type = experiment.data.unitType
+        holdout_assignments = [
+            self._get_holdout_assignment(holdout, unit_type)
+            if unit_type is not None else None
+            for holdout in experiment.holdouts]
+        assignment.holdouts = experiment.holdouts
+        assignment.holdout_assignments = holdout_assignments
+        full_on_variant = experiment.data.fullOnVariant
+        assignment.suppressed = any(
+            holdout_assignment is not None and _is_held_out_by(
+                holdout_assignment.variant,
+                holdout_assignment.holdout_arm_count,
+                full_on_variant)
+            for holdout_assignment in holdout_assignments)
+
+    def _get_holdout_assignment(self, holdout: _Holdout, unit_type: str):
+        # Called under the context write lock. `holdout` may predate a
+        # refresh, so the live definition is preferred. The cached arm (and
+        # its arm count) stays while the iteration is unchanged, so a seed
+        # or split edit does not re-randomise or re-expose.
+        live = self._holdouts_by_id.get(holdout.id, holdout)
+        cache_key = (live.id, unit_type)
+        cached = self._holdout_assignments.get(cache_key)
+        if cached is not None and cached.iteration == live.iteration:
+            return cached
+
+        if unit_type not in self.units:
+            return None
+        unit_hash = self.get_unit_hash(unit_type, self.units[unit_type])
+        assigner = self.get_variant_assigner(unit_type, unit_hash)
+
+        assignment = Assignment()
+        assignment.id = live.id
+        assignment.iteration = live.iteration
+        assignment.name = live.name
+        assignment.unit_type = unit_type
+        assignment.variant = assigner.assign(list(live.split), live.seed_hi,
+                                             live.seed_lo)
+        assignment.assigned = True
+        assignment.eligible = True
+        assignment.holdout_arm_count = len(live.split)
+        self._holdout_assignments[cache_key] = assignment
+        return assignment
+
+    def _retire(self, assignment: Assignment):
+        # Under event_lock, the lock exposures are queued under, so an
+        # assignment is either exposed or retired, never both.
+        try:
+            self.event_lock.acquire_write()
+            if assignment.exposed.value:
+                return False
+            assignment.retired = True
+            return True
+        finally:
+            self.event_lock.release_write()
+
+    def _expose(self, assignment: Assignment):
+        """Expose an assignment; False when set_unit retired it first.
+
+        JS _triggerExposures: a held-out experiment publishes no exposure of
+        its own (unless an override or a rule chose its variant), and every
+        holdout pinned on the assignment publishes its own once per (holdout,
+        unit type), from the snapshot taken when the assignment was resolved,
+        so a refresh in between cannot mix epochs.
+        """
+        if assignment.suppressed and not assignment.overridden and \
+                not assignment.rule_override:
+            try:
+                self.event_lock.acquire_write()
+                if assignment.retired:
+                    return False
+                assignment.exposed.compare_and_set(False, True)
+            finally:
+                self.event_lock.release_write()
+        elif self.queue_exposure(assignment) is False:
+            return False
+
+        holdout_assignments = assignment.holdout_assignments
+        if holdout_assignments:
+            for holdout_assignment in holdout_assignments:
+                if holdout_assignment is not None and \
+                        not holdout_assignment.exposed.value:
+                    if holdout_assignment.exposedAt is None:
+                        holdout_assignment.exposedAt = assignment.exposedAt
+                    self.queue_exposure(holdout_assignment)
+        return True
+
     def queue_exposure(self, assignment: Assignment):
         try:
             self.event_lock.acquire_write()
@@ -1450,6 +1742,8 @@ class Context:
                 # A placeholder computed before recovery: its experiment is
                 # now known, so the next read recomputes and exposes it.
                 return
+            if getattr(assignment, "retired", False):
+                return False
             if not assignment.exposed.compare_and_set(False, True):
                 return
             exposure = Exposure()

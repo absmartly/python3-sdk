@@ -3,12 +3,15 @@ and duck-typed inputs, the H1-H8 conformance cases, no cost (and no wire
 change) without holdouts, and probes that pin the decisions a mutant would
 flip."""
 import json
+import threading
 import types
 import unittest
 from collections import OrderedDict
+from concurrent.futures import Future
 from types import MappingProxyType
 
 from sdk import context as context_module
+from sdk.context_error import ContextError
 from sdk.default_context_data_deserializer import \
     DefaultContextDataDeserializer
 from sdk.json.context_data import ContextData
@@ -393,7 +396,6 @@ class NoHoldoutCostTest(HoldoutTestCase):
         return self.serialized(self.publish(context))
 
     def test_publish_bytes_without_holdouts_are_unchanged(self):
-        # The baseline was recorded on main before holdouts existed.
         for label, data in (
                 ("no key", context_data(self.experiments())),
                 ("null", context_data(self.experiments(), None)),
@@ -604,3 +606,150 @@ class HoldoutMutationProbeTest(HoldoutTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HoldoutLifecycleRaceTest(HoldoutTestCase):
+    """Interleavings of a read with refresh, another reader and close."""
+
+    def test_refresh_between_experiment_and_holdout_lookup_keeps_one_payload(self):
+        # Old payload: an ordinary experiment in arm 2 (normal path, 1).
+        # New payload: full-on variant 1, holdout iteration 2 in arm 1
+        # (full-on experiments are not held out by arm 1, so also 1).
+        old = context_data(
+            [self.covered(1, "exp_epoch", [21])],
+            [three_arm_holdout(21, "h", THREE_ARM_2_SEEDS)])
+        new = context_data(
+            [self.covered(1, "exp_epoch", [21], full_on_variant=1)],
+            [three_arm_holdout(21, "h", THREE_ARM_1_SEEDS, iteration=2)])
+        for data in (old, new):
+            self.set_up_fixture()
+            self.assertEqual(1, self.create_context(data).peek_treatment(
+                "exp_epoch"))
+
+        self.set_up_fixture()
+        context = self.create_context(old)
+        original = context._get_resolution_state
+
+        def refresh_after_read(name):
+            state = original(name)
+            context.set_data(new)
+            return state
+
+        context._get_resolution_state = refresh_after_read
+        assignment = context.get_assignment("exp_epoch")
+        context._get_resolution_state = original
+        self.assertEqual(1, assignment.variant)
+        self.assertEqual(assignment.holdouts[0].iteration,
+                         assignment.holdout_assignments[0].iteration)
+        # The stale resolution does not cache its arm over the installed
+        # payload's; the next read resolves the new payload.
+        self.assertNotIn((21, UNIT_TYPE), context._holdout_assignments)
+        self.assertEqual(1, context.get_treatment("exp_epoch"))
+        self.assertEqual([("exp_epoch", 1, True), ("h", 1, False)],
+                         [(e.name, e.variant, e.fullOn)
+                          for e in context.exposures])
+
+    def test_concurrent_snapshots_publish_their_own_holdout_name(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "exp_a", [11])],
+            [self.holdout_b(id=11, name="old")]))
+        first = context.get_assignment("exp_a", exposed_at=100)
+        self.refresh(context, context_data(
+            [self.covered(1, "exp_a", [11]), self.covered(2, "exp_b", [11])],
+            [self.holdout_b(id=11, name="new")]))
+        second = context.get_assignment("exp_b", exposed_at=200)
+        self.assertIs(first.holdout_assignments[0],
+                      second.holdout_assignments[0])
+        # B's snapshot names the holdout "new"; the shared holdout
+        # assignment (resolved under "old") is not where the name comes from.
+        self.assertTrue(context._expose(second))
+        self.assertTrue(context._expose(first))
+        self.assertEqual([("exp_b", 200), ("new", 200), ("exp_a", 100)],
+                         [(e.name, e.exposedAt) for e in context.exposures])
+        self.assertEqual("old", first.holdout_assignments[0].name)
+
+    def test_threads_exposing_two_snapshots_publish_one_consistent_holdout(self):
+        for _ in range(50):
+            self.set_up_fixture()
+            context = self.create_context(context_data(
+                [self.covered(1, "exp_a", [11])],
+                [self.holdout_b(id=11, name="old")]))
+            a = context.get_assignment("exp_a", exposed_at=100)
+            self.refresh(context, context_data(
+                [self.covered(1, "exp_a", [11]),
+                 self.covered(2, "exp_b", [11])],
+                [self.holdout_b(id=11, name="new")]))
+            b = context.get_assignment("exp_b", exposed_at=200)
+            barrier = threading.Barrier(2)
+
+            def expose(assignment):
+                barrier.wait()
+                context._expose(assignment)
+
+            threads = [threading.Thread(target=expose, args=(x,))
+                       for x in (a, b)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(5)
+            holdout = [(e.name, e.exposedAt) for e in context.exposures
+                       if e.id == 11]
+            self.assertIn(holdout, ([("old", 100)], [("new", 200)]))
+
+    def test_failed_close_between_own_and_holdout_exposure_keeps_holdout_retryable(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "exp_close", [11])], [self.holdout_b(id=11)]))
+        failing = Future()
+        self.client.publish_results.append(failing)
+        closing = []
+        original = context._accept_exposure
+
+        def close_between(assignment, name, exposed_at):
+            # Another thread closes right after the experiment's own
+            # exposure is accepted; it must wait for the holdout's.
+            exposure = original(assignment, name, exposed_at)
+            if not closing:
+                thread = threading.Thread(
+                    target=lambda: closing.append(context.close_async()))
+                thread.start()
+                thread.join(0.2)
+            return exposure
+
+        context._accept_exposure = close_between
+        self.assertEqual(NORMAL_VARIANT, context.get_treatment("exp_close"))
+        context._accept_exposure = original
+        self.client.wait_for_publish(1)
+        self.assertEqual([("exp_close", 1), ("holdout_b", 1)],
+                         [(e.name, e.variant)
+                          for e in self.client.published[0].exposures])
+        failing.set_exception(RuntimeError("publish failed"))
+        with self.assertRaises(RuntimeError):
+            closing[0].result(5)
+        self.assertFalse(context.is_closed())
+        # Both exposures are back in the queue; a later read adds none.
+        self.assertEqual(NORMAL_VARIANT, context.get_treatment("exp_close"))
+        self.assertEqual([("exp_close", 1), ("holdout_b", 1)],
+                         [(e.name, e.variant) for e in context.exposures])
+
+    def test_close_rejects_the_whole_exposure_group(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "exp_close", [11])], [self.holdout_b(id=11)]))
+        assignment = context.get_assignment("exp_close")
+        context.closing.set(True)
+        with self.assertRaises(ContextError):
+            context._expose(assignment)
+        self.assertFalse(assignment.exposed.value)
+        self.assertFalse(assignment.holdout_assignments[0].exposed.value)
+        self.assertEqual([], context.exposures)
+        context.closing.set(False)
+        self.assertTrue(context._expose(assignment))
+        self.assertEqual(2, context.get_pending_count())
+
+    def test_holdout_exposure_reuses_the_experiment_exposure_time(self):
+        times = iter([111, 222, 333])
+        self.clock.millis = lambda: next(times)
+        context = self.create_context(context_data(
+            [self.covered(1, "exp_time", [11])], [self.holdout_b(id=11)]))
+        context.get_treatment("exp_time")
+        self.assertEqual([111, 111],
+                         [e.exposedAt for e in context.exposures])

@@ -933,8 +933,7 @@ class ContextHoldoutTest(HoldoutTestCase):
                          [self.holdout_a()]), publish_delay=0.01)
         with self.assertLogs("sdk.context", "ERROR"):
             context.get_treatment("exp_stranded")
-        self.assertIsNotNone(context.timeout)
-        context.timeout.join(5)
+        self.client.wait_for_publish(1)
         self.assertEqual(0, context.get_pending_count())
         self.assertEqual(
             [self.holdout_exposure(11, "holdout_a", 0)],
@@ -1007,12 +1006,10 @@ class ContextHoldoutTest(HoldoutTestCase):
         # The assigned candidate's exposure is already queued, so only the
         # holdout exposure reached through the variable path is new.
         context.get_treatment("exp_var_flush_assigned")
-        context.timeout.join(5)
-        self.assertIsNone(context.timeout)
+        self.client.wait_for_publish(1)
         self.assertEqual("from_assigned",
                          context.get_variable_value("flush_key", "default"))
-        self.assertIsNotNone(context.timeout)
-        context.timeout.join(5)
+        self.client.wait_for_publish(2)
         self.assertEqual(0, context.get_pending_count())
         self.assertEqual([self.holdout_exposure(11, "holdout_a", 0)],
                          self.exposure_tuples(

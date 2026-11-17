@@ -89,8 +89,6 @@ class ExperimentVariables:
 
 
 class _Holdout:
-    # A validated ContextData.holdouts entry, built once per installed
-    # payload.
     __slots__ = ("id", "name", "iteration", "seed_hi", "seed_lo", "split")
 
     def __init__(self, id, name, iteration, seed_hi, seed_lo, split):
@@ -1098,8 +1096,6 @@ class Context:
         self.check_ready(True)
         assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
         if not assignment.exposed.value and not self._expose(assignment):
-            # set_unit retired it in between: resolve it again, a bounded
-            # number of times.
             for _ in range(_MAX_EXPOSURE_ATTEMPTS - 1):
                 assignment = self.get_assignment(experiment_name,
                                                  exposed_at=exposed_at)
@@ -1305,7 +1301,6 @@ class Context:
             if rule_variant != assignment.rule_variant:
                 return False
             assignment.rule_missing_unit = missing_unit
-        # A held-out assignment never evaluated its audience.
         if not assignment.rule_override and not assignment.suppressed and \
                 experiment.audience is not None and \
                 len(experiment.audience) > 0:
@@ -1397,7 +1392,10 @@ class Context:
 
         try:
             self.context_lock.acquire_write()
-            experiment, failed = self._get_experiment_state(experiment_name)
+            # The holdout definitions are read with the experiment, so a
+            # concurrent refresh cannot mix two payloads in one decision.
+            experiment, failed, holdouts_by_id = \
+                self._get_resolution_state(experiment_name)
             assignment = Assignment()
             assignment.name = experiment_name
             assignment.eligible = True
@@ -1409,7 +1407,7 @@ class Context:
             if experiment is not None and experiment.holdouts is not None:
                 # Resolved for overrides and rule wins too: their holdouts
                 # still publish exposures (JS _assign).
-                self._resolve_holdouts(experiment, assignment)
+                self._resolve_holdouts(experiment, assignment, holdouts_by_id)
 
             if experiment_name in self.overrides:
                 if experiment is not None:
@@ -1514,6 +1512,14 @@ class Context:
         try:
             self.data_lock.acquire_read()
             return self.index.get(experiment_name, None)
+        finally:
+            self.data_lock.release_read()
+
+    def _get_resolution_state(self, experiment_name: str):
+        try:
+            self.data_lock.acquire_read()
+            return self.index.get(experiment_name, None), self.failed, \
+                self._holdouts_by_id
         finally:
             self.data_lock.release_read()
 
@@ -1633,14 +1639,14 @@ class Context:
         return closing_future
 
     def _resolve_holdouts(self, experiment: ExperimentVariables,
-                          assignment: Assignment):
+                          assignment: Assignment, holdouts_by_id):
         # Each holdout is evaluated with the covered experiment's unit type,
         # never the holdout's own (scenario 227). A missing unit leaves a
         # None entry, which never suppresses; set_unit evicts the assignment
         # so it is resolved again once the unit is there.
         unit_type = experiment.data.unitType
         holdout_assignments = [
-            self._get_holdout_assignment(holdout, unit_type)
+            self._get_holdout_assignment(holdout, unit_type, holdouts_by_id)
             if unit_type is not None else None
             for holdout in experiment.holdouts]
         assignment.holdouts = experiment.holdouts
@@ -1653,12 +1659,17 @@ class Context:
                 full_on_variant)
             for holdout_assignment in holdout_assignments)
 
-    def _get_holdout_assignment(self, holdout: _Holdout, unit_type: str):
-        # Called under the context write lock. `holdout` may predate a
-        # refresh, so the live definition is preferred. The cached arm (and
-        # its arm count) stays while the iteration is unchanged, so a seed
-        # or split edit does not re-randomise or re-expose.
-        live = self._holdouts_by_id.get(holdout.id, holdout)
+    def _get_holdout_assignment(self, holdout: _Holdout, unit_type: str,
+                                holdouts_by_id=None):
+        # Called under the context write lock with the holdout definitions
+        # of the payload the experiment came from (the installed ones by
+        # default). `holdout` may predate that payload, so its definition
+        # there is preferred. The cached arm (and its arm count) stays while
+        # the iteration is unchanged, so a seed or split edit does not
+        # re-randomise or re-expose.
+        if holdouts_by_id is None:
+            holdouts_by_id = self._holdouts_by_id
+        live = holdouts_by_id.get(holdout.id, holdout)
         cache_key = (live.id, unit_type)
         cached = self._holdout_assignments.get(cache_key)
         if cached is not None and cached.iteration == live.iteration:
@@ -1679,7 +1690,10 @@ class Context:
         assignment.assigned = True
         assignment.eligible = True
         assignment.holdout_arm_count = len(live.split)
-        self._holdout_assignments[cache_key] = assignment
+        if holdouts_by_id is self._holdouts_by_id:
+            # A resolution still working on a replaced payload must not
+            # overwrite the entry for the installed one.
+            self._holdout_assignments[cache_key] = assignment
         return assignment
 
     def _retire(self, assignment: Assignment):
@@ -1701,32 +1715,76 @@ class Context:
         its own (unless an override or a rule chose its variant), and every
         holdout pinned on the assignment publishes its own once per (holdout,
         unit type), from the snapshot taken when the assignment was resolved,
-        so a refresh in between cannot mix epochs.
+        so a refresh in between cannot mix epochs. The whole group is
+        accepted in one event_lock section, so a concurrent close either
+        rejects all of it (and a later read retries) or publishes all of it;
+        the events are logged after the lock is released.
         """
-        if assignment.suppressed and not assignment.overridden and \
-                not assignment.rule_override:
-            try:
-                self.event_lock.acquire_write()
-                if assignment.retired:
-                    return False
-                assignment.exposed.compare_and_set(False, True)
-            finally:
-                self.event_lock.release_write()
-        elif self.queue_exposure(assignment) is False:
-            return False
+        if assignment.holdout_assignments is None:
+            return self.queue_exposure(assignment) is not False
 
-        holdout_assignments = assignment.holdout_assignments
-        if holdout_assignments:
-            for holdout, holdout_assignment in zip(assignment.holdouts,
-                                                   holdout_assignments):
-                if holdout_assignment is not None and \
-                        not holdout_assignment.exposed.value:
-                    # Named from the snapshot, like JS holdouts[i].data.name.
-                    holdout_assignment.name = holdout.name
-                    if holdout_assignment.exposedAt is None:
-                        holdout_assignment.exposedAt = assignment.exposedAt
-                    self.queue_exposure(holdout_assignment)
+        accepted = []
+        try:
+            self.event_lock.acquire_write()
+            self.check_not_closed()
+            if assignment.retired:
+                return False
+            exposed_at = assignment.exposedAt or self.clock.millis()
+            if assignment.suppressed and not assignment.overridden and \
+                    not assignment.rule_override:
+                assignment.exposed.compare_and_set(False, True)
+            else:
+                exposure = self._accept_exposure(assignment, assignment.name,
+                                                 exposed_at)
+                if exposure is not None:
+                    accepted.append(exposure)
+            for holdout, holdout_assignment in zip(
+                    assignment.holdouts, assignment.holdout_assignments):
+                if holdout_assignment is not None:
+                    # Named from this assignment's snapshot, like JS
+                    # holdouts[i].data.name; the shared holdout assignment
+                    # is not modified.
+                    exposure = self._accept_exposure(
+                        holdout_assignment, holdout.name, exposed_at)
+                    if exposure is not None:
+                        accepted.append(exposure)
+        finally:
+            self.event_lock.release_write()
+
+        for exposure in accepted:
+            self.log_event(EventType.EXPOSURE, exposure)
+        if accepted:
+            self.set_timeout()
         return True
+
+    def _accept_exposure(self, assignment: Assignment, name, exposed_at):
+        # Under event_lock, after check_not_closed: the exposure to queue,
+        # None when there is nothing to queue, False when retired.
+        if assignment.data_failed and not self.failed:
+            # A placeholder computed before recovery: its experiment is
+            # now known, so the next read recomputes and exposes it.
+            return None
+        if getattr(assignment, "retired", False):
+            return False
+        if not assignment.exposed.compare_and_set(False, True):
+            return None
+        exposure = Exposure()
+        exposure.id = assignment.id
+        exposure.name = name
+        exposure.unit = assignment.unit_type
+        exposure.variant = assignment.variant
+        exposure.exposedAt = exposed_at
+        exposure.assigned = assignment.assigned
+        exposure.eligible = assignment.eligible
+        exposure.overridden = assignment.overridden
+        exposure.fullOn = assignment.full_on
+        exposure.custom = assignment.custom
+        exposure.audienceMismatch = assignment.audience_mismatch
+        exposure.ruleOverride = getattr(assignment, "rule_override", False)
+
+        self.pending_count.increment_and_get()
+        self.exposures.append(exposure)
+        return exposure
 
     def queue_exposure(self, assignment: Assignment):
         try:
@@ -1734,32 +1792,13 @@ class Context:
             # Only mark the assignment exposed once the queue accepts the
             # exposure: a context that started closing rejects it instead.
             self.check_not_closed()
-            if assignment.data_failed and not self.failed:
-                # A placeholder computed before recovery: its experiment is
-                # now known, so the next read recomputes and exposes it.
-                return
-            if getattr(assignment, "retired", False):
-                return False
-            if not assignment.exposed.compare_and_set(False, True):
-                return
-            exposure = Exposure()
-            exposure.id = assignment.id
-            exposure.name = assignment.name
-            exposure.unit = assignment.unit_type
-            exposure.variant = assignment.variant
-            exposure.exposedAt = assignment.exposedAt or self.clock.millis()
-            exposure.assigned = assignment.assigned
-            exposure.eligible = assignment.eligible
-            exposure.overridden = assignment.overridden
-            exposure.fullOn = assignment.full_on
-            exposure.custom = assignment.custom
-            exposure.audienceMismatch = assignment.audience_mismatch
-            exposure.ruleOverride = getattr(assignment, "rule_override", False)
-
-            self.pending_count.increment_and_get()
-            self.exposures.append(exposure)
+            exposure = self._accept_exposure(
+                assignment, assignment.name,
+                assignment.exposedAt or self.clock.millis())
         finally:
             self.event_lock.release_write()
 
+        if not exposure:
+            return exposure
         self.log_event(EventType.EXPOSURE, exposure)
         self.set_timeout()

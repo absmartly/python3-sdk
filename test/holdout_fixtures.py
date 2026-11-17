@@ -1,6 +1,8 @@
 """Shared fixtures for the holdout tests (port of the Java SDK's
 ContextHoldoutTest set-up)."""
 import json
+import threading
+import time
 from concurrent.futures import Future
 
 from sdk.audience_matcher import AudienceMatcher
@@ -135,7 +137,9 @@ class FakeClient(Client):
         config.environment = "production"
         super().__init__(config, DefaultHTTPClient(DefaultHTTPClientConfig()))
         self.published = []
+        self.publish_results = []
         self.refresh_data = None
+        self.published_event = threading.Event()
 
     def get_context_data(self):
         future = Future()
@@ -144,9 +148,22 @@ class FakeClient(Client):
 
     def publish(self, event):
         self.published.append(event)
+        self.published_event.set()
+        if self.publish_results:
+            return self.publish_results.pop(0)
         future = Future()
         future.set_result(None)
         return future
+
+    def wait_for_publish(self, count, timeout=5):
+        deadline = time.monotonic() + timeout
+        while len(self.published) < count:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise AssertionError(
+                    f"expected {count} publishes, got {len(self.published)}")
+            self.published_event.wait(remaining)
+            self.published_event.clear()
 
 
 class RecordingLogger(ContextEventLogger):

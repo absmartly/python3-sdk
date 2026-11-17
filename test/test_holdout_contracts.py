@@ -814,3 +814,49 @@ class HoldoutRevalidationTest(HoldoutTestCase):
         context = self.create_context(context_data(
             [self.covered(1, "exp", [11])], [self.holdout_a()]))
         self.assertEqual(1, len(calls))
+
+
+class SuppressedFallbackTest(HoldoutTestCase):
+    """JS _resolveVariableValue: only a held-out candidate that neither an
+    override nor a rule decided becomes the control-value fallback."""
+
+    def two_candidates(self, first_fields=None, overrides=None):
+        first = self.covered(1, "exp_first", [11], **(first_fields or {}))
+        first["variants"] = [{"name": "A", "config": '{"other":"x"}'},
+                             {"name": "B", "config": '{"color":"b1"}'}]
+        second = with_variables(self.covered(2, "exp_second", [11]), "color")
+        return self.create_context(
+            context_data([first, second], [self.holdout_a()]),
+            overrides=overrides)
+
+    def test_overridden_held_out_candidate_is_not_the_fallback(self):
+        context = self.two_candidates(overrides={"exp_first": 0})
+        self.assertEqual("control",
+                         context.peek_variable_value("color", "default"))
+        self.assertEqual("control",
+                         context.get_variable_value("color", "default"))
+
+    def test_rule_won_held_out_candidate_is_not_the_fallback(self):
+        rule = json.dumps({"rules": [{"type": "assign", "variant": 0}]})
+        context = self.two_candidates({"assignmentRules": rule})
+        self.assertTrue(context.get_assignment("exp_first").rule_override)
+        self.assertEqual("control",
+                         context.peek_variable_value("color", "default"))
+        self.assertEqual("control",
+                         context.get_variable_value("color", "default"))
+
+    def test_held_out_assignment_skips_the_audience_on_revalidation(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "exp_aud", [11], audience=json.dumps(
+                {"filter": [{"eq": [{"var": "country"},
+                                    {"value": "US"}]}]}))],
+            [self.holdout_a()]))
+        self.assertEqual(0, context.get_treatment("exp_aud"))
+        calls = []
+        evaluate = context.audience_matcher.evaluate
+        context.audience_matcher.evaluate = \
+            lambda *args: calls.append(args) or evaluate(*args)
+        context.set_attribute("country", "GB")
+        for _ in range(3):
+            self.assertEqual(0, context.get_treatment("exp_aud"))
+        self.assertEqual([], calls)

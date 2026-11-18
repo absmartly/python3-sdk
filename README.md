@@ -297,7 +297,7 @@ treatment = context.get_treatment("exp_covered_by_holdout")  # 0 when held out
 color = context.get_variable_value("button.color", "red")  # control value when held out
 ```
 
-Unless an override or a matching assignment rule chose its variant, the held-out experiment publishes no exposure of its own. The first read of a covered experiment (`get_treatment`, `get_variable_value`) instead publishes each holdout's exposure, named after the holdout, with the unit's arm as its variant. Each holdout is published once per unit type, however many covered experiments are read. `peek_treatment` and `peek_variable_value` publish nothing.
+Unless an override or a matching assignment rule chose its variant, the held-out experiment publishes no exposure of its own. The first read of a covered experiment (`get_treatment`, `get_variable_value`) instead publishes each holdout's exposure, named after the holdout, with the unit's arm as its variant. Each holdout is published once per unit type and holdout iteration, however many covered experiments are read; a new iteration publishes again. `peek_treatment` and `peek_variable_value` publish nothing.
 
 An override (`set_override`) or a matching assignment rule still decides the variant of a held-out unit, and the holdout exposures are still published. Custom assignments, audiences, full-on variants and traffic do not apply to a held-out unit.
 

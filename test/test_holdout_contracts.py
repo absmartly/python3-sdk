@@ -924,3 +924,10 @@ class HoldoutRefreshCostTest(HoldoutTestCase):
         context.get_treatment("exp")
         self.assertEqual(["exp", "holdout_a"],
                          [e.name for e in context.exposures])
+
+    def test_failed_refresh_clears_the_holdout_index(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_a()]))
+        self.assertEqual([11], list(context._holdouts_by_id))
+        context.set_data_failed(RuntimeError("boom"))
+        self.assertEqual({}, context._holdouts_by_id)

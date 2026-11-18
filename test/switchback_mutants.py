@@ -20,7 +20,8 @@ KEYS = "sdk/internal/switchback_cluster_keys.py"
 PATH = "sdk/internal/switchback_attribute_path.py"
 ASSIGNER = "sdk/internal/switchback_assigner.py"
 DRAW = ("        assignment.variant = switchback_assigner.assign(\n"
-        "            serving.cluster_key, period, experiment.switchback.seed,\n"
+        "            serving.cluster_key, period,"
+        " experiment.switchback.seed,\n"
         "            len(data.split))")
 DESIGN = ('        _identity_value(getattr(experiment, '
           '"switchbackDesignType", None)),\n')
@@ -123,9 +124,10 @@ MUTANTS = [
      "self.period_ms is not None and self.period_ms > 0 and \\",
      "self.period_ms is not None and self.period_ms != 0 and \\"),
     ("historic-exposed-at-ignored", CONTEXT,
-     "        return exposed_at if exposed_at else self.clock.millis()\n\n"
-     "    def _assignment_at",
-     "        return self.clock.millis()\n\n    def _assignment_at"),
+     "            now = exposed_at if exposed_at else self.clock.millis()\n"
+     "            assignment = self._assignment_at(",
+     "            now = self.clock.millis()\n"
+     "            assignment = self._assignment_at("),
     # Carryover, burn-in and burn-out (and the estimand) are analysis-only:
     # making any of them identity re-exposes on a refresh.
     ("carryover-is-identity", CONTEXT,
@@ -159,12 +161,15 @@ MUTANTS = [
      "        if period is None and False:\n            # Before the anchor"),
     ("custom-before-traffic", CONTEXT,
      "        unit_hash = self.get_unit_hash(unit_type, serving.uid)\n",
-     "        if custom is not None:\n            assignment.variant = custom\n"
+     "        if custom is not None:\n           "
+     " assignment.variant = custom\n"
      "            assignment.custom = True\n            return\n"
      "        unit_hash = self.get_unit_hash(unit_type, serving.uid)\n"),
     ("traffic-miss-silent", CONTEXT,
-     "            # unit experiment.\n            assignment.eligible = False\n",
-     "            # unit experiment.\n            assignment.eligible = False\n"
+     "            # unit experiment.\n           "
+     " assignment.eligible = False\n",
+     "            # unit experiment.\n           "
+     " assignment.eligible = False\n"
      "            assignment.switchback_silent = True\n"),
     ("ineligible-cluster-recorded", CONTEXT,
      "            assignment.eligible = False\n"
@@ -224,7 +229,8 @@ MUTANTS = [
      "            if switchback is None:"),
     ("generation-kept-on-identity-change", CONTEXT,
      "                if previous is not None and previous.switchback is not "
-     "None \\\n                        and previous.switchback.identity == \\\n"
+     "None \\\n                        and"
+     " previous.switchback.identity == \\\n"
      "                        switchback.identity:",
      "                if previous is not None and previous.switchback is not "
      "None:"),
@@ -261,10 +267,48 @@ MUTANTS = [
      '"switchback"',
      '    return str(getattr(experiment, "randomizationType", None))'
      '.lower() == "switchback"'),
-    ("no-cost-gate-removed", CONTEXT,
-     "        if not self._has_switchbacks and not self._switchback_epochs:\n"
-     "            return None\n        return exposed_at",
-     "        return exposed_at"),
+    ("switchback-names-not-pruned", CONTEXT,
+     "                self._prune_switchback_names()\n           "
+     "     return None",
+     "                return None"),
+    ("names-without-pending-epochs", CONTEXT,
+     "            self._switchback_names = frozenset(\n"
+     "                [e.data.name for e in switchbacks] +\n"
+     "                list(self._switchback_epochs))",
+     "            self._switchback_names = frozenset(\n"
+     "                [e.data.name for e in switchbacks])"),
+    ("revalidation-not-recorded", CONTEXT,
+     "        cached.rule_key = rule_key\n        cached.attrs_seq = "
+     "self._attrs_seq\n        return True",
+     "        return True"),
+    ("rule-won-audience-rechecked", CONTEXT,
+     "        if not cached.rule_override and data.audience is"
+     " not None and \\\n"
+     "                len(data.audience) > 0:\n            match = self."
+     "audience_matcher.evaluate(\n                data.audience, self."
+     "_build_audience_attributes())\n            mismatch",
+     "        if data.audience is not None and \\\n"
+     "                len(data.audience) > 0:\n            match = self."
+     "audience_matcher.evaluate(\n                data.audience, self."
+     "_build_audience_attributes())\n            mismatch"),
+    ("override-value-change-ignored", CONTEXT,
+     "            return cached.overridden and \\\n"
+     "                cached.variant == self.overrides[experiment_name]",
+     "            return cached.overridden"),
+    ("silent-slot-skips-close-check", CONTEXT,
+     "                self.event_lock.acquire_write()\n"
+     "                self.check_not_closed()\n"
+     "                if assignment.retired:\n"
+     "                    return False\n"
+     "                assignment.exposed.compare_and_set(False, True)\n"
+     "                return True",
+     "                self.event_lock.acquire_write()\n"
+     "                if assignment.retired:\n"
+     "                    return False\n"
+     "                assignment.exposed.compare_and_set(False, True)\n"
+     "                return True"),
+    ("hook-reject-keeps-exposed-at", CONTEXT,
+     "                assignment.exposedAt = previous\n", ""),
     # Attributes read at the resolution instant.
     ("attribute-first-wins", CONTEXT,
      "                    (selected is None or set_at >= selected.setAt):",

@@ -5,13 +5,15 @@ Java SDK's SWITCHBACK.md.
 """
 import json
 import threading
+import time
 import unittest
+from concurrent.futures import Future
 
 from sdk.audience_matcher import AudienceMatcher
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 from sdk.internal.variant_assigner import VariantAssigner
 from sdk.utils import hash_unit
-from test.holdout_fixtures import holdout
+from test.holdout_fixtures import context_data, holdout
 from test.switchback_fixtures import (
     ANCHOR, ASSIGN_VARIANT_1, ASSIGN_VARIANT_2, CLUSTER_KEY, CLUSTER_PATH,
     DAY, EXPECTED_10_ARMS, EXPECTED_2_ARMS, EXPECTED_3_ARMS, HOUR,
@@ -116,7 +118,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             exposure(1, "exp_aligned", EXPECTED_2_ARMS[1], ANCHOR + 2 * HOUR),
             exposure(1, "exp_aligned", EXPECTED_2_ARMS[2], ANCHOR + 3 * HOUR))
 
-    def test_anchor_not_on_an_hour_boundary_is_unservable_on_get_and_post(self):
+    def test_unaligned_or_out_of_range_anchor_is_unservable(self):
         max_anchor = 253_402_300_800_000
         long_max = (1 << 63) - 1
         for start_at in (ANCHOR + 1, ANCHOR - 1, ANCHOR + 30 * 60_000,
@@ -175,7 +177,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assertEqual(0, context.get_treatment("exp_sb"))
         self.assertEqual(0, context.get_pending_count())
 
-    def test_null_start_at_is_ineligible_and_never_falls_back_to_unit_assignment(self):
+    def test_null_start_at_never_falls_back_to_unit_assignment(self):
         context = self.create_context([switchback(switchbackStartAt=None)])
         for i in range(4):
             self.clock.now = ANCHOR + i * HOUR
@@ -184,7 +186,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             self.assertEqual(0, context.get_variable_value("sb.arm", -1))
         self.assertEqual(0, context.get_pending_count())
 
-    def test_same_period_is_cached_and_next_period_rolls_over_with_one_exposure_each(self):
+    def test_one_exposure_per_period_across_a_rollover(self):
         context = self.create_context([switchback()])
         self.clock.now = ANCHOR + 10
         self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
@@ -208,7 +210,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             exposure(1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + 10),
             exposure(1, "exp_sb", EXPECTED_2_ARMS[1], ANCHOR + HOUR))
 
-    def test_variable_lookups_follow_the_period_and_expose_once_per_period(self):
+    def test_variable_lookups_follow_the_period(self):
         context = self.create_context([switchback(arm_count=3)])
         self.assertEqual({"sb.arm": ["exp_sb"]},
                          context.get_variable_keys_all())
@@ -243,7 +245,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assert_published(context, exposure(
             1, "exp_sb", EXPECTED_2_ARMS[2], ANCHOR + 2 * HOUR))
 
-    def test_overridden_absent_switchback_is_reresolved_once_its_unit_is_set(self):
+    def test_overridden_absent_slot_reresolves_on_set_unit(self):
         context = self.create_context([switchback()], units={},
                                       overrides={"exp_sb": 1})
         self.clock.now = ANCHOR + 5
@@ -351,7 +353,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
                 for name in ("exp_sb", "exp_absent", "exp_other")])
         self.assertEqual(3, context.get_pending_count())
 
-    def test_refresh_invalidates_when_grid_fields_change_but_not_for_analysis_only_fields(self):
+    def test_refresh_invalidates_on_grid_fields_only(self):
         context = self.create_context([switchback()])
         self.clock.now = ANCHOR + 10
         self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
@@ -487,7 +489,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
                 *[rule_exposure("exp_sb", 1, ANCHOR + i * HOUR)
                   for i in range(4)])
 
-    def test_unservable_only_replaces_the_variant_draw_not_full_on_or_rules(self):
+    def test_unservable_only_replaces_the_draw(self):
         context = self.create_context([
             switchback(1, "sb_full_on", switchbackStartAt=None,
                        fullOnVariant=1),
@@ -564,7 +566,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assertEqual(0, context.get_treatment("exp_sb"))
         self.assert_published(context, strict_mismatch_exposure(ANCHOR - 1))
 
-    def test_audience_strict_mismatch_with_an_unservable_schedule_is_recorded(self):
+    def test_strict_mismatch_on_unservable_schedule_is_recorded(self):
         self.clock.now = ANCHOR + HOUR + 3
         context = self.create_context([switchback(
             audience=STRICT_GOLD_AUDIENCE, audienceStrict=True,
@@ -573,7 +575,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assert_published(context,
                               strict_mismatch_exposure(ANCHOR + HOUR + 3))
 
-    def test_audience_strict_mismatch_with_a_missing_or_unreadable_cluster_map_records_nothing(self):
+    def test_strict_mismatch_on_legacy_path_records_nothing(self):
         for cluster_map in (None, clusters(UNIT_TYPE, "'geo")):
             self.clock.now = ANCHOR + HOUR + 3
             context = self.create_context([switchback(
@@ -582,7 +584,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             self.assertEqual(0, context.get_treatment("exp_sb"), cluster_map)
             self.assertEqual(0, context.get_pending_count(), cluster_map)
 
-    def test_strict_mismatched_switchback_gives_way_on_a_shared_variable_key(self):
+    def test_strict_mismatch_gives_way_on_a_shared_key(self):
         unit = unit_twin(2, "exp_unit", fullOnVariant=1, variants=[
             {"name": "A", "config": json.dumps({"sb.arm": 10})},
             {"name": "B", "config": json.dumps({"sb.arm": 11})}])
@@ -600,7 +602,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             context, strict_mismatch_exposure(ANCHOR + HOUR + 3),
             exposure(2, "exp_unit", 1, ANCHOR + HOUR + 3, full_on=True))
 
-    def test_strict_mismatched_switchback_alone_on_a_variable_key_returns_the_default(self):
+    def test_strict_mismatch_alone_on_a_key_returns_default(self):
         self.clock.now = ANCHOR + HOUR + 3
         context = self.create_context([switchback(
             audience=STRICT_GOLD_AUDIENCE, audienceStrict=True)])
@@ -609,7 +611,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         # Visited, so its strict-mismatch exposure is recorded (see above).
         self.assertEqual(1, context.get_pending_count())
 
-    def test_traffic_miss_on_an_eligible_cluster_publishes_an_ineligible_exposure(self):
+    def test_traffic_miss_on_eligible_cluster_is_recorded(self):
         context = self.create_context([
             switchback(1, "exp_miss", trafficSplit=[1.0, 0.0]),
             switchback(2, "exp_cluster_ineligible", trafficSplit=[1.0, 0.0],
@@ -724,13 +726,17 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + 20 * 60_000))
 
     def test_unit_exposure_timing_is_unchanged(self):
-        # Unit experiments keep stamping at enqueue time, also in a payload
-        # with switchbacks.
+        # Unit experiments keep their single clock reading, at enqueue time,
+        # also in a payload with switchbacks.
         context = self.create_context([switchback(randomizationType="unit"),
                                        switchback(2, "exp_other")])
+        reads = []
+        millis = self.clock.millis
+        self.clock.millis = lambda: reads.append(1) or millis()
         self.clock.now = ANCHOR + HOUR
-        self.clock.next_read = ANCHOR + HOUR - 1
         variant = context.get_treatment("exp_sb")
+        self.assertEqual(1, len(reads))
+        self.clock.millis = millis
         self.assert_published(context, exposure(1, "exp_sb", variant,
                                                 ANCHOR + HOUR))
 
@@ -993,7 +999,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assert_published(context, exposure(1, "exp_sb", 0, ANCHOR,
                                                 eligible=False))
 
-    def test_override_without_a_serving_unit_on_a_legacy_switchback_uses_the_declared_unit_type(self):
+    def test_legacy_override_uses_the_declared_unit_type(self):
         context = self.create_context([
             switchback(1, "exp_missing_map", unitType="user_id",
                        switchbackClusters=None),
@@ -1048,7 +1054,7 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             % (ANCHOR, ANCHOR + 5, ANCHOR + 5, ANCHOR + 9, UID_HASH),
             self.serialized(event))
 
-    def test_queue_exposure_hook_sees_switchback_exposures_with_the_resolution_instant(self):
+    def test_queue_exposure_hook_sees_the_resolution_instant(self):
         context = self.create_context([switchback()])
         hooked = []
         original = context.queue_exposure
@@ -1082,6 +1088,107 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         context.get_treatment("exp_sb")
         self.assertEqual(["exp_unit"], seen)
         self.assertEqual(2, context.get_pending_count())
+
+    def test_unchanged_revalidation_is_recorded_on_the_slot(self):
+        # After set_attribute, one revalidation keeps the slot and records
+        # the attribute sequence, so later reads do not evaluate again.
+        matcher = CountingAudienceMatcher()
+        context = self.create_context([switchback(
+            assignmentRules=ASSIGN_VARIANT_1_TO_US)], audience_matcher=matcher)
+        self.clock.now = ANCHOR + 5
+        slot = context.get_assignment("exp_sb")
+        self.assertEqual(1, matcher.rule_evaluations)
+        context.set_attribute("country", "PT")
+        for _ in range(5):
+            self.assertEqual(EXPECTED_2_ARMS[0],
+                             context.peek_treatment("exp_sb"))
+        self.assertEqual(2, matcher.rule_evaluations)
+        self.assertIs(slot, context.get_assignment("exp_sb"))
+
+    def test_rule_won_slot_ignores_its_audience_on_revalidation(self):
+        # A rule-won slot never consulted the audience (Java audienceMatches
+        # returns early), so an attribute change keeps it and its exposure.
+        context = self.create_context([switchback(
+            assignmentRules=ASSIGN_VARIANT_1, audience=STRICT_GOLD_AUDIENCE,
+            audienceStrict=True)])
+        self.clock.now = ANCHOR + 5
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        slot = context.get_assignment("exp_sb")
+        slot.audience_mismatch = True
+        context.set_attribute("tier", "gold")
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        self.assertIs(slot, context.get_assignment("exp_sb"))
+        self.assert_published(context, rule_exposure("exp_sb", 1, ANCHOR + 5))
+
+    def test_pre_anchor_slot_refreshed_to_full_on_unit(self):
+        # The pre-anchor slot uses the bare experiment name, which the unit
+        # path also caches under: the stale slot is dropped first.
+        context = self.create_context([switchback(
+            switchbackStartAt=ANCHOR + HOUR)])
+        self.clock.now = ANCHOR + 5
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+        self.assertEqual(0, context.get_pending_count())
+        self.refresh_to(context, switchback(randomizationType="unit",
+                                            fullOnVariant=1))
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        self.assert_published(context, exposure(1, "exp_sb", 1, ANCHOR + 5,
+                                                full_on=True))
+        # Its slots are gone, so its reads are back on the unit path.
+        self.assertEqual(frozenset(), context._switchback_names)
+
+    def test_pre_anchor_slot_refreshed_to_identical_unit(self):
+        # The bare-name pre-anchor slot is still cached when the refresh
+        # makes the name a unit experiment; the first read drops it.
+        context = self.create_context([switchback(
+            switchbackStartAt=ANCHOR + HOUR)])
+        self.clock.now = ANCHOR + 5
+        self.assertEqual(0, context.peek_treatment("exp_sb"))
+        # Same id, unit type, iteration, full-on and traffic, so the unit
+        # path alone would take the silent slot as current.
+        self.refresh_to(context, unit_twin(1, "exp_sb"))
+        context.get_treatment("exp_sb")
+        exposures = self.published_exposures(context)
+        self.assertEqual(1, len(exposures))
+        self.assertTrue(exposures[0][5] and exposures[0][6])
+
+    def test_override_value_change_re_resolves_the_slot(self):
+        context = self.create_context([switchback(arm_count=3)])
+        self.clock.now = ANCHOR + 5
+        context.set_override("exp_sb", 1)
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        context.set_override("exp_sb", 2)
+        self.assertEqual(2, context.get_treatment("exp_sb"))
+        self.assertEqual(2, context.get_pending_count())
+
+    def test_exposing_a_silent_slot_on_a_closing_context_raises(self):
+        context = self.create_context([switchback(
+            switchbackClusterValues=["other-store"])])
+        self.clock.now = ANCHOR + 5
+        slot = context.get_assignment("exp_sb")
+        self.assertTrue(slot.switchback_silent)
+        context.closing.set(True)
+        with self.assertRaises(RuntimeError):
+            context._expose_at(slot, ANCHOR + 5)
+        self.assertFalse(slot.exposed.value)
+
+    def test_a_rejecting_queue_exposure_hook_sees_the_retrys_reading(self):
+        context = self.create_context([switchback()])
+        hooked = []
+        original = context.queue_exposure
+
+        def queue_exposure(assignment):
+            hooked.append(assignment.exposedAt)
+            if len(hooked) == 1:
+                return False
+            return original(assignment)
+
+        context.queue_exposure = queue_exposure
+        self.clock.now = ANCHOR + 20
+        self.clock.next_read = ANCHOR + 10
+        self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
+        self.assertEqual([ANCHOR + 10, ANCHOR + 20], hooked)
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + 20))
 
     def test_closed_context_rejects_switchback_reads(self):
         context = self.create_context([switchback()])
@@ -1231,12 +1338,133 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
         self.assertEqual({expected}, set(results))
         self.assertEqual(1, context.get_pending_count())
 
+    def test_concurrent_resolution_and_set_attribute(self):
+        # The cluster attribute changes before both readers re-resolve the
+        # slot and a writer keeps setting it meanwhile: the slot keeps the
+        # key read at its first resolution (Lisboa, variant 1 in period 1;
+        # Faro is 0 there, so a re-read key would show).
+        self.assertEqual((1, 0), (draw("Lisboa", 1, 2), draw("Faro", 1, 2)))
+        matcher = self.BarrierAudienceMatcher()
+        context = self.create_context([switchback(
+            audience=TRUE_AUDIENCE,
+            switchbackClusters=clusters(UNIT_TYPE, "city"))],
+            audience_matcher=matcher)
+        self.clock.now = ANCHOR + HOUR + 10
+        context.set_attribute("city", "Lisboa")
+        self.assertEqual(1, context.peek_treatment("exp_sb"))
+        context.set_attribute("country", "PT")
+        context.set_attribute("city", "Faro")
+        variants = [None, None]
+        failures = []
+        readers_done = threading.Event()
+
+        def read(i):
+            try:
+                variants[i] = context.get_treatment("exp_sb")
+            except Exception as e:  # pragma: no cover - reported below
+                failures.append(e)
+
+        def write():
+            writes = 0
+            while (not readers_done.is_set() or writes < 1000) and \
+                    writes < 100_000:
+                context.set_attribute("city", "Faro")
+                writes += 1
+
+        readers = [threading.Thread(target=read, args=(i,), daemon=True)
+                   for i in range(2)]
+        writer = threading.Thread(target=write, daemon=True)
+        for worker in readers + [writer]:
+            worker.start()
+        for worker in readers:
+            worker.join(10)
+            self.assertFalse(worker.is_alive())
+        readers_done.set()
+        writer.join(10)
+        self.assertFalse(writer.is_alive())
+        self.assertEqual([], failures)
+        self.assertEqual([1, 1], variants)
+        self.assertEqual(1, context.get_pending_count())
+        self.assert_published(context, exposure(
+            1, "exp_sb", 1, ANCHOR + HOUR + 10, audience_mismatch=False))
+
+    class RefreshingAudienceMatcher(AudienceMatcher):
+        # Refreshes the context from inside audience evaluation, which runs
+        # under the context lock.
+        def __init__(self):
+            super().__init__(DefaultAudienceDeserializer())
+            self.context = None
+            self.refresh_on_next_evaluation = False
+
+        def evaluate(self, audience, attributes):
+            if self.refresh_on_next_evaluation:
+                self.refresh_on_next_evaluation = False
+                self.context.refresh()
+            return super().evaluate(audience, attributes)
+
+    def stub_refresh(self, data, on_another_thread):
+        if not on_another_thread:
+            self.client.refresh_data = data
+            return
+        client = self.client
+
+        def get_context_data():
+            future = Future()
+            threading.Thread(target=lambda: (time.sleep(0.05),
+                                             future.set_result(data)),
+                             daemon=True).start()
+            return future
+
+        client.get_context_data = get_context_data
+
+    def treatment_within(self, context, name, timeout=10):
+        result = []
+        worker = threading.Thread(
+            target=lambda: result.append(context.get_treatment(name)),
+            daemon=True)
+        worker.start()
+        worker.join(timeout)
+        self.assertFalse(worker.is_alive(),
+                         "refresh from audience evaluation deadlocked")
+        return result[0]
+
+    def refresh_from_audience_revalidation_completes(self, on_another_thread):
+        experiment = switchback(audience=TRUE_AUDIENCE)
+        matcher = self.RefreshingAudienceMatcher()
+        context = self.create_context([experiment], audience_matcher=matcher)
+        matcher.context = context
+        self.stub_refresh(context_data([experiment]), on_another_thread)
+        self.clock.now = ANCHOR + 5
+        primed = context.get_treatment("exp_sb")
+        context.set_attribute("country", "PT")
+        matcher.refresh_on_next_evaluation = True
+        self.assertEqual(primed, self.treatment_within(context, "exp_sb"))
+        context.wait_until_ready()
+        self.assertEqual(1, context.get_pending_count())
+
+    def test_refresh_in_revalidation_sync_no_deadlock(self):
+        self.refresh_from_audience_revalidation_completes(False)
+
+    def test_refresh_in_revalidation_async_no_deadlock(self):
+        self.refresh_from_audience_revalidation_completes(True)
+
+    def test_refresh_in_first_resolution_async_no_deadlock(self):
+        experiment = switchback(audience=TRUE_AUDIENCE)
+        matcher = self.RefreshingAudienceMatcher()
+        context = self.create_context([experiment], audience_matcher=matcher)
+        matcher.context = context
+        self.stub_refresh(context_data([experiment]), True)
+        matcher.refresh_on_next_evaluation = True
+        self.clock.now = ANCHOR + 5
+        self.treatment_within(context, "exp_sb")
+        self.assertEqual(1, context.get_pending_count())
+
 
 class NoSwitchbackCostTest(SwitchbackTestCase):
 
-    def test_a_payload_without_switchbacks_never_takes_the_switchback_path(self):
+    def test_no_switchbacks_never_takes_the_switchback_path(self):
         context = self.create_context([unit_twin(1, "exp_unit")])
-        self.assertFalse(context._has_switchbacks)
+        self.assertEqual(frozenset(), context._switchback_names)
         calls = []
         context._get_switchback_assignment = \
             lambda *args: calls.append(args)
@@ -1267,7 +1495,7 @@ class NoSwitchbackCostTest(SwitchbackTestCase):
             self.client.published.clear()
             self.clock.now = ANCHOR
             context = self.create_context([data])
-            self.assertFalse(context._has_switchbacks)
+            self.assertEqual(frozenset(), context._switchback_names)
             for i in range(3):
                 self.clock.now = ANCHOR + i * HOUR
                 context.get_treatment("exp_unit")

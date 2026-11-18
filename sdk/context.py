@@ -51,6 +51,17 @@ _JAVA_TRIM = "".join(chr(c) for c in range(0x21))
 
 
 class Assignment:
+    # Switchbacks (see Context._get_switchback_assignment): the epoch the
+    # slot was resolved in, its serving resolution (read once per slot), the
+    # custom assignment it saw, and whether it records no exposure. Class
+    # defaults, set per instance only on switchback slots, so unit
+    # assignments stay as small as before.
+    switchback: bool = False
+    switchback_generation: Optional[int] = None
+    switchback_serving = None
+    switchback_custom: Optional[int] = None
+    switchback_silent: bool = False
+
     def __init__(self):
         self.id: Optional[int] = 0
         self.iteration: Optional[int] = 0
@@ -89,14 +100,6 @@ class Assignment:
         # Evicted by set_unit before it was exposed: a caller still holding
         # it must not expose it (see Context._expose).
         self.retired: bool = False
-        # Switchbacks (see Context._get_switchback_assignment): the epoch the
-        # slot was resolved in, its serving resolution (read once per slot),
-        # the custom assignment it saw, and whether it records no exposure.
-        self.switchback: bool = False
-        self.switchback_generation: Optional[int] = None
-        self.switchback_serving = None
-        self.switchback_custom: Optional[int] = None
-        self.switchback_silent: bool = False
         # A holdout exposure a queue_exposure override is handling.
         self.hook_pending: bool = False
         # Set while a queue_exposure override has not yet been offered every
@@ -453,7 +456,11 @@ class Context:
         self._holdout_assignments = {}
         # Switchbacks: whether the installed data has any, the epoch of
         # every switchback with cached slots, and the generation source.
-        self._has_switchbacks = False
+        # The names that take the switchback path: switchbacks in the
+        # installed data and experiments whose epoch still has slots to
+        # drop. Empty when the data has no switchbacks, which leaves unit
+        # experiments on the path they took before switchbacks.
+        self._switchback_names = frozenset()
         self._switchback_epochs = {}
         self._switchback_generations = 0
         self.custom_assignments = {}
@@ -795,7 +802,9 @@ class Context:
                     switchback.generation = self._switchback_generations
 
             self.index = index
-            self._has_switchbacks = len(switchbacks) > 0
+            self._switchback_names = frozenset(
+                [e.data.name for e in switchbacks] +
+                list(self._switchback_epochs))
             self.index_variables = index_variables
             self.context_custom_fields = context_custom_fields
             self._holdouts_by_id = holdouts_by_id
@@ -947,7 +956,7 @@ class Context:
             self.index = {}
             self.index_variables = {}
             self._holdouts_by_id = {}
-            self._has_switchbacks = False
+            self._switchback_names = frozenset(self._switchback_epochs)
             self.data = ContextData()
             self.failed = True
             self.ready_error = exception
@@ -1229,10 +1238,12 @@ class Context:
             self.data_lock, self.index_variables, key) or []
         # A switchback is resolved and exposed at one clock reading per
         # walk; a retry takes a fresh one.
-        now = self._switchback_clock(None)
+        now = self.clock.millis() if self._switchback_names else None
         suppressed_fallback = None
         for experiment in list(experiments):
-            assignment = self._assignment_at(experiment.data.name, None, now)
+            assignment = self._assignment_at(experiment.data.name, None, now) \
+                if now is not None else \
+                self.get_assignment(experiment.data.name)
             if assignment.variables is not None:
                 if expose and (not assignment.exposed.value or
                                assignment.holdouts_pending) and \
@@ -1273,32 +1284,35 @@ class Context:
 
     def get_treatment(self, experiment_name: str, exposed_at: int = None):
         self.check_ready(True)
-        now = self._switchback_clock(exposed_at)
-        assignment = self._assignment_at(experiment_name, exposed_at, now)
+        if experiment_name in self._switchback_names:
+            return self._switchback_treatment(experiment_name, exposed_at)
+        assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
         if (not assignment.exposed.value or assignment.holdouts_pending) and \
-                not self._expose_at(assignment, now):
+                not self._expose(assignment):
             for _ in range(_MAX_EXPOSURE_ATTEMPTS - 1):
-                now = self._switchback_clock(exposed_at)
-                assignment = self._assignment_at(experiment_name, exposed_at,
-                                                 now)
-                if assignment.exposed.value or \
-                        self._expose_at(assignment, now):
+                assignment = self.get_assignment(experiment_name,
+                                                 exposed_at=exposed_at)
+                if assignment.exposed.value or self._expose(assignment):
                     break
         return assignment.variant
 
-    def _switchback_clock(self, exposed_at):
-        # The instant a switchback is resolved at: exposed_at when given (a
-        # historic exposure is placed in the period it names), otherwise one
-        # clock reading. None when the data has no switchbacks, which keeps
-        # unit experiments on get_assignment exactly as before.
-        if not self._has_switchbacks and not self._switchback_epochs:
-            return None
-        return exposed_at if exposed_at else self.clock.millis()
+    def _switchback_treatment(self, experiment_name, exposed_at):
+        # Each attempt resolves and exposes at one clock reading (exposed_at
+        # when given, so a historic exposure lands in the period it names).
+        for _ in range(_MAX_EXPOSURE_ATTEMPTS):
+            now = exposed_at if exposed_at else self.clock.millis()
+            assignment = self._assignment_at(experiment_name, exposed_at, now)
+            if assignment.exposed.value or self._expose_at(assignment, now):
+                break
+        return assignment.variant
 
     def _assignment_at(self, experiment_name, exposed_at, now):
-        if now is None:
-            return self.get_assignment(experiment_name, exposed_at=exposed_at)
-        return self._resolve_assignment(experiment_name, exposed_at, now)
+        if experiment_name in self._switchback_names:
+            assignment = self._get_switchback_assignment(
+                experiment_name, exposed_at, now)
+            if assignment is not None:
+                return assignment
+        return self.get_assignment(experiment_name, exposed_at=exposed_at)
 
     def get_variable_keys(self):
         """Map each variable key to the name of one experiment defining it.
@@ -1513,12 +1527,9 @@ class Context:
         return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
-        return self._resolve_assignment(experiment_name, exposed_at, None)
-
-    def _resolve_assignment(self, experiment_name, exposed_at, now):
-        if self._has_switchbacks or self._switchback_epochs:
+        if experiment_name in self._switchback_names:
             assignment = self._get_switchback_assignment(
-                experiment_name, exposed_at, now)
+                experiment_name, exposed_at, None)
             if assignment is not None:
                 return assignment
         checked_seq = None
@@ -1752,6 +1763,7 @@ class Context:
                     epoch.generation != switchback.generation):
                 self._drop_switchback_epoch(experiment_name)
             if switchback is None:
+                self._prune_switchback_names()
                 return None
 
             period = switchback.period(now)
@@ -1983,6 +1995,19 @@ class Context:
         sources = experiment.switchback.sources
         return sources[0][0] if sources is not None \
             else experiment.data.unitType
+
+    def _prune_switchback_names(self):
+        # Once a former switchback's slots are dropped its reads go back to
+        # the unit path. Recomputed under the data lock from the installed
+        # data, so a concurrent set_data cannot lose a new switchback.
+        try:
+            self.data_lock.acquire_write()
+            self._switchback_names = frozenset(
+                [name for name, experiment in self.index.items()
+                 if experiment.switchback is not None] +
+                list(self._switchback_epochs))
+        finally:
+            self.data_lock.release_write()
 
     def _drop_switchback_epoch(self, experiment_name):
         # Drops every slot of the epoch, the bare-name slot included. Caller

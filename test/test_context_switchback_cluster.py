@@ -218,7 +218,7 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
                 self.assertEqual(0, context.get_treatment("exp_sb"), data)
             self.assertEqual(0, context.get_pending_count(), data)
 
-    def test_missing_or_empty_cluster_map_is_only_a_legacy_ineligible_control(self):
+    def test_missing_or_empty_cluster_map_is_legacy(self):
         for cluster_map in (None, {}):
             data = attribute_switchback("city",
                                         switchbackClusters=cluster_map)
@@ -233,7 +233,7 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
             self.assertEqual(-1, other.get_variable_value("sb.arm", -1))
             self.assertEqual(0, other.get_pending_count())
 
-    def test_latest_attribute_set_at_or_before_the_resolution_instant_is_used(self):
+    def test_latest_attribute_at_or_before_now_is_used(self):
         context = self.context([attribute_switchback("city")])
         self.clock.now = ANCHOR + 2 * HOUR
         context.set_attribute("city", "Porto")
@@ -243,12 +243,13 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
         self.clock.now = ANCHOR + HOUR
         self.assertEqual(0, context.peek_treatment("exp_sb"))
         self.clock.now = ANCHOR + 3 * HOUR
-        self.assertEqual(expected("Porto", 3), context.peek_treatment("exp_sb"))
+        self.assertEqual(expected("Porto", 3),
+                         context.peek_treatment("exp_sb"))
         self.clock.now = ANCHOR + 4 * HOUR
         self.assertEqual(expected("Lisboa", 4),
                          context.peek_treatment("exp_sb"))
 
-    def test_set_attribute_mid_period_does_not_reassign_within_the_period(self):
+    def test_set_attribute_mid_period_keeps_the_cluster(self):
         context = self.context([attribute_switchback("city")])
         self.clock.now = ANCHOR + 10
         context.set_attribute("city", "Lisboa")
@@ -271,7 +272,7 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
         self.assertNotEqual(0, differing)
         self.assertEqual(12, context.get_pending_count())
 
-    def test_attribute_set_after_an_ineligible_resolution_waits_for_the_next_period(self):
+    def test_late_attribute_waits_for_the_next_period(self):
         context = self.context([attribute_switchback("city")])
         self.clock.now = ANCHOR + 10
         self.assertEqual(0, context.get_treatment("exp_sb"))
@@ -322,7 +323,7 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
             context, exposure(1, "exp_sb", 0, ANCHOR + 10, eligible=False),
             exposure(1, "exp_sb", expected("Faro", 0), ANCHOR + 20))
 
-    def test_audience_revalidation_after_set_attribute_keeps_the_periods_bucket(self):
+    def test_audience_revalidation_keeps_the_cluster(self):
         audience = json.dumps(
             {"filter": [{"eq": [{"var": "tier"}, {"value": "gold"}]}]})
         context = self.context([attribute_switchback("city",
@@ -343,7 +344,7 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
             exposure(1, "exp_sb", expected("Lisboa", 0), ANCHOR + 20,
                      audience_mismatch=True))
 
-    def test_unchanged_audience_after_set_attribute_keeps_the_exposed_slot(self):
+    def test_unchanged_audience_keeps_the_exposed_slot(self):
         audience = json.dumps(
             {"filter": [{"eq": [{"var": "tier"}, {"value": "gold"}]}]})
         context = self.context([attribute_switchback("city",
@@ -355,7 +356,7 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
         self.assertEqual(first, context.get_treatment("exp_sb"))
         self.assertEqual(1, context.get_pending_count())
 
-    def test_audience_revalidation_after_an_ineligible_resolution_keeps_the_missing_key(self):
+    def test_audience_revalidation_keeps_the_missing_key(self):
         audience = json.dumps(
             {"filter": [{"eq": [{"var": "tier"}, {"value": "gold"}]}]})
         context = self.context([attribute_switchback("city",
@@ -541,7 +542,7 @@ class ContextSwitchbackClusterRuleTest(ClusterTestCase):
         self.assertEqual("test config 0", assignment["config"])
         self.assertEqual([], assignment["exposures"], attributes)
 
-    def test_missing_or_unreadable_cluster_configuration_returns_only_legacy_ineligible_control(self):
+    def test_unreadable_cluster_config_is_legacy_control(self):
         attributes = {"geo": {"city": "Porto"}, "geo.city": "Faro",
                       "session_store": "s-1"}
         for broken in (None, {}, clusters(SESSION, "'geo"),
@@ -599,7 +600,7 @@ class ContextSwitchbackClusterRuleTest(ClusterTestCase):
         self.assertEqual(USER, assignment["unit"])
         self.assertEqual(scheduled("s-17"), assignment["variant"])
 
-    def test_strict_audience_mismatch_on_an_eligible_cluster_is_listed_as_control_and_recorded(self):
+    def test_strict_mismatch_on_eligible_cluster_is_recorded(self):
         audience = json.dumps(
             {"filter": [{"eq": [{"var": "tier"}, {"value": "gold"}]}]})
         assignment = self.serve({"session_store": "s-17"}, {SESSION: "x1"},
@@ -698,7 +699,7 @@ class ContextSwitchbackClusterRuleTest(ClusterTestCase):
         self.assertEqual([], self.client.published)
         self.assertEqual([], self.logged_exposures())
 
-    def test_a_unit_without_a_value_does_not_serve_even_if_first_in_declared_order(self):
+    def test_first_declared_unit_without_value_does_not_serve(self):
         key = "s-17"
         self.assertNotEqual(0, scheduled(key))
         assignment = self.serve({"profile": {"store": key}},
@@ -736,7 +737,7 @@ class ContextSwitchbackClusterRuleTest(ClusterTestCase):
                 self.assertTrue(assignment["eligible"])
                 self.assertEqual(scheduled(f"s-{i}"), assignment["variant"])
 
-    def test_valid_cluster_without_linked_unit_does_not_fall_back_to_experiment_unit(self):
+    def test_no_linked_unit_never_falls_back_to_unit_type(self):
         experiments = [sbc(switchbackClusters=clusters(SESSION,
                                                        "session_store"))]
         key = "s-17"

@@ -505,6 +505,7 @@ class Context:
         # experiments on the path they took before switchbacks.
         self._switchback_names = frozenset()
         self._switchback_epochs = {}
+        self._switchback_read = threading.local()
         self._switchback_generations = 0
         self.custom_assignments = {}
         self.overrides = {}
@@ -725,6 +726,18 @@ class Context:
         attribute.setAt = self.clock.millis()
         try:
             self.context_lock.acquire_write()
+            if self._switchback_epochs:
+                # A later write must sort after a cluster read even when the
+                # clock has not ticked: Collector ties select the last write.
+                # Keep this limited to attributes already read by a slot.
+                for cached in self.assignment_cache.values():
+                    serving = cached.switchback_serving
+                    if serving is not None and serving.read_at is not None:
+                        roots = getattr(serving, "attribute_names", ())
+                        if isinstance(name, str) and \
+                                name.strip(_JAVA_TRIM) in roots and \
+                                attribute.setAt == serving.read_at:
+                            attribute.setAt = serving.read_at + 1
             self.attributes.append(attribute)
             self._attrs_seq += 1
         finally:
@@ -1332,13 +1345,19 @@ class Context:
             return self._switchback_treatment(experiment_name, exposed_at)
         assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
         if (not assignment.exposed.value or assignment.holdouts_pending) and \
-                not self._expose(assignment):
+                not self._expose_handoff(assignment):
             for _ in range(_MAX_EXPOSURE_ATTEMPTS - 1):
                 assignment = self.get_assignment(experiment_name,
                                                  exposed_at=exposed_at)
-                if assignment.exposed.value or self._expose(assignment):
+                if assignment.exposed.value or self._expose_handoff(assignment):
                     break
         return assignment.variant
+
+    def _expose_handoff(self, assignment):
+        if assignment.switchback:
+            return self._expose_at(
+                assignment, getattr(self._switchback_read, "now", None))
+        return self._expose(assignment)
 
     def _switchback_treatment(self, experiment_name, exposed_at):
         # Each attempt resolves and exposes at one clock reading (exposed_at
@@ -1572,18 +1591,20 @@ class Context:
         return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
-        if experiment_name in self._switchback_names:
-            assignment = self._get_switchback_assignment(
-                experiment_name, exposed_at, None)
+        # A definition can change again during either handoff. Retry here,
+        # never let the internal route-mismatch sentinel escape to callers.
+        while True:
+            if experiment_name in self._switchback_names:
+                now = exposed_at if exposed_at is not None else \
+                    self.clock.millis()
+                assignment = self._get_switchback_assignment(
+                    experiment_name, exposed_at, now)
+                if assignment is not None:
+                    self._switchback_read.now = now
+                    return assignment
+            assignment = self._get_unit_assignment(experiment_name, exposed_at)
             if assignment is not None:
                 return assignment
-        assignment = self._get_unit_assignment(experiment_name, exposed_at)
-        if assignment is None:
-            # A refresh installed a switchback under this name after the
-            # check above: resolve the definition that is installed now.
-            assignment = self._get_switchback_assignment(
-                experiment_name, exposed_at, None)
-        return assignment
 
     def _get_unit_assignment(self, experiment_name, exposed_at):
         # None when the installed definition turns out to be a switchback.
@@ -2032,6 +2053,9 @@ class Context:
             serving = switchback_serving.resolve(
                 types, paths, switchback.allowed, self.units, read)
         serving.read_at = now
+        serving.attribute_names = tuple(
+            path.root_key() for path in switchback.sources[1]) \
+            if switchback.sources is not None else ()
         return serving
 
     def _latest_attribute(self, name, now):
@@ -2404,14 +2428,9 @@ class Context:
             else self.clock.millis())
         if getattr(self.queue_exposure, "__func__", None) is not \
                 Context.queue_exposure:
-            # The hook reads the time from the assignment; it is set only for
-            # this call, so a failed or rejected call leaves no stale time
-            # on the cached slot.
-            assignment.exposedAt = exposed_at
-            try:
-                return self.queue_exposure(assignment) is not False
-            finally:
-                assignment.exposedAt = None
+            view = copy.copy(assignment)
+            view.exposedAt = exposed_at
+            return self.queue_exposure(view) is not False
         return self._queue_exposure_at(assignment, exposed_at) is not False
 
     def _switchback_exposed_at(self, assignment, now):

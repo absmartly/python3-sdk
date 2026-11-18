@@ -82,19 +82,21 @@ MUTANTS = [
     ("bool-is-int", KEYS,
      "    if isinstance(value, int) and not isinstance(value, bool):",
      "    if isinstance(value, int):"),
-    ("whole-float-is-int", KEYS, "        return str(int(value))\n",
-     "        return str(int(value))\n"
-     "    if isinstance(value, float) and value.is_integer():\n"
-     "        return str(int(value))\n"),
-    ("float-as-text", KEYS, "        return str(int(value))\n",
-     "        return str(int(value))\n"
-     "    if isinstance(value, float):\n        return str(value)\n"),
+    ("whole-float-is-int", KEYS,
+     "    if isinstance(value, int) and not isinstance(value, bool):",
+     "    if (isinstance(value, int) and not isinstance(value, bool)) or "
+     "(isinstance(value, float) and value.is_integer()):"),
+    ("float-as-text", KEYS,
+     "    if isinstance(value, int) and not isinstance(value, bool):",
+     "    if isinstance(value, float):\n        return str(value)\n"
+     "    if isinstance(value, int) and not isinstance(value, bool):"),
     ("empty-string-key", KEYS,
      "        return value if len(value) > 0 else None",
      "        return value"),
-    ("container-as-key", KEYS, "        return str(int(value))\n",
-     "        return str(int(value))\n"
-     "    if isinstance(value, (dict, list)):\n        return str(value)\n"),
+    ("container-as-key", KEYS,
+     "    if isinstance(value, int) and not isinstance(value, bool):",
+     "    if isinstance(value, (dict, list)):\n        return str(value)\n"
+     "    if isinstance(value, int) and not isinstance(value, bool):"),
     # Period index, schedule and anchor.
     ("period-truncating-division", CONTEXT,
      "        return (now - self.start_at) // self.period_ms",
@@ -297,10 +299,10 @@ MUTANTS = [
      "                self._switchback_names | {experiment_name}\n"
      "        if period is None:"),
     ("get-assignment-gate-widened", CONTEXT,
-     "    def get_assignment(self, experiment_name: str, exposed_at: int = "
-     "None):\n        if experiment_name in self._switchback_names:",
-     "    def get_assignment(self, experiment_name: str, exposed_at: int = "
-     "None):\n        if self._switchback_names:"),
+     "            if experiment_name in self._switchback_names:\n"
+     "                now = exposed_at",
+     "            if self._switchback_names:\n"
+     "                now = exposed_at"),
     ("assignment-at-gate-removed", CONTEXT,
      "    def _assignment_at(self, experiment_name, exposed_at, now):\n"
      "        if experiment_name in self._switchback_names:",
@@ -345,13 +347,9 @@ MUTANTS = [
      "                    return False\n"
      "                assignment.exposed.compare_and_set(False, True)\n"
      "                return True"),
-    ("hook-reject-keeps-exposed-at", CONTEXT,
-     "            try:\n                return self.queue_exposure("
-     "assignment) is not False\n            finally:\n"
-     "                assignment.exposedAt = None",
-     "            if self.queue_exposure(assignment) is False:\n"
-     "                return False\n            assignment.exposedAt = None\n"
-     "            return True"),
+    ("hook-view-shared", CONTEXT,
+     "            view = copy.copy(assignment)\n",
+     "            view = assignment\n"),
     ("unit-path-applies-switchback", CONTEXT,
      "            if experiment is not None and experiment.switchback is not "
      "None:\n                return None\n            assignment = "
@@ -373,9 +371,6 @@ MUTANTS = [
     ("resolved-zero-is-absent", CONTEXT,
      "            assignment, resolved_at if resolved_at is not None\n",
      "            assignment, resolved_at if resolved_at\n"),
-    ("hook-time-kept-on-failure", CONTEXT,
-     "            finally:\n                assignment.exposedAt = None\n",
-     "            finally:\n                pass\n"),
     ("exposure-not-reconstructible", CONTEXT,
      "        if read_at is None or read_at == now:\n            return now",
      "        if True:\n            return now"),
@@ -416,6 +411,13 @@ MUTANTS = [
      "        except ValueError:",
      "        try:\n            return str(int(value))\n"
      "        except ZeroDivisionError:"),
+    ("same-tick-not-ordered", CONTEXT,
+     "                                attribute.setAt == serving.read_at:",
+     "                                False:"),
+    ("handoff-exposure-without-time", CONTEXT,
+     '                assignment, getattr(self._switchback_read, '
+     '"now", None))',
+     "                assignment, None)"),
     # Attributes read at the resolution instant.
     ("attribute-first-wins", CONTEXT,
      "                    (selected is None or set_at >= selected.setAt):",
@@ -484,7 +486,14 @@ def main(selected):
                 print(f"{name}: pattern found {source.count(old)} times")
                 failures.append(name)
                 continue
-            path.write_text(source.replace(old, new))
+            mutated = source.replace(old, new)
+            try:
+                compile(mutated, str(path), "exec")
+            except SyntaxError as e:
+                print(f"{name}: INVALID ({e})", flush=True)
+                failures.append(name + " (invalid)")
+                continue
+            path.write_text(mutated)
             try:
                 result = subprocess.run(
                     [sys.executable, "-m", "unittest", *TESTS], cwd=work,

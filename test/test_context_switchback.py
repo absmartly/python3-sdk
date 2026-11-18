@@ -1693,6 +1693,112 @@ class JervasionRoundOneTest(SwitchbackTestCase):
         self.assertEqual(2, context.get_pending_count())
 
 
+class JervasionRoundTwoTest(SwitchbackTestCase):
+
+    def test_eligible_handoff_keeps_the_requested_period_time(self):
+        context = self.create_context([unit_twin(1, "exp_sb")])
+        self.clock.now = ANCHOR + HOUR
+        acquire = context.context_lock.acquire_read
+        changed = []
+
+        def refresh_before_lock():
+            if not changed:
+                changed.append(True)
+                self.refresh_to(context, switchback())
+            acquire()
+
+        context.context_lock.acquire_read = refresh_before_lock
+        self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment(
+            "exp_sb", exposed_at=ANCHOR))
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR))
+
+    def test_two_refresh_handoffs_never_return_none(self):
+        context = self.create_context([unit_twin(1, "exp_sb")])
+        original_unit = context._get_unit_assignment
+        original_sb = context._get_switchback_assignment
+        changes = []
+
+        def unit(name, at):
+            if not changes:
+                changes.append("sb")
+                self.refresh_to(context, switchback())
+            return original_unit(name, at)
+
+        def sb(name, at, now):
+            if changes == ["sb"]:
+                changes.append("unit")
+                unit_data = unit_twin(1, "exp_sb", fullOnVariant=1)
+                self.refresh_to(context, unit_data)
+            return original_sb(name, at, now)
+
+        context._get_unit_assignment = unit
+        context._get_switchback_assignment = sb
+        self.assertEqual(1, context.peek_treatment("exp_sb"))
+        self.assertEqual(["sb", "unit"], changes)
+
+    def test_same_tick_cluster_writes_are_reconstructible(self):
+        context = self.create_context([switchback(
+            arm_count=3, switchbackClusters=clusters(UNIT_TYPE, "city"))],
+            cluster_attribute=False)
+        self.clock.now = ANCHOR + 10
+        context.set_attribute("city", "11")
+        first = context.peek_treatment("exp_sb")
+        context.set_attribute("city", "10")
+        self.clock.now += 20
+        self.assertEqual(first, context.get_treatment("exp_sb"))
+        event = self.publish_event(context)
+        timestamp = event.exposures[0].exposedAt
+        visible = [a for a in event.attributes if a.setAt <= timestamp]
+        # Collector breaks ties by the last published write.
+        selected = sorted(enumerate(visible),
+                          key=lambda pair: (pair[1].setAt, pair[0]))[-1][1]
+        self.assertEqual("11", selected.value)
+        self.assertEqual(draw(selected.value, 0, 3), first)
+        self.assertEqual([ANCHOR + 10, ANCHOR + 11],
+                         [a.setAt for a in event.attributes])
+
+    def test_overlapping_hook_failure_cannot_change_forwarded_time(self):
+        context = self.create_context([switchback()])
+        self.clock.now = ANCHOR + 10
+        entered = threading.Event()
+        resume = threading.Event()
+        original = context.queue_exposure
+        calls = []
+        errors = []
+
+        def hook(assignment):
+            calls.append(assignment)
+            if len(calls) == 1:
+                entered.set()
+                if not resume.wait(5):
+                    raise AssertionError("forwarder not resumed")
+                return original(assignment)
+            raise RuntimeError("second hook failed")
+
+        def first():
+            try:
+                context.get_treatment("exp_sb")
+            except Exception as e:
+                errors.append(e)
+
+        context.queue_exposure = hook
+        worker = threading.Thread(target=first, daemon=True)
+        worker.start()
+        self.assertTrue(entered.wait(5))
+        self.clock.now = ANCHOR + 20
+        with self.assertRaises(RuntimeError):
+            context.get_treatment("exp_sb")
+        self.clock.now = ANCHOR + HOUR
+        resume.set()
+        worker.join(5)
+        self.assertFalse(worker.is_alive())
+        self.assertEqual([], errors)
+        self.assertIsNot(calls[0], calls[1])
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + 10))
+
+
 class GatePassSixTest(SwitchbackTestCase):
 
     def test_renaming_a_linked_unit_type_is_a_new_epoch(self):

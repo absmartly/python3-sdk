@@ -319,7 +319,7 @@ treatment = context.get_treatment("exp_switchback")  # Lisbon's variant in this 
 - No unit of a linked type: the experiment does not apply (control, nothing published).
 - Before the schedule starts, or with a schedule the SDK cannot serve, the unit gets the control variant and nothing is published. Overrides, assignment rules, strict audiences and full-on variants still apply.
 - The cluster is read once per period: a `set_attribute` later in the same period does not move the unit to another cluster. The next period reads it again.
-- Each period publishes one exposure, stamped with the time that chose the period. The exposure looks the same as a unit experiment's, under the serving unit's type. Attributes are still published with their timestamps, because the Collector re-resolves the cluster from them.
+- Each period publishes one exposure, stamped with the time that chose the period. The exposure looks the same as a unit experiment's, under the serving unit's type. Attributes are still published with their timestamps, because the Collector re-resolves the cluster from them. If an attribute changes after a peek pinned the cluster, the exposure uses the original in-period cluster-read time so the Collector reconstructs that cluster. A subsequent write to a cluster attribute in the same clock tick is timestamped one millisecond later to preserve this ordering; unit-only contexts keep their existing timestamps.
 - Holdouts never apply to a switchback experiment.
 - Variable reads expose every experiment they visit on the way to the one that defines the key, for switchbacks as for unit experiments (this SDK's behaviour since 0.3.0). The Java SDK exposes only the winning experiment.
 

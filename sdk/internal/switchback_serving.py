@@ -27,11 +27,13 @@ ELIGIBLE = 2
 
 
 class SwitchbackServing:
-    __slots__ = ("status", "unit_type", "uid", "cluster_key", "read_at")
+    __slots__ = ("status", "unit_type", "uid", "cluster_key", "read_at",
+                 "attribute_names")
 
     def __init__(self, status, unit_type=None, uid=None, cluster_key=None):
         self.status = status
         self.read_at = None
+        self.attribute_names = ()
         self.unit_type = unit_type
         self.uid = uid
         # The raw normalised cluster key when ELIGIBLE; never hashed.

@@ -857,13 +857,16 @@ class SuppressedFallbackTest(HoldoutTestCase):
         self.assertEqual("control",
                          context.get_variable_value("color", "default"))
 
-    def test_held_out_assignment_skips_the_audience_on_revalidation(self):
+    def test_held_out_assignment_rechecks_the_audience_once_like_js(self):
+        # JS audienceMatches runs for a held-out assignment too; a changed
+        # result rebuilds it once, then the new attrs_seq keeps it cached.
         context = self.create_context(context_data(
             [self.covered(1, "exp_aud", [11], audience=json.dumps(
                 {"filter": [{"eq": [{"var": "country"},
                                     {"value": "US"}]}]}))],
             [self.holdout_a()]))
         self.assertEqual(0, context.get_treatment("exp_aud"))
+        first = context.get_assignment("exp_aud")
         calls = []
         evaluate = context.audience_matcher.evaluate
         context.audience_matcher.evaluate = \
@@ -871,7 +874,27 @@ class SuppressedFallbackTest(HoldoutTestCase):
         context.set_attribute("country", "GB")
         for _ in range(3):
             self.assertEqual(0, context.get_treatment("exp_aud"))
-        self.assertEqual([], calls)
+        self.assertEqual(1, len(calls))
+        self.assertIsNot(first, context.get_assignment("exp_aud"))
+        self.assertEqual([("holdout_a", 0)],
+                         [(e.name, e.variant) for e in context.exposures])
+
+    def test_rebuilt_held_out_assignment_publishes_the_renamed_holdout(self):
+        # Parity with JS: peek, an attribute change and a same-iteration
+        # rename; the next treatment rebuilds from the new payload.
+        audience = json.dumps({"filter": [{"eq": [{"var": "country"},
+                                                  {"value": "US"}]}]})
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11], audience=audience)],
+            [self.holdout_a(name="h4")]))
+        self.assertEqual(0, context.peek_treatment("exp"))
+        context.set_attribute("country", "GB")
+        self.refresh(context, context_data(
+            [self.covered(1, "exp", [11], audience=audience)],
+            [self.holdout_a(name="h4x")]))
+        self.assertEqual(0, context.get_treatment("exp"))
+        self.assertEqual([("h4x", 0)],
+                         [(e.name, e.variant) for e in context.exposures])
 
 
 class HoldoutRefreshCostTest(HoldoutTestCase):
@@ -998,3 +1021,31 @@ class SharedArmAcrossRefreshTest(HoldoutTestCase):
         self.assertEqual(0, context.get_treatment("exp_b"))
         self.assertEqual([("h", 0)],
                          [(e.name, e.variant) for e in context.exposures])
+
+
+class QueueExposureHookTest(HoldoutTestCase):
+    """A v0.2.4 Context subclass overriding queue_exposure still sees
+    every exposure, covered experiments and holdouts included."""
+
+    def test_subclass_override_sees_covered_and_holdout_exposures(self):
+        from sdk.context import Context
+        seen = []
+
+        class Recording(Context):
+            def queue_exposure(self, assignment):
+                seen.append(assignment.name)
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(
+            context_data([self.covered(1, "exp_covered", [11]),
+                          self.covered(2, "exp_held", [12]),
+                          experiment(3, "exp_plain")],
+                         [self.holdout_b(id=11, name="hb"),
+                          self.holdout_a(id=12, name="ha")]),
+            units={UNIT_TYPE: UID})
+        context.__class__ = Recording
+        for name in ("exp_covered", "exp_held", "exp_plain", "exp_covered"):
+            context.get_treatment(name)
+        self.assertEqual(["exp_covered", "hb", "ha", "exp_plain"], seen)
+        self.assertEqual(["exp_covered", "hb", "ha", "exp_plain"],
+                         [e.name for e in context.exposures])

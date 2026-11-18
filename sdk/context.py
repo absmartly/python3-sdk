@@ -1317,7 +1317,9 @@ class Context:
             if rule_variant != assignment.rule_variant:
                 return False
             assignment.rule_missing_unit = missing_unit
-        if not assignment.rule_override and not assignment.suppressed and \
+        # Like JS audienceMatches, a held-out assignment is checked too: a
+        # changed result rebuilds it from the current payload.
+        if not assignment.rule_override and \
                 experiment.audience is not None and \
                 len(experiment.audience) > 0:
             attrs = self._build_audience_attributes()
@@ -1743,6 +1745,8 @@ class Context:
         """
         if assignment.holdout_assignments is None:
             return self.queue_exposure(assignment) is not False
+        if type(self).queue_exposure is not Context.queue_exposure:
+            return self._expose_through_hook(assignment)
 
         accepted = []
         try:
@@ -1776,6 +1780,27 @@ class Context:
             self.log_event(EventType.EXPOSURE, exposure)
         if accepted:
             self.set_timeout()
+        return True
+
+    def _expose_through_hook(self, assignment: Assignment):
+        # A subclass overriding queue_exposure (a v0.2.4 extension point)
+        # keeps seeing every exposure, one call each, at the cost of the
+        # grouped acceptance.
+        if assignment.suppressed and not assignment.overridden and \
+                not assignment.rule_override:
+            try:
+                self.event_lock.acquire_write()
+                if assignment.retired:
+                    return False
+                assignment.exposed.compare_and_set(False, True)
+            finally:
+                self.event_lock.release_write()
+        elif self.queue_exposure(assignment) is False:
+            return False
+        for holdout_assignment in assignment.holdout_assignments:
+            if holdout_assignment is not None and \
+                    not holdout_assignment.exposed.value:
+                self.queue_exposure(holdout_assignment)
         return True
 
     def _accept_exposure(self, assignment: Assignment, name, exposed_at):

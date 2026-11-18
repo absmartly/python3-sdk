@@ -8,7 +8,6 @@
 
 ### Changed
 - Payloads with `holdouts` change assignment for held-out units. 0.3.0 ignored holdouts, so a unit the backend holds out still got its experiment's variant and an experiment exposure. From 0.4.0 that unit gets the control variant, and the holdout's exposure replaces the experiment's. Units that are not held out keep their variants, but their reads of covered experiments now also publish the holdout exposures. Payloads without holdouts are unaffected.
-- Exposures of experiments covered by a holdout, and the holdout exposures themselves, are queued as one group and do not go through `Context.queue_exposure`, so a `Context` subclass overriding that method does not see them. Other exposures still go through it.
 - The `X-Agent` header and `sdk_version` report `0.4.0`.
 
 ## 0.3.0

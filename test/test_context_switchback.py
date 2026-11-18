@@ -1466,6 +1466,50 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
         self.assertEqual(1, context.get_treatment("exp_sb"))
         self.assertEqual(1, context.get_pending_count())
 
+    def test_refresh_during_a_first_in_period_read_keeps_the_name_routed(self):
+        # The post-anchor twin: the period slot of the first read must still
+        # be dropped, so the unit experiment exposes once, not again on the
+        # next refresh.
+        matcher = self.RefreshingAudienceMatcher()
+        context = self.create_context([switchback(audience=TRUE_AUDIENCE)],
+                                      audience_matcher=matcher)
+        matcher.context = context
+        unit = unit_twin(1, "exp_sb", split=[0.0, 1.0])
+        self.client.refresh_data = context_data([unit])
+        matcher.refresh_on_next_evaluation = True
+        self.clock.now = ANCHOR + 5
+        self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        self.refresh_to(context, unit)
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        self.assertEqual(2, context.get_pending_count())
+
+    def test_name_update_on_a_first_read_is_atomic_with_set_data(self):
+        # A set_data that runs while the first read adds its name must not
+        # lose the switchback it installs.
+        context = self.create_context([switchback()])
+        installed = []
+
+        class Names(frozenset):
+            def __or__(names, other):
+                if not installed:
+                    installed.append(True)
+                    worker = threading.Thread(target=self.refresh_to, args=(
+                        context, switchback(), switchback(2, "exp_new")))
+                    worker.start()
+                    worker.join(0.5)
+                    installed.append(worker)
+                return frozenset(names) | other
+
+        context._switchback_names = Names(context._switchback_names)
+        self.clock.now = ANCHOR + 5
+        context.get_treatment("exp_sb")
+        installed[1].join(10)
+        self.assertFalse(installed[1].is_alive())
+        self.assertIn("exp_new", context._switchback_names)
+        self.assertEqual(draw(CLUSTER_KEY, 0, 2),
+                         context.get_treatment("exp_new"))
+
     def test_refresh_in_first_resolution_async_no_deadlock(self):
         experiment = switchback(audience=TRUE_AUDIENCE)
         matcher = self.RefreshingAudienceMatcher()

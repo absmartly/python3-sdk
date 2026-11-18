@@ -281,6 +281,21 @@ MUTANTS = [
      "                self._switchback_names = \\\n"
      "                    self._switchback_names | {experiment_name}",
      "                pass"),
+    ("name-kept-only-pre-anchor", CONTEXT,
+     "            self._switchback_epochs[experiment_name] = epoch\n"
+     "            # A refresh",
+     "            self._switchback_epochs[experiment_name] = epoch\n"
+     "            if period is not None:\n                return\n"
+     "            # A refresh"),
+    ("name-update-unlocked", CONTEXT,
+     "            try:\n                self.data_lock.acquire_write()\n"
+     "                self._switchback_names = \\\n"
+     "                    self._switchback_names | {experiment_name}\n"
+     "            finally:\n                self.data_lock.release_write()\n"
+     "        if period is None:",
+     "            self._switchback_names = \\\n"
+     "                self._switchback_names | {experiment_name}\n"
+     "        if period is None:"),
     ("get-assignment-gate-widened", CONTEXT,
      "    def get_assignment(self, experiment_name: str, exposed_at: int = "
      "None):\n        if experiment_name in self._switchback_names:",

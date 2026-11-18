@@ -1181,13 +1181,15 @@ class QueueExposureHookTest(HoldoutTestCase):
         calls = []
         entered = threading.Event()
         release = threading.Event()
+        errors = []
 
         class Slow(Context):
             def queue_exposure(self, assignment):
                 calls.append(assignment.name)
                 if assignment.id == 11 and len(calls) <= 2:
                     entered.set()
-                    release.wait(5)
+                    if not release.wait(5):
+                        raise AssertionError("worker was never released")
                 return super().queue_exposure(assignment)
 
         context = self.create_context(context_data(
@@ -1196,12 +1198,23 @@ class QueueExposureHookTest(HoldoutTestCase):
         context.__class__ = Slow
         a = context.get_assignment("e1")
         b = context.get_assignment("e2")
-        first = threading.Thread(target=context._expose, args=(a,))
+
+        def expose_first():
+            try:
+                context._expose(a)
+            except BaseException as error:
+                errors.append(error)
+
+        first = threading.Thread(target=expose_first)
         first.start()
-        self.assertTrue(entered.wait(5))
-        context._expose(b)
-        release.set()
-        first.join(5)
+        try:
+            self.assertTrue(entered.wait(5))
+            context._expose(b)
+        finally:
+            release.set()
+            first.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertEqual([], errors)
         self.assertEqual(["e1", "h", "e2"], calls)
         self.assertEqual(["e1", "e2", "h"],
                          sorted(e.name for e in context.exposures))
@@ -1503,3 +1516,95 @@ class HookPathFollowUpTest(HoldoutTestCase):
         context.get_treatment("e1")
         self.assertEqual([("e1", 900), ("h", 900)],
                          [(e.name, e.exposedAt) for e in context.exposures])
+
+
+class HookOwnReservationTest(HoldoutTestCase):
+
+    def hook(self, on_call):
+        from sdk.context import Context
+
+        class Hook(Context):
+            def queue_exposure(self, assignment):
+                return on_call(self, assignment,
+                               lambda: Context.queue_exposure(self, assignment))
+
+        return Hook
+
+    def test_concurrent_reads_offer_the_experiment_once(self):
+        calls = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        def slow(context, assignment, queue):
+            calls.append(assignment.name)
+            if assignment.id == 1 and len(calls) == 1:
+                entered.set()
+                release.wait(5)
+            return queue()
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.hook(slow)
+        assignment = context.get_assignment("e1")
+        first = threading.Thread(target=context._expose, args=(assignment,))
+        first.start()
+        try:
+            self.assertTrue(entered.wait(5))
+            self.assertTrue(context._expose(assignment))
+        finally:
+            release.set()
+            first.join(5)
+        self.assertEqual(["e1", "h"], calls)
+        self.assertEqual(["e1", "h"], [e.name for e in context.exposures])
+
+    def test_retired_assignment_is_not_offered_to_the_hook(self):
+        calls = []
+
+        def record(context, assignment, queue):
+            calls.append(assignment.name)
+            return queue()
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11], full_on_variant=1)],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.hook(record)
+        assignment = context.get_assignment("e1")
+        self.assertTrue(context._retire(assignment))
+        self.assertFalse(context._expose(assignment))
+        self.assertEqual([], calls)
+
+    def test_hook_raising_after_queuing_keeps_holdouts_pending(self):
+        raised = []
+
+        def raise_after_queue(context, assignment, queue):
+            result = queue()
+            if assignment.id == 1 and not raised:
+                raised.append(1)
+                raise RuntimeError("hook failed")
+            return result
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.hook(raise_after_queue)
+        with self.assertRaises(RuntimeError):
+            context.get_treatment("e1")
+        self.assertTrue(context.get_assignment("e1").holdouts_pending)
+        context.get_treatment("e1")
+        self.assertEqual(["e1", "h"], [e.name for e in context.exposures])
+
+    def test_assignment_retired_during_the_hook_call_is_resolved_again(self):
+        retired = []
+
+        def retire_then_queue(context, assignment, queue):
+            if assignment.id == 1 and not retired:
+                retired.append(context._retire(assignment))
+            return queue()
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11], full_on_variant=1)],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.hook(retire_then_queue)
+        assignment = context.get_assignment("e1")
+        self.assertFalse(context._expose(assignment))
+        self.assertEqual([True], retired)
+        self.assertEqual([], context.exposures)

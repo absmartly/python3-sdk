@@ -151,6 +151,7 @@ class LocalServerIntegrationTest(unittest.TestCase):
                                application="website", environment="dev")
         config = ContextConfig()
         config.units = {"session_id": "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}
+        config.publish_delay = -1
         context = sdk.create_context(config)
         context.wait_until_ready()
 

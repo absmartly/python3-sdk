@@ -704,20 +704,25 @@ class HoldoutLifecycleRaceTest(HoldoutTestCase):
         closing = []
         original = context._accept_exposure
 
+        workers = []
+
         def close_between(assignment, name, exposed_at):
             # Another thread closes right after the experiment's own
             # exposure is accepted; it must wait for the holdout's.
             exposure = original(assignment, name, exposed_at)
-            if not closing:
-                thread = threading.Thread(
+            if not workers:
+                worker = threading.Thread(
                     target=lambda: closing.append(context.close_async()))
-                thread.start()
-                thread.join(0.2)
+                workers.append(worker)
+                worker.start()
+                worker.join(0.2)
             return exposure
 
         context._accept_exposure = close_between
         self.assertEqual(NORMAL_VARIANT, context.get_treatment("exp_close"))
         context._accept_exposure = original
+        workers[0].join(5)
+        self.assertFalse(workers[0].is_alive())
         self.client.wait_for_publish(1)
         self.assertEqual([("exp_close", 1), ("holdout_b", 1)],
                          [(e.name, e.variant)
@@ -944,3 +949,31 @@ class HoldoutRefreshCostTest(HoldoutTestCase):
         context.get_treatment("exp")
         self.assertEqual(["exp", "holdout_a", "exp", "holdout_b"],
                          [e.name for e in context.exposures])
+
+
+class SharedArmAcrossRefreshTest(HoldoutTestCase):
+
+    def test_resolution_across_a_same_iteration_refresh_shares_its_arm(self):
+        # The first experiment resolves holdout 11 from the old seeds while
+        # a refresh installs new seeds for the same iteration; the second
+        # experiment must reuse that arm instead of drawing a new one.
+        old = context_data(
+            [self.covered(1, "exp_a", [11]), self.covered(2, "exp_b", [11])],
+            [holdout(11, "h", HOLDOUT_A_SEEDS)])
+        new = context_data(
+            [self.covered(1, "exp_a", [11]), self.covered(2, "exp_b", [11])],
+            [holdout(11, "h", HOLDOUT_B_SEEDS)])
+        context = self.create_context(old)
+        original = context._get_resolution_state
+
+        def refresh_after_read(name):
+            state = original(name)
+            context._get_resolution_state = original
+            context.set_data(new)
+            return state
+
+        context._get_resolution_state = refresh_after_read
+        self.assertEqual(0, context.get_treatment("exp_a"))
+        self.assertEqual(0, context.get_treatment("exp_b"))
+        self.assertEqual([("h", 0)],
+                         [(e.name, e.variant) for e in context.exposures])

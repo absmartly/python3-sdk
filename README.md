@@ -290,14 +290,14 @@ The context data lists the holdouts, and each experiment lists the holdouts cove
 - In a holdout with three arms, arm 1 holds the unit out of covered experiments that are not full-on; full-on experiments are assigned normally.
 - Any other arm leaves the experiment to its normal assignment.
 
-A unit held out by any of the experiment's holdouts gets the control variant (0) and the control variable values:
+A unit held out by any of the experiment's holdouts gets the control variant (0). For a variable key, the held-out experiment's control value is returned only when no assigned or overridden experiment defining the same key wins it:
 
 ```python
 treatment = context.get_treatment("exp_covered_by_holdout")  # 0 when held out
 color = context.get_variable_value("button.color", "red")  # control value when held out
 ```
 
-The held-out experiment publishes no exposure of its own. The first read of a covered experiment (`get_treatment`, `get_variable_value`) instead publishes each holdout's exposure, named after the holdout, with the unit's arm as its variant. Each holdout is published once per unit type, however many covered experiments are read. `peek_treatment` and `peek_variable_value` publish nothing.
+Unless an override or a matching assignment rule chose its variant, the held-out experiment publishes no exposure of its own. The first read of a covered experiment (`get_treatment`, `get_variable_value`) instead publishes each holdout's exposure, named after the holdout, with the unit's arm as its variant. Each holdout is published once per unit type, however many covered experiments are read. `peek_treatment` and `peek_variable_value` publish nothing.
 
 An override (`set_override`) or a matching assignment rule still decides the variant of a held-out unit, and the holdout exposures are still published. Custom assignments, audiences, full-on variants and traffic do not apply to a held-out unit.
 

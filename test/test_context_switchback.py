@@ -1692,6 +1692,93 @@ class JervasionRoundOneTest(SwitchbackTestCase):
         self.assertEqual(2, context.get_pending_count())
 
 
+class GatePassSixTest(SwitchbackTestCase):
+
+    def test_renaming_a_linked_unit_type_is_a_new_epoch(self):
+        # Same path, another unit type: only the map key changes.
+        context = self.create_context(
+            [switchback(switchbackClusters=clusters(UNIT_TYPE, CLUSTER_PATH))],
+            units={UNIT_TYPE: UID, "user_id": "u1"})
+        self.clock.now = ANCHOR + 5
+        context.get_treatment("exp_sb")
+        self.refresh_to(context, switchback(
+            switchbackClusters=clusters("user_id", CLUSTER_PATH)))
+        context.get_treatment("exp_sb")
+        self.assertEqual([UNIT_TYPE, "user_id"],
+                         [e[2] for e in self.published_exposures(context)])
+
+    def test_set_unit_keeps_an_exposed_absent_override(self):
+        # An overridden switchback with no linked unit is exposed under the
+        # first linked type; setting that unit later must not expose again.
+        context = self.create_context([switchback()], units={"other": "o"},
+                                      overrides={"exp_sb": 1})
+        self.clock.now = ANCHOR + 5
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        context.set_unit(UNIT_TYPE, UID)
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        self.assertEqual(1, context.get_pending_count())
+
+    def test_absent_serving_is_read_again_on_replacement(self):
+        # No linked unit at first: the override is exposed under the first
+        # linked type (a_id). After set_unit("b_id") the replaced slot reads
+        # the serving unit again and exposes under b_id; Java does the same.
+        sources = clusters("a_id", CLUSTER_PATH, "b_id", CLUSTER_PATH)
+        context = self.create_context(
+            [switchback(switchbackClusters=sources)],
+            units={"c_id": "c"}, overrides={"exp_sb": 1})
+        self.clock.now = ANCHOR + 5
+        context.get_treatment("exp_sb")
+        context.set_unit("b_id", "b")
+        context.set_override("exp_sb", 0)
+        context.get_treatment("exp_sb")
+        self.assertEqual(["a_id", "b_id"],
+                         [e[2] for e in self.published_exposures(context)])
+
+    def test_attribute_names_are_trimmed_like_java_only(self):
+        # Java trim() removes code points up to U+0020, not U+00A0.
+        context = self.create_context([switchback()],
+                                      cluster_attribute=False,
+                                      attributes={CLUSTER_PATH + "\xa0":
+                                                  CLUSTER_KEY})
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+        self.assertEqual(0, context.get_pending_count())
+
+    def test_an_int_too_long_to_render_gives_no_cluster_value(self):
+        context = self.create_context([switchback()],
+                                      cluster_attribute=False,
+                                      attributes={CLUSTER_PATH: 10 ** 5000})
+        self.assertEqual(0, context.peek_treatment("exp_sb"))
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+        self.assertEqual(0, context.get_variable_value("sb.arm", -1))
+        self.assertEqual(0, context.get_pending_count())
+
+    def test_unit_revalidation_hands_over_to_an_installed_switchback(self):
+        # The refresh lands while the unit path revalidates a cached slot
+        # after set_attribute (its write-lock branch).
+        context = self.create_context(
+            [unit_twin(1, "exp_sb", audience=TRUE_AUDIENCE)],
+            cluster_attribute=False)
+        self.clock.now = ANCHOR + 5
+        context.peek_treatment("exp_sb")
+        context.set_attribute("x", 1)
+        refresh = context_data([switchback(fullOnVariant=0,
+                                           audience=TRUE_AUDIENCE)])
+        acquire_write = context.context_lock.acquire_write
+        swapped = []
+
+        def refresh_then_write():
+            if not swapped:
+                swapped.append(True)
+                self.client.refresh_data = refresh
+                context.refresh()
+            acquire_write()
+
+        context.context_lock.acquire_write = refresh_then_write
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+        context.context_lock.acquire_write = acquire_write
+        self.assertEqual(0, context.get_pending_count())
+
+
 class NoSwitchbackCostTest(SwitchbackTestCase):
 
     def test_unit_reads_next_to_a_switchback_skip_the_switchback_path(self):

@@ -391,6 +391,31 @@ MUTANTS = [
      "        except Exception as e:",
      "        try:\n            return cls(experiment)\n"
      "        except ZeroDivisionError as e:"),
+    ("identity-ignores-map-keys", CONTEXT,
+     "                stack.append((True, (\"key\", type(key).__name__, "
+     "repr(key))))\n", ""),
+    ("set-unit-re-exposes-absent-override", CONTEXT,
+     "                        if not assignment.overridden or \\\n"
+     "                                self._retire(assignment):\n"
+     "                            del self.assignment_cache[name]",
+     "                        if True:\n"
+     "                            del self.assignment_cache[name]"),
+    ("absent-serving-not-reread", CONTEXT,
+     "            if cached_serving is None or \\\n"
+     "                    cached_serving.status == switchback_serving.ABSENT:",
+     "            if cached_serving is None:"),
+    ("unit-revalidation-applies-switchback", CONTEXT,
+     "                    experiment = self.get_experiment(experiment_name)\n"
+     "                    if experiment is not None and \\\n"
+     "                            experiment.switchback is not None:\n"
+     "                        return None\n",
+     "                    experiment = self.get_experiment("
+     "experiment_name)\n"),
+    ("huge-int-raises", KEYS,
+     "        try:\n            return str(int(value))\n"
+     "        except ValueError:",
+     "        try:\n            return str(int(value))\n"
+     "        except ZeroDivisionError:"),
     # Attributes read at the resolution instant.
     ("attribute-first-wins", CONTEXT,
      "                    (selected is None or set_at >= selected.setAt):",
@@ -398,6 +423,9 @@ MUTANTS = [
     ("future-attribute-visible", CONTEXT,
      "isinstance(set_at, (int, float)) and set_at <= now and \\",
      "isinstance(set_at, (int, float)) and \\"),
+    ("attribute-name-python-strip", CONTEXT,
+     "                    attribute.name.strip(_JAVA_TRIM) == name and \\",
+     "                    attribute.name.strip() == name and \\"),
     ("attribute-name-not-trimmed", CONTEXT,
      "                    attribute.name.strip(_JAVA_TRIM) == name and \\",
      "                    attribute.name == name and \\"),

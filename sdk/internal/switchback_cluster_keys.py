@@ -9,5 +9,11 @@ def normalize(value):
     if isinstance(value, str):
         return value if len(value) > 0 else None
     if isinstance(value, int) and not isinstance(value, bool):
-        return str(int(value))
+        try:
+            return str(int(value))
+        except ValueError:
+            # Past CPython's int-to-text digit limit (sys.set_int_max_str_
+            # digits). The Collector would key it, but no unit can serve a
+            # value the SDK cannot render, so it gives no value.
+            return None
     return None

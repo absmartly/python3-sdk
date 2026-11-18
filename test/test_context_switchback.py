@@ -1065,6 +1065,24 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assert_published(context, exposure(
             1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
 
+    def test_unit_reads_call_a_one_argument_expose_override(self):
+        # Context._expose(assignment) keeps its one-argument call for unit
+        # experiments, also in a payload with switchbacks.
+        context = self.create_context([switchback(),
+                                       unit_twin(2, "exp_unit")])
+        seen = []
+        original = context._expose
+
+        def expose(assignment):
+            seen.append(assignment.name)
+            return original(assignment)
+
+        context._expose = expose
+        context.get_treatment("exp_unit")
+        context.get_treatment("exp_sb")
+        self.assertEqual(["exp_unit"], seen)
+        self.assertEqual(2, context.get_pending_count())
+
     def test_closed_context_rejects_switchback_reads(self):
         context = self.create_context([switchback()])
         context.close()

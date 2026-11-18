@@ -1236,7 +1236,7 @@ class Context:
             if assignment.variables is not None:
                 if expose and (not assignment.exposed.value or
                                assignment.holdouts_pending) and \
-                        not self._expose(assignment, now) and \
+                        not self._expose_at(assignment, now) and \
                         attempt < _MAX_EXPOSURE_ATTEMPTS:
                     # set_unit retired a candidate in between, so the key
                     # may resolve differently: walk it again.
@@ -1276,13 +1276,13 @@ class Context:
         now = self._switchback_clock(exposed_at)
         assignment = self._assignment_at(experiment_name, exposed_at, now)
         if (not assignment.exposed.value or assignment.holdouts_pending) and \
-                not self._expose(assignment, now):
+                not self._expose_at(assignment, now):
             for _ in range(_MAX_EXPOSURE_ATTEMPTS - 1):
                 now = self._switchback_clock(exposed_at)
                 assignment = self._assignment_at(experiment_name, exposed_at,
                                                  now)
                 if assignment.exposed.value or \
-                        self._expose(assignment, now):
+                        self._expose_at(assignment, now):
                     break
         return assignment.variant
 
@@ -2223,6 +2223,14 @@ class Context:
             return True
         finally:
             self.event_lock.release_write()
+
+    def _expose_at(self, assignment: Assignment, resolved_at):
+        # A switchback is exposed at the read that resolved it; everything
+        # else goes through _expose(assignment), which subclasses may
+        # override with its one-argument signature.
+        if assignment.switchback:
+            return self._expose_switchback(assignment, resolved_at)
+        return self._expose(assignment)
 
     def _expose(self, assignment: Assignment, resolved_at=None):
         """Expose an assignment; False when set_unit retired it first.

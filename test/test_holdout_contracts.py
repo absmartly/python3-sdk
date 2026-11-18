@@ -1532,6 +1532,7 @@ class HookOwnReservationTest(HoldoutTestCase):
 
     def test_concurrent_reads_offer_the_experiment_once(self):
         calls = []
+        errors = []
         entered = threading.Event()
         release = threading.Event()
 
@@ -1539,14 +1540,22 @@ class HookOwnReservationTest(HoldoutTestCase):
             calls.append(assignment.name)
             if assignment.id == 1 and len(calls) == 1:
                 entered.set()
-                release.wait(5)
+                if not release.wait(5):
+                    raise AssertionError("worker was never released")
             return queue()
 
         context = self.create_context(context_data(
             [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
         context.__class__ = self.hook(slow)
         assignment = context.get_assignment("e1")
-        first = threading.Thread(target=context._expose, args=(assignment,))
+
+        def expose_first():
+            try:
+                context._expose(assignment)
+            except BaseException as error:
+                errors.append(error)
+
+        first = threading.Thread(target=expose_first)
         first.start()
         try:
             self.assertTrue(entered.wait(5))
@@ -1554,6 +1563,8 @@ class HookOwnReservationTest(HoldoutTestCase):
         finally:
             release.set()
             first.join(5)
+        self.assertFalse(first.is_alive())
+        self.assertEqual([], errors)
         self.assertEqual(["e1", "h"], calls)
         self.assertEqual(["e1", "h"], [e.name for e in context.exposures])
 

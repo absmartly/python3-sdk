@@ -97,6 +97,12 @@ class Assignment:
         self.switchback_serving = None
         self.switchback_custom: Optional[int] = None
         self.switchback_silent: bool = False
+        # A holdout exposure a queue_exposure override is handling.
+        self.hook_pending: bool = False
+        # Set while a queue_exposure override has not yet been offered every
+        # holdout exposure of this assignment, so a later read of the same
+        # experiment finishes them (e.g. after a failed close reopens).
+        self.holdouts_pending: bool = False
 
 
 class ExperimentVariables:
@@ -704,8 +710,6 @@ class Context:
                 previous = previous_index.get(experiment.name)
                 if previous is not None and \
                         _same_holdouts(previous.holdouts, holdouts):
-                    # Kept when unchanged, so cached reads still match the
-                    # holdout set by identity after a refresh.
                     holdouts = previous.holdouts
                 experiment_variables.holdouts = holdouts
 
@@ -1230,7 +1234,8 @@ class Context:
         for experiment in list(experiments):
             assignment = self._assignment_at(experiment.data.name, None, now)
             if assignment.variables is not None:
-                if expose and not assignment.exposed.value and \
+                if expose and (not assignment.exposed.value or
+                               assignment.holdouts_pending) and \
                         not self._expose(assignment, now) and \
                         attempt < _MAX_EXPOSURE_ATTEMPTS:
                     # set_unit retired a candidate in between, so the key
@@ -1270,7 +1275,7 @@ class Context:
         self.check_ready(True)
         now = self._switchback_clock(exposed_at)
         assignment = self._assignment_at(experiment_name, exposed_at, now)
-        if not assignment.exposed.value and \
+        if (not assignment.exposed.value or assignment.holdouts_pending) and \
                 not self._expose(assignment, now):
             for _ in range(_MAX_EXPOSURE_ATTEMPTS - 1):
                 now = self._switchback_clock(exposed_at)
@@ -2307,29 +2312,66 @@ class Context:
     def _expose_through_hook(self, assignment: Assignment):
         # A subclass overriding queue_exposure (a v0.2.4 extension point)
         # keeps seeing every exposure, one call each, at the cost of the
-        # grouped acceptance.
-        if assignment.suppressed and not assignment.overridden and \
-                not assignment.rule_override:
-            try:
-                self.event_lock.acquire_write()
-                self.check_not_closed()
-                if assignment.retired:
-                    return False
-                assignment.exposed.compare_and_set(False, True)
-            finally:
-                self.event_lock.release_write()
-        elif self.queue_exposure(assignment) is False:
-            return False
+        # grouped acceptance. The read's time is taken once for the group.
+        exposed_at = assignment.exposedAt or self.clock.millis()
+        if not assignment.exposed.value:
+            if assignment.suppressed and not assignment.overridden and \
+                    not assignment.rule_override:
+                try:
+                    self.event_lock.acquire_write()
+                    self.check_not_closed()
+                    if assignment.retired:
+                        return False
+                    if assignment.exposed.compare_and_set(False, True):
+                        assignment.holdouts_pending = True
+                finally:
+                    self.event_lock.release_write()
+            else:
+                # The assignment itself goes to the hook, so a concurrent
+                # set_unit retirement is still seen; it records the read's
+                # time for the group.
+                assignment.exposedAt = exposed_at
+                self.queue_exposure(assignment)
+                # Judged by the state, not the hook's return value: only an
+                # assignment set_unit retired before it was queued is
+                # retried.
+                if not assignment.exposed.value:
+                    if assignment.retired:
+                        return False
+                else:
+                    assignment.holdouts_pending = True
+        finished = True
         for holdout, holdout_assignment in zip(
                 assignment.holdouts, assignment.holdout_assignments):
-            if holdout_assignment is not None and \
-                    not holdout_assignment.exposed.value:
-                # The hook receives the assignment, so it carries this
-                # snapshot's name and the read's exposure time.
-                holdout_assignment.name = holdout.name
-                if assignment.exposedAt is not None:
-                    holdout_assignment.exposedAt = assignment.exposedAt
-                self.queue_exposure(holdout_assignment)
+            if holdout_assignment is None:
+                continue
+            try:
+                # Reserved under event_lock so concurrent reads call the
+                # hook once per holdout exposure; released if the hook does
+                # not queue it, so a later read retries.
+                self.event_lock.acquire_write()
+                if holdout_assignment.exposed.value:
+                    continue
+                if holdout_assignment.hook_pending:
+                    finished = False
+                    continue
+                holdout_assignment.hook_pending = True
+            finally:
+                self.event_lock.release_write()
+            try:
+                # The hook gets a copy carrying this snapshot's name and the
+                # read's exposure time; it shares `exposed` (an AtomicBool)
+                # with the cached arm, so the arm stays exposed once only.
+                view = copy.copy(holdout_assignment)
+                view.name = holdout.name
+                view.exposedAt = exposed_at
+                self.queue_exposure(view)
+            finally:
+                holdout_assignment.hook_pending = False
+            if not holdout_assignment.exposed.value:
+                finished = False
+        if finished:
+            assignment.holdouts_pending = False
         return True
 
     def _accept_exposure(self, assignment: Assignment, name, exposed_at):

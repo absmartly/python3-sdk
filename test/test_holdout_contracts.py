@@ -12,6 +12,7 @@ from types import MappingProxyType
 
 from sdk import context as context_module
 from sdk.context_error import ContextError
+from sdk.context_event_logger import EventType
 from sdk.default_context_data_deserializer import \
     DefaultContextDataDeserializer
 from sdk.json.context_data import ContextData
@@ -1102,3 +1103,259 @@ class QueueExposureHookTest(HoldoutTestCase):
         context.queue_exposure = recording
         context.get_treatment("exp")
         self.assertEqual(["exp", "holdout_b"], seen)
+
+    def test_hook_path_rejects_a_held_out_exposure_while_closing(self):
+        from sdk.context import Context
+
+        class Recording(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_a()]))
+        context.__class__ = Recording
+        assignment = context.get_assignment("exp")
+        self.assertTrue(assignment.suppressed)
+        context.closing.set(True)
+        with self.assertRaises(ContextError):
+            context._expose(assignment)
+        self.assertFalse(assignment.exposed.value)
+
+    def test_hook_path_leaves_the_shared_arm_untouched(self):
+        from sdk.context import Context
+        declined = []
+
+        class Declining(Context):
+            def queue_exposure(self, assignment):
+                if assignment.id == 11 and not declined:
+                    declined.append(assignment.exposedAt)
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11]), self.covered(2, "e2", [11])],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Declining
+        context.get_treatment("e1", exposed_at=123)
+        arm = context._holdout_assignments[(11, UNIT_TYPE)]
+        self.assertEqual(("h", None), (arm.name, arm.exposedAt))
+        context.get_treatment("e2")
+        self.assertEqual([123], declined)
+        self.assertEqual([("e1", 123), ("e2", NOW), ("h", NOW)],
+                         [(e.name, e.exposedAt) for e in context.exposures])
+
+    def test_hook_is_called_once_per_published_exposure(self):
+        from sdk.context import Context
+        calls = []
+
+        class Recording(Context):
+            def queue_exposure(self, assignment):
+                calls.append(assignment.name)
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11]), self.covered(2, "e2", [11])],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Recording
+        context.get_treatment("e1")
+        context.get_treatment("e2")
+        self.assertEqual(["e1", "h", "e2"], calls)
+        self.assertEqual(calls, [e.name for e in context.exposures])
+
+    def test_hook_returning_false_after_queuing_still_gets_the_holdouts(self):
+        from sdk.context import Context
+
+        class FalseReturning(Context):
+            def queue_exposure(self, assignment):
+                super().queue_exposure(assignment)
+                return False
+
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = FalseReturning
+        context.get_treatment("exp")
+        self.assertEqual(["exp", "h"], [e.name for e in context.exposures])
+
+    def test_concurrent_reads_call_the_hook_once_per_holdout_exposure(self):
+        from sdk.context import Context
+        calls = []
+        entered = threading.Event()
+        release = threading.Event()
+
+        class Slow(Context):
+            def queue_exposure(self, assignment):
+                calls.append(assignment.name)
+                if assignment.id == 11 and len(calls) <= 2:
+                    entered.set()
+                    release.wait(5)
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11]), self.covered(2, "e2", [11])],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Slow
+        a = context.get_assignment("e1")
+        b = context.get_assignment("e2")
+        first = threading.Thread(target=context._expose, args=(a,))
+        first.start()
+        self.assertTrue(entered.wait(5))
+        context._expose(b)
+        release.set()
+        first.join(5)
+        self.assertEqual(["e1", "h", "e2"], calls)
+        self.assertEqual(["e1", "e2", "h"],
+                         sorted(e.name for e in context.exposures))
+
+    def test_declined_holdout_exposure_is_retried_on_a_later_read(self):
+        from sdk.context import Context
+        declined = []
+
+        class DeclineOnce(Context):
+            def queue_exposure(self, assignment):
+                if assignment.id == 11 and not declined:
+                    declined.append(1)
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11]), self.covered(2, "e2", [11])],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = DeclineOnce
+        context.get_treatment("e1")
+        context.get_treatment("e2")
+        self.assertEqual(["e1", "e2", "h"],
+                         [e.name for e in context.exposures])
+
+    def test_hook_path_does_not_expose_a_retired_assignment(self):
+        from sdk.context import Context
+
+        class Recording(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11)]))
+        context.__class__ = Recording
+        assignment = context.get_assignment("exp")
+        self.assertTrue(context._retire(assignment))
+        self.assertFalse(context._expose(assignment))
+        self.assertEqual([], context.exposures)
+
+    def test_hook_declining_the_own_exposure_still_gets_the_holdout(self):
+        from sdk.context import Context
+        calls = []
+
+        class Filter(Context):
+            def queue_exposure(self, assignment):
+                calls.append(assignment.name)
+                if assignment.id == 1:
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Filter
+        context.get_treatment("e1")
+        self.assertEqual(["e1", "h"], calls)
+        self.assertEqual(["h"], [e.name for e in context.exposures])
+
+    def test_hook_path_finishes_holdouts_after_a_failed_close(self):
+        from sdk.context import Context
+
+        class Delegating(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Delegating
+        failing = Future()
+        self.client.publish_results.append(failing)
+        closing = []
+
+        def close_on_own_exposure(event_type, data):
+            if event_type == EventType.EXPOSURE and data.id == 1 and \
+                    not closing:
+                closing.append(context.close_async())
+
+        self.logger.on_event = close_on_own_exposure
+        with self.assertRaises(ContextError):
+            context.get_treatment("exp")
+        self.logger.on_event = None
+        failing.set_exception(RuntimeError("publish failed"))
+        with self.assertRaises(RuntimeError):
+            closing[0].result(5)
+        self.assertFalse(context.is_closed())
+        self.assertEqual(NORMAL_VARIANT, context.get_treatment("exp"))
+        self.assertEqual([("exp", 1), ("h", 1)],
+                         [(e.name, e.variant) for e in context.exposures])
+        # Finished: further reads add nothing.
+        context.get_treatment("exp")
+        self.assertEqual(2, len(context.exposures))
+
+    def test_hook_path_uses_one_time_for_the_group(self):
+        from sdk.context import Context
+
+        class Delegating(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        times = iter([100, 200, 300, 400])
+        self.clock.millis = lambda: next(times)
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Delegating
+        context.get_treatment("exp")
+        self.assertEqual([("exp", 100), ("h", 100)],
+                         [(e.name, e.exposedAt) for e in context.exposures])
+
+    def test_hook_path_variable_read_finishes_holdouts_after_a_failed_close(self):
+        from sdk.context import Context
+
+        class Delegating(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [with_variables(self.covered(1, "exp", [11]), "color")],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Delegating
+        failing = Future()
+        self.client.publish_results.append(failing)
+        closing = []
+
+        def close_on_own_exposure(event_type, data):
+            if event_type == EventType.EXPOSURE and data.id == 1 and \
+                    not closing:
+                closing.append(context.close_async())
+
+        self.logger.on_event = close_on_own_exposure
+        with self.assertRaises(ContextError):
+            context.get_variable_value("color", "default")
+        self.logger.on_event = None
+        failing.set_exception(RuntimeError("publish failed"))
+        with self.assertRaises(RuntimeError):
+            closing[0].result(5)
+        self.assertEqual("treatment",
+                         context.get_variable_value("color", "default"))
+        self.assertEqual(["exp", "h"], [e.name for e in context.exposures])
+
+    def test_hook_path_stops_revisiting_once_holdouts_are_finished(self):
+        from sdk.context import Context
+        expose_calls = []
+
+        class Delegating(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+            def _expose(self, assignment):
+                expose_calls.append(assignment.name)
+                return super()._expose(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Delegating
+        for _ in range(3):
+            context.get_treatment("exp")
+        self.assertEqual(["exp"], expose_calls)
+        self.assertFalse(context.get_assignment("exp").holdouts_pending)

@@ -10,6 +10,8 @@ import unittest
 from concurrent.futures import Future
 
 from sdk.audience_matcher import AudienceMatcher
+from sdk.default_context_data_deserializer import \
+    DefaultContextDataDeserializer
 from sdk.context import Assignment
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 from sdk.internal.variant_assigner import VariantAssigner
@@ -1666,19 +1668,26 @@ class JervasionRoundOneTest(SwitchbackTestCase):
         self.assertEqual(1, context.get_pending_count())
 
     def test_deep_identity_metadata_does_not_reject_the_refresh(self):
-        nested = "x"
-        for _ in range(2000):
-            nested = [nested]
+        # 900 levels decode with the default deserializer on every supported
+        # Python (json.dumps cannot build it on 3.9), and exceed what a
+        # recursive identity encoder survives once install adds its frames.
+        depth = 900
+        fields = json.dumps(switchback(switchbackDesignType="DEEP"))
+        fields = fields.replace('"DEEP"', "[" * depth + '"x"' + "]" * depth)
+        payload = '{"experiments": [%s, %s]}' % (
+            fields, json.dumps(unit_twin(2, "exp_unit", fullOnVariant=1)))
+        data = DefaultContextDataDeserializer().deserialize(
+            payload.encode(), 0, len(payload))
+        self.assertIsNotNone(data)
         context = self.create_context([unit_twin(2, "exp_unit")])
-        self.refresh_to(context,
-                        switchback(switchbackDesignType=nested),
-                        unit_twin(2, "exp_unit", fullOnVariant=1))
+        self.client.refresh_data = data
+        context.refresh()
         self.assertFalse(context.is_failed())
         self.assertEqual(1, context.get_treatment("exp_unit"))
         self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
-        self.refresh_to(context,
-                        switchback(switchbackDesignType=nested),
-                        unit_twin(2, "exp_unit", fullOnVariant=1))
+        self.client.refresh_data = DefaultContextDataDeserializer() \
+            .deserialize(payload.encode(), 0, len(payload))
+        context.refresh()
         self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
         self.assertEqual(2, context.get_pending_count())
 

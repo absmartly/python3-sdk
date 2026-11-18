@@ -637,6 +637,20 @@ class ContextSwitchbackClusterRuleTest(ClusterTestCase):
                                      {"device_id": "d1"}))
         self.assertIsNone(self.serve({"session_store": "s-1"}, {}))
 
+    def test_ineligible_cluster_is_listed_under_the_first_linked_unit(self):
+        # The first linked unit has no value and the later ones disagree, or
+        # the only value is filtered out: the control is listed under the
+        # first linked unit, not the first unit with a value.
+        three = clusters(SESSION, "session_store", USER, "profile/store",
+                         "device_id", "device_store")
+        units = {SESSION: "x1", USER: "u1", "device_id": "d1"}
+        self.assert_ineligible(
+            {"profile": {"store": "s-1"}, "device_store": "s-2"}, SESSION,
+            units, [sbc(switchbackClusters=three)])
+        self.assert_ineligible(
+            {"profile": {"store": "s-1"}}, SESSION, units,
+            [sbc(switchbackClusters=three, switchbackClusterValues=["s-9"])])
+
     def test_matching_unit_without_a_value_is_ineligible(self):
         self.assert_ineligible({"other": "s-1"}, USER, {USER: "u1"})
         self.assert_ineligible({"other": "s-1"}, SESSION,
@@ -1101,6 +1115,12 @@ class SwitchbackServingTest(unittest.TestCase):
         self.assertEqual("session_id", serving.unit_type)
         self.assertEqual("x1", serving.uid)
         self.assertEqual("s-1", serving.cluster_key)
+
+    def test_a_none_or_empty_allow_list_admits_every_value(self):
+        for values in (None, (), []):
+            self.assertTrue(switchback_serving.allowed(values, "s-1"))
+        self.assertFalse(switchback_serving.allowed(("s-2",), "s-1"))
+        self.assertIsNone(switchback_serving.allow_list([]))
 
     def test_sources_reject_unreadable_maps(self):
         self.assertIsNone(switchback_serving.sources(None))

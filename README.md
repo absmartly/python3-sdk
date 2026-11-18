@@ -301,6 +301,27 @@ Unless an override or a matching assignment rule chose its variant, the held-out
 
 An override (`set_override`) or a matching assignment rule still decides the variant of a held-out unit, and the holdout exposures are still published. Custom assignments, audiences, full-on variants and traffic do not apply to a held-out unit.
 
+### Switchback Experiments
+
+A switchback experiment randomizes clusters over time: every unit in the same cluster (for example the same store or city) gets the same variant within a period, and the cluster's variant changes on a fixed time grid. Switchbacks are configured in the ABsmartly web console, and the SDK serves them automatically. Your code calls `get_treatment`, `get_variable_value` and their `peek_` variants as usual. The SDK follows the rules of the Java SDK ([`SWITCHBACK.md`](https://github.com/absmartly/java-sdk/blob/main/SWITCHBACK.md)) and the ABsmartly Collector.
+
+The cluster comes from your context's units and attributes. The experiment links one or more unit types to an attribute path, in a fixed order. The first unit (in that order) whose attribute has a value is the serving unit, and the value is the cluster key:
+
+```python
+context.set_unit("store_id", "store-42")
+context.set_attribute("store", {"city": "Lisbon"})  # path "store/city"
+
+treatment = context.get_treatment("exp_switchback")  # Lisbon's variant in this period
+```
+
+- Only a non-empty string or a whole-number `int` gives a cluster key (an `int` is keyed as its decimal text, so `42` and `"42"` are the same cluster). Floats (including `3.0`), booleans, `None`, `""`, dicts and lists give no value. Paths separate keys with `/` (`store/city`, `items/0/city`); a quoted segment (`'a/b'`) is a literal key.
+- No value, or two linked units with different values, or a value outside the experiment's allowed cluster values: the unit gets the control variant (0) and no exposure is published. The SDK never falls back to assigning the unit itself.
+- No unit of a linked type: the experiment does not apply (control, nothing published).
+- Before the schedule starts, or with a schedule the SDK cannot serve, the unit gets the control variant and nothing is published. Overrides, assignment rules, strict audiences and full-on variants still apply.
+- The cluster is read once per period: a `set_attribute` later in the same period does not move the unit to another cluster. The next period reads it again.
+- Each period publishes one exposure, stamped with the time that chose the period. The exposure looks the same as a unit experiment's, under the serving unit's type. Attributes are still published with their timestamps, because the Collector re-resolves the cluster from them.
+- Holdouts never apply to a switchback experiment.
+
 ## Advanced
 
 ### Context Attributes

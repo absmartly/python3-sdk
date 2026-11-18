@@ -148,6 +148,19 @@ class ContextSwitchbackTest(SwitchbackTestCase):
                              context.get_treatment("exp_sb"), start_at)
             self.assertEqual(1, context.get_pending_count())
 
+    def test_period_index_is_exact_integer_division(self):
+        # A 1 ms period from anchor 0 at 2**53 + 1: a float division would
+        # round the period index to 2**53.
+        now = (1 << 53) + 1
+        self.clock.now = 0
+        context = self.create_context([switchback(
+            arm_count=2, switchbackStartAt=0, switchbackPeriodMs=1)])
+        self.clock.now = now
+        self.assertNotEqual(draw(CLUSTER_KEY, now, 2),
+                            draw(CLUSTER_KEY, now - 1, 2))
+        self.assertEqual(draw(CLUSTER_KEY, now, 2),
+                         context.peek_treatment("exp_sb"))
+
     def test_unservable_periods_are_silent(self):
         for period_ms in (None, 0, -HOUR, 1.5, "3600000", True):
             context = self.create_context([switchback(
@@ -265,6 +278,26 @@ class ContextSwitchbackTest(SwitchbackTestCase):
                          assigned=False, overridden=True),
                 exposure(2, "exp_custom", 2, self.clock.now, custom=True)]
         self.assert_published(context, *expected)
+
+    def test_traffic_miss_wins_over_a_custom_assignment(self):
+        # Traffic is checked before the custom assignment (scenario 416's
+        # exp_sb_custom_traffic_miss): the miss is recorded, custom=false.
+        context = self.create_context([switchback(
+            arm_count=3, trafficSplit=[1.0, 0.0])],
+            custom_assignments={"exp_sb": 2})
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+        self.assert_published(context, exposure(1, "exp_sb", 0, ANCHOR,
+                                                eligible=False))
+
+    def test_full_on_refresh_re_resolves_the_slot(self):
+        context = self.create_context([switchback(arm_count=3)])
+        self.clock.now = ANCHOR + 5
+        self.assertEqual(EXPECTED_3_ARMS[0], context.get_treatment("exp_sb"))
+        self.refresh_to(context, switchback(arm_count=3, fullOnVariant=2))
+        self.assertEqual(2, context.get_treatment("exp_sb"))
+        self.assert_published(
+            context, exposure(1, "exp_sb", EXPECTED_3_ARMS[0], ANCHOR + 5),
+            exposure(1, "exp_sb", 2, ANCHOR + 5, full_on=True))
 
     def test_custom_assignment_change_re_resolves_the_slot(self):
         context = self.create_context([switchback(arm_count=3)])

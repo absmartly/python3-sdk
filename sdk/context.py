@@ -726,18 +726,6 @@ class Context:
         attribute.setAt = self.clock.millis()
         try:
             self.context_lock.acquire_write()
-            if self._switchback_epochs:
-                # A later write must sort after a cluster read even when the
-                # clock has not ticked: Collector ties select the last write.
-                # Keep this limited to attributes already read by a slot.
-                for cached in self.assignment_cache.values():
-                    serving = cached.switchback_serving
-                    if serving is not None and serving.read_at is not None:
-                        roots = getattr(serving, "attribute_names", ())
-                        if isinstance(name, str) and \
-                                name.strip(_JAVA_TRIM) in roots and \
-                                attribute.setAt == serving.read_at:
-                            attribute.setAt = serving.read_at + 1
             self.attributes.append(attribute)
             self._attrs_seq += 1
         finally:
@@ -1354,9 +1342,10 @@ class Context:
         return assignment.variant
 
     def _expose_handoff(self, assignment):
+        # A switchback slot reached through the unit path (a refresh during
+        # the read) is exposed at the time it was resolved at.
         if assignment.switchback:
-            return self._expose_at(
-                assignment, getattr(self._switchback_read, "now", None))
+            return self._expose_at(assignment, None)
         return self._expose(assignment)
 
     def _switchback_treatment(self, experiment_name, exposed_at):
@@ -1376,7 +1365,7 @@ class Context:
                 experiment_name, exposed_at, now)
             if assignment is not None:
                 return assignment
-        return self.get_assignment(experiment_name, exposed_at=exposed_at)
+        return self._get_assignment_at(experiment_name, exposed_at, now)
 
     def get_variable_keys(self):
         """Map each variable key to the name of one experiment defining it.
@@ -1591,12 +1580,19 @@ class Context:
         return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
+        return self._get_assignment_at(experiment_name, exposed_at, None)
+
+    def _get_assignment_at(self, experiment_name, exposed_at, now):
         # A definition can change again during either handoff. Retry here,
         # never let the internal route-mismatch sentinel escape to callers.
+        # The time a switchback slot was resolved at is kept for the
+        # exposure of this read only.
+        self._switchback_read.now = None
         while True:
             if experiment_name in self._switchback_names:
-                now = exposed_at if exposed_at is not None else \
-                    self.clock.millis()
+                if now is None:
+                    now = exposed_at if exposed_at is not None else \
+                        self.clock.millis()
                 assignment = self._get_switchback_assignment(
                     experiment_name, exposed_at, now)
                 if assignment is not None:
@@ -2053,9 +2049,6 @@ class Context:
             serving = switchback_serving.resolve(
                 types, paths, switchback.allowed, self.units, read)
         serving.read_at = now
-        serving.attribute_names = tuple(
-            path.root_key() for path in switchback.sources[1]) \
-            if switchback.sources is not None else ()
         return serving
 
     def _latest_attribute(self, name, now):
@@ -2348,6 +2341,8 @@ class Context:
         # else goes through _expose(assignment), which subclasses may
         # override with its one-argument signature.
         if assignment.switchback:
+            if resolved_at is None:
+                resolved_at = getattr(self._switchback_read, "now", None)
             return self._expose_switchback(assignment, resolved_at)
         return self._expose(assignment)
 
@@ -2430,6 +2425,7 @@ class Context:
                 Context.queue_exposure:
             view = copy.copy(assignment)
             view.exposedAt = exposed_at
+            view._origin = assignment
             return self.queue_exposure(view) is not False
         return self._queue_exposure_at(assignment, exposed_at) is not False
 
@@ -2545,7 +2541,8 @@ class Context:
             # A placeholder computed before recovery: its experiment is
             # now known, so the next read recomputes and exposes it.
             return None
-        if getattr(assignment, "retired", False):
+        if getattr(getattr(assignment, "_origin", assignment), "retired",
+                   False):
             return False
         if not assignment.exposed.compare_and_set(False, True):
             return None

@@ -1737,26 +1737,122 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
         self.assertEqual(1, context.peek_treatment("exp_sb"))
         self.assertEqual(["sb", "unit"], changes)
 
-    def test_same_tick_cluster_writes_are_reconstructible(self):
-        context = self.create_context([switchback(
-            arm_count=3, switchbackClusters=clusters(UNIT_TYPE, "city"))],
+    def test_attribute_writes_keep_the_clock_time_like_java(self):
+        # Java stamps every attribute with the clock reading. A write in the
+        # same tick as a cluster read is not moved later, so the SDK's own
+        # later reads in that tick see it (the same-tick tie after a peek is
+        # a limitation shared with Java and the Collector).
+        context = self.create_context([
+            switchback(1, "exp_a", 3,
+                       switchbackClusters=clusters(UNIT_TYPE, "city")),
+            switchback(2, "exp_b", 3,
+                       switchbackClusters=clusters(UNIT_TYPE, "city"))],
             cluster_attribute=False)
         self.clock.now = ANCHOR + 10
         context.set_attribute("city", "11")
-        first = context.peek_treatment("exp_sb")
+        context.peek_treatment("exp_a")
         context.set_attribute("city", "10")
-        self.clock.now += 20
-        self.assertEqual(first, context.get_treatment("exp_sb"))
+        self.assertEqual(draw("10", 0, 3), context.peek_treatment("exp_b"))
+        self.assertNotEqual(draw("10", 0, 3), draw("11", 0, 3))
+        context.get_treatment("exp_b")
         event = self.publish_event(context)
-        timestamp = event.exposures[0].exposedAt
-        visible = [a for a in event.attributes if a.setAt <= timestamp]
-        # Collector breaks ties by the last published write.
-        selected = sorted(enumerate(visible),
-                          key=lambda pair: (pair[1].setAt, pair[0]))[-1][1]
-        self.assertEqual("11", selected.value)
-        self.assertEqual(draw(selected.value, 0, 3), first)
-        self.assertEqual([ANCHOR + 10, ANCHOR + 11],
+        self.assertEqual([ANCHOR + 10, ANCHOR + 10],
                          [a.setAt for a in event.attributes])
+
+    def test_cluster_set_after_ineligible_read_serves_next_switchback(self):
+        # The startup order: read one switchback before its cluster is set,
+        # set it, then read another in the same tick.
+        context = self.create_context([
+            switchback(1, "exp_a", switchbackClusters=clusters(UNIT_TYPE,
+                                                               "city")),
+            switchback(2, "exp_b", switchbackClusters=clusters(UNIT_TYPE,
+                                                               "city"))],
+            cluster_attribute=False)
+        self.clock.now = ANCHOR + 10
+        self.assertEqual(0, context.get_treatment("exp_a"))
+        context.set_attribute("city", "10")
+        self.assertEqual(draw("10", 0, 2), context.get_treatment("exp_b"))
+        self.assert_published(context, exposure(
+            2, "exp_b", draw("10", 0, 2), ANCHOR + 10))
+
+    def test_set_unit_during_a_hook_call_is_seen_by_the_forwarded_view(self):
+        # An overridden switchback with no linked unit; set_unit inside the
+        # hook retires the slot, so the forwarded view must be rejected and
+        # the next read publishes the one exposure.
+        context = self.create_context([switchback()], units={},
+                                      overrides={"exp_sb": 1})
+        self.clock.now = ANCHOR + 5
+        original = context.queue_exposure
+        calls = []
+
+        def hook(assignment):
+            calls.append(assignment)
+            if len(calls) == 1:
+                context.set_unit(UNIT_TYPE, UID)
+            return original(assignment)
+
+        context.queue_exposure = hook
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        self.assertEqual(1, context.get_pending_count())
+
+    def test_variable_read_handoff_keeps_the_period_time(self):
+        # A refresh installs the switchback while a variable read is on the
+        # unit path, then the clock crosses the boundary before exposure.
+        unit = unit_twin(1, "exp_sb", variants=[
+            {"name": "A", "config": json.dumps({"sb.arm": 0})},
+            {"name": "B", "config": json.dumps({"sb.arm": 1})}])
+        context = self.create_context([unit])
+        self.clock.now = ANCHOR + HOUR - 1
+        acquire = context.context_lock.acquire_read
+        changed = []
+
+        def refresh_before_lock():
+            if not changed:
+                changed.append(True)
+                self.refresh_to(context, switchback())
+                self.clock.now = ANCHOR + HOUR - 1
+                self.clock.next_read = None
+            acquire()
+
+        context.context_lock.acquire_read = refresh_before_lock
+        reads = iter([ANCHOR + HOUR - 1])
+        millis = self.clock.millis
+        self.clock.millis = lambda: next(reads, ANCHOR + HOUR)
+        value = context.get_variable_value("sb.arm", -1)
+        self.clock.millis = millis
+        context.context_lock.acquire_read = acquire
+        self.assertEqual(EXPECTED_2_ARMS[0], value)
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
+
+    def test_variable_read_fallback_reads_the_clock_once(self):
+        # Another switchback is installed, so the walk reads the clock once;
+        # the refreshed experiment must resolve and expose at that reading.
+        unit = unit_twin(1, "exp_sb", variants=[
+            {"name": "A", "config": json.dumps({"sb.arm": 0})},
+            {"name": "B", "config": json.dumps({"sb.arm": 1})}])
+        other = switchback(9, "exp_other")
+        context = self.create_context([unit, other])
+        acquire = context.context_lock.acquire_read
+        changed = []
+
+        def refresh_before_lock():
+            if not changed:
+                changed.append(True)
+                self.refresh_to(context, switchback(), other)
+            acquire()
+
+        reads = iter([ANCHOR + HOUR - 1])
+        millis = self.clock.millis
+        self.clock.millis = lambda: next(reads, ANCHOR + HOUR)
+        context.context_lock.acquire_read = refresh_before_lock
+        value = context.get_variable_value("sb.arm", -1)
+        self.clock.millis = millis
+        context.context_lock.acquire_read = acquire
+        self.assertEqual(EXPECTED_2_ARMS[0], value)
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
 
     def test_overlapping_hook_failure_cannot_change_forwarded_time(self):
         context = self.create_context([switchback()])

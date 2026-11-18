@@ -300,9 +300,9 @@ MUTANTS = [
      "        if period is None:"),
     ("get-assignment-gate-widened", CONTEXT,
      "            if experiment_name in self._switchback_names:\n"
-     "                now = exposed_at",
+     "                if now is None:",
      "            if self._switchback_names:\n"
-     "                now = exposed_at"),
+     "                if now is None:"),
     ("assignment-at-gate-removed", CONTEXT,
      "    def _assignment_at(self, experiment_name, exposed_at, now):\n"
      "        if experiment_name in self._switchback_names:",
@@ -411,14 +411,18 @@ MUTANTS = [
      "        except ValueError:",
      "        try:\n            return str(int(value))\n"
      "        except ZeroDivisionError:"),
-    ("same-tick-not-ordered", CONTEXT,
-     "                                attribute.setAt == serving.read_at:",
-     "                                False:"),
-    ("handoff-exposure-without-time", CONTEXT,
-     '                assignment, getattr(self._switchback_read, '
-     '"now", None))',
-     "                assignment, None)"),
-    # Attributes read at the resolution instant.
+    ("hook-view-loses-retirement", CONTEXT,
+     "            view._origin = assignment\n", ""),
+    ("variable-fallback-rereads-clock", CONTEXT,
+     "        return self._get_assignment_at(experiment_name, exposed_at, "
+     "now)",
+     "        return self.get_assignment(experiment_name, "
+     "exposed_at=exposed_at)"),
+    ("expose-at-ignores-handoff-time", CONTEXT,
+     "            if resolved_at is None:\n"
+     "                resolved_at = getattr(self._switchback_read, \"now\", "
+     "None)\n",
+     ""),
     ("attribute-first-wins", CONTEXT,
      "                    (selected is None or set_at >= selected.setAt):",
      "                    (selected is None):"),

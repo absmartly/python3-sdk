@@ -1707,12 +1707,13 @@ class Context:
         assignment.eligible = True
         assignment.holdout_arm_count = len(live.split)
         installed = self._holdouts_by_id.get(live.id)
-        if holdouts_by_id is self._holdouts_by_id or \
-                (installed is not None and
-                 installed.iteration == live.iteration):
+        if holdouts_by_id is self._holdouts_by_id or installed is None or \
+                installed.iteration == live.iteration:
             # A resolution still working on a replaced payload caches its
-            # arm only for the same iteration, so every experiment shares
-            # one arm per epoch and a newer epoch is never overwritten.
+            # arm unless the installed payload moved the holdout to another
+            # iteration, so every experiment shares one arm per epoch (also
+            # when a refresh drops the holdout and a later one restores it)
+            # and a newer epoch is never overwritten.
             self._holdout_assignments[cache_key] = assignment
         return assignment
 

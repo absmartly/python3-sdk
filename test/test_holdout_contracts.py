@@ -977,3 +977,24 @@ class SharedArmAcrossRefreshTest(HoldoutTestCase):
         self.assertEqual(0, context.get_treatment("exp_b"))
         self.assertEqual([("h", 0)],
                          [(e.name, e.variant) for e in context.exposures])
+
+    def test_arm_survives_a_refresh_that_drops_and_restores_the_holdout(self):
+        experiments = [self.covered(1, "exp_a", [11]),
+                       self.covered(2, "exp_b", [11])]
+        context = self.create_context(context_data(
+            experiments, [holdout(11, "h", HOLDOUT_A_SEEDS)]))
+        original = context._get_resolution_state
+
+        def drop_after_read(name):
+            state = original(name)
+            context._get_resolution_state = original
+            context.set_data(context_data(experiments, []))
+            return state
+
+        context._get_resolution_state = drop_after_read
+        self.assertEqual(0, context.get_treatment("exp_a"))
+        self.refresh(context, context_data(
+            experiments, [holdout(11, "h", HOLDOUT_B_SEEDS)]))
+        self.assertEqual(0, context.get_treatment("exp_b"))
+        self.assertEqual([("h", 0)],
+                         [(e.name, e.variant) for e in context.exposures])

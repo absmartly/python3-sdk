@@ -347,6 +347,45 @@ MUTANTS = [
      "                return True"),
     ("hook-reject-keeps-exposed-at", CONTEXT,
      "                assignment.exposedAt = previous\n", ""),
+    ("unit-path-applies-switchback", CONTEXT,
+     "            if experiment is not None and experiment.switchback is not "
+     "None:\n                return None\n            assignment = "
+     "Assignment()",
+     "            assignment = Assignment()"),
+    ("unit-read-path-applies-switchback", CONTEXT,
+     "                if experiment is not None and \\\n"
+     "                        experiment.switchback is not None:\n"
+     "                    return None\n"
+     "                if assignment.data_failed and not failed:",
+     "                if assignment.data_failed and not failed:"),
+    ("zero-time-is-absent", CONTEXT,
+     "            now = exposed_at if exposed_at is not None else \\\n"
+     "                self.clock.millis()\n"
+     "            assignment = self._assignment_at(",
+     "            now = exposed_at if exposed_at else \\\n"
+     "                self.clock.millis()\n"
+     "            assignment = self._assignment_at("),
+    ("resolved-zero-is-absent", CONTEXT,
+     "            assignment, resolved_at if resolved_at is not None\n",
+     "            assignment, resolved_at if resolved_at\n"),
+    ("hook-time-kept-on-failure", CONTEXT,
+     "            finally:\n                assignment.exposedAt = None\n",
+     "            finally:\n                pass\n"),
+    ("exposure-not-reconstructible", CONTEXT,
+     "        if read_at is None or read_at == now:\n            return now",
+     "        if True:\n            return now"),
+    ("exposure-always-at-read", CONTEXT,
+     "        if (current.status, current.unit_type, current.cluster_key) == "
+     "\\\n                (serving.status, serving.unit_type, "
+     "serving.cluster_key):\n            return now\n",
+     ""),
+    ("unbounded-digit-parse", PATH,
+     "    if len(significant) > 10:\n        return None\n", ""),
+    ("unreadable-switchback-fails-context", CONTEXT,
+     "        try:\n            return cls(experiment)\n"
+     "        except Exception as e:",
+     "        try:\n            return cls(experiment)\n"
+     "        except ZeroDivisionError as e:"),
     # Attributes read at the resolution instant.
     ("attribute-first-wins", CONTEXT,
      "                    (selected is None or set_at >= selected.setAt):",

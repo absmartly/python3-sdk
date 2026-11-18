@@ -321,6 +321,7 @@ treatment = context.get_treatment("exp_switchback")  # Lisbon's variant in this 
 - The cluster is read once per period: a `set_attribute` later in the same period does not move the unit to another cluster. The next period reads it again.
 - Each period publishes one exposure, stamped with the time that chose the period. The exposure looks the same as a unit experiment's, under the serving unit's type. Attributes are still published with their timestamps, because the Collector re-resolves the cluster from them.
 - Holdouts never apply to a switchback experiment.
+- Variable reads expose every experiment they visit on the way to the one that defines the key, for switchbacks as for unit experiments (this SDK's behaviour since 0.3.0). The Java SDK exposes only the winning experiment.
 
 ## Advanced
 

@@ -166,6 +166,28 @@ class _Switchback:
         self.identity = _switchback_identity(experiment, self.sources)
         self.generation = 0
 
+    @classmethod
+    def installed(cls, experiment):
+        # A switchback whose fields cannot be read is served as an
+        # unservable one (the legacy ineligible control) instead of failing
+        # the whole context.
+        try:
+            return cls(experiment)
+        except Exception as e:
+            logger.warning("Switchback experiment '%s' is unreadable: %s",
+                           getattr(experiment, "name", None),
+                           type(e).__name__)
+            switchback = cls.__new__(cls)
+            switchback.sources = None
+            switchback.allowed = None
+            switchback.start_at = None
+            switchback.period_ms = None
+            switchback.servable = False
+            switchback.seed = 0
+            switchback.identity = ("unreadable", object())
+            switchback.generation = 0
+            return switchback
+
     def period(self, now):
         """floor((now - startAt) / periodMs), as the Collector computes it;
         None before the anchor, for an unservable schedule and on the legacy
@@ -182,15 +204,36 @@ def _is_switchback(experiment):
     return getattr(experiment, "randomizationType", None) == "switchback"
 
 
+_MAX_IDENTITY_TOKENS = 100_000
+
+
 def _identity_value(value):
-    # Compared by value and type, mappings in their order: two cluster maps
-    # with the same entries in another order are different identities.
-    if isinstance(value, Mapping):
-        return ("map", tuple((key, _identity_value(item))
-                             for key, item in value.items()))
-    if isinstance(value, (list, tuple)):
-        return ("list", tuple(_identity_value(item) for item in value))
-    return (type(value).__name__, repr(value))
+    # Value and type, mappings in their order, so the same cluster map
+    # entries in another order are another identity. Encoded iteratively
+    # with explicit open/close markers, so deeply nested metadata cannot
+    # exhaust the stack; a value too large (or cyclic) to encode never
+    # equals another, which only starts a new epoch.
+    tokens = []
+    stack = [(False, value)]
+    while stack:
+        if len(tokens) > _MAX_IDENTITY_TOKENS:
+            return ("unbounded", object())
+        is_marker, item = stack.pop()
+        if is_marker:
+            tokens.append(item)
+        elif isinstance(item, Mapping):
+            tokens.append("{")
+            stack.append((True, "}"))
+            for key, child in reversed(list(item.items())):
+                stack.append((False, child))
+                stack.append((True, ("key", type(key).__name__, repr(key))))
+        elif isinstance(item, (list, tuple)):
+            tokens.append("[")
+            stack.append((True, "]"))
+            stack.extend((False, child) for child in reversed(item))
+        else:
+            tokens.append((type(item).__name__, repr(item)))
+    return tuple(tokens)
 
 
 def _switchback_identity(experiment, sources):
@@ -709,7 +752,8 @@ class Context:
             experiment_variables.variables = []
             if _is_switchback(experiment):
                 # Holdouts never apply to a switchback.
-                experiment_variables.switchback = _Switchback(experiment)
+                experiment_variables.switchback = \
+                    _Switchback.installed(experiment)
                 switchbacks.append(experiment_variables)
             elif holdouts_by_id:
                 holdouts = _applicable_holdouts(
@@ -1300,7 +1344,8 @@ class Context:
         # Each attempt resolves and exposes at one clock reading (exposed_at
         # when given, so a historic exposure lands in the period it names).
         for _ in range(_MAX_EXPOSURE_ATTEMPTS):
-            now = exposed_at if exposed_at else self.clock.millis()
+            now = exposed_at if exposed_at is not None else \
+                self.clock.millis()
             assignment = self._assignment_at(experiment_name, exposed_at, now)
             if assignment.exposed.value or self._expose_at(assignment, now):
                 break
@@ -1532,6 +1577,16 @@ class Context:
                 experiment_name, exposed_at, None)
             if assignment is not None:
                 return assignment
+        assignment = self._get_unit_assignment(experiment_name, exposed_at)
+        if assignment is None:
+            # A refresh installed a switchback under this name after the
+            # check above: resolve the definition that is installed now.
+            assignment = self._get_switchback_assignment(
+                experiment_name, exposed_at, None)
+        return assignment
+
+    def _get_unit_assignment(self, experiment_name, exposed_at):
+        # None when the installed definition turns out to be a switchback.
         checked_seq = None
         try:
             self.context_lock.acquire_read()
@@ -1542,6 +1597,9 @@ class Context:
                 experiment, failed = self._get_experiment_state(
                     experiment_name)
 
+                if experiment is not None and \
+                        experiment.switchback is not None:
+                    return None
                 if assignment.data_failed and not failed:
                     # Computed before a refresh recovered the context; its
                     # placeholder exposure was dropped, so recompute.
@@ -1589,6 +1647,9 @@ class Context:
                 if self.assignment_cache.get(experiment_name) is assignment:
                     experiment = self.get_experiment(experiment_name)
                     if experiment is not None and \
+                            experiment.switchback is not None:
+                        return None
+                    if experiment is not None and \
                             experiment_matches(experiment.data, assignment) and \
                             _holdout_set_matches(experiment, assignment):
                         rule_key = _rule_key(experiment.data)
@@ -1616,6 +1677,8 @@ class Context:
             # concurrent refresh cannot mix two payloads in one decision.
             experiment, failed, holdouts_by_id = \
                 self._get_resolution_state(experiment_name)
+            if experiment is not None and experiment.switchback is not None:
+                return None
             assignment = Assignment()
             assignment.name = experiment_name
             assignment.eligible = True
@@ -1740,7 +1803,8 @@ class Context:
             if switchback is None and epoch is None:
                 return None
             if now is None:
-                now = exposed_at if exposed_at else self.clock.millis()
+                now = exposed_at if exposed_at is not None else \
+                    self.clock.millis()
             if switchback is not None and (
                     epoch is None or
                     epoch.generation == switchback.generation):
@@ -1782,8 +1846,6 @@ class Context:
             assignment.data_failed = failed
             assignment.switchback = True
             assignment.switchback_generation = switchback.generation
-            if exposed_at:
-                assignment.exposedAt = exposed_at
             # Within one period slot the serving unit and cluster key are
             # read once: a slot replaced in the same epoch, for example after
             # set_attribute changed the audience, keeps its cluster.
@@ -1836,8 +1898,6 @@ class Context:
         assignment.variant = 0
 
         if serving.status == switchback_serving.ABSENT:
-            # No linked unit: the experiment does not apply, like an unset
-            # unit type.
             assignment.unit_type = \
                 self._switchback_fallback_unit_type(experiment)
             assignment.eligible = False
@@ -1930,8 +1990,6 @@ class Context:
             return False
         serving = cached.switchback_serving
         if serving is None or serving.status != switchback_serving.ELIGIBLE:
-            # An ineligible or absent slot never consulted its rules or the
-            # audience, so neither can make it stale.
             return True
         rule_key = _rule_key(data)
         if rule_key == cached.rule_key and \
@@ -1960,18 +2018,21 @@ class Context:
         # still see the serving unit. Caller holds the context write lock.
         switchback = experiment.switchback
         if switchback.sources is None:
-            return switchback_serving.legacy(experiment.data.unitType,
-                                             self.units)
-        types, paths = switchback.sources
+            serving = switchback_serving.legacy(experiment.data.unitType,
+                                                self.units)
+        else:
+            types, paths = switchback.sources
 
-        def read(path):
-            attribute = self._latest_attribute(path.root_key(), now)
-            if attribute is None:
-                return None
-            return path.resolve_attribute(attribute.value)
+            def read(path):
+                attribute = self._latest_attribute(path.root_key(), now)
+                if attribute is None:
+                    return None
+                return path.resolve_attribute(attribute.value)
 
-        return switchback_serving.resolve(types, paths, switchback.allowed,
-                                          self.units, read)
+            serving = switchback_serving.resolve(
+                types, paths, switchback.allowed, self.units, read)
+        serving.read_at = now
+        return serving
 
     def _latest_attribute(self, name, now):
         # The attribute the Collector records with an exposure at `now`:
@@ -2338,18 +2399,43 @@ class Context:
                 return True
             finally:
                 self.event_lock.release_write()
-        exposed_at = assignment.exposedAt or resolved_at or \
-            self.clock.millis()
+        exposed_at = self._switchback_exposed_at(
+            assignment, resolved_at if resolved_at is not None
+            else self.clock.millis())
         if getattr(self.queue_exposure, "__func__", None) is not \
                 Context.queue_exposure:
-            # The hook receives the assignment, so it carries the time.
-            previous = assignment.exposedAt
+            # The hook reads the time from the assignment; it is set only for
+            # this call, so a failed or rejected call leaves no stale time
+            # on the cached slot.
             assignment.exposedAt = exposed_at
-            if self.queue_exposure(assignment) is False:
-                assignment.exposedAt = previous
-                return False
-            return True
+            try:
+                return self.queue_exposure(assignment) is not False
+            finally:
+                assignment.exposedAt = None
         return self._queue_exposure_at(assignment, exposed_at) is not False
+
+    def _switchback_exposed_at(self, assignment, now):
+        # The Collector re-resolves the cluster from the published attributes
+        # at exposedAt. The slot read its cluster once (possibly at an
+        # earlier peek in the same period); if the attributes now select
+        # another one, stamp the exposure at that read instead, which lies in
+        # the same period and reconstructs the cluster behind the variant.
+        serving = assignment.switchback_serving
+        read_at = getattr(serving, "read_at", None)
+        if read_at is None or read_at == now:
+            return now
+        try:
+            self.context_lock.acquire_write()
+            experiment = self.get_experiment(assignment.name)
+            if experiment is None or experiment.switchback is None:
+                return now
+            current = self._resolve_switchback_serving(experiment, now)
+        finally:
+            self.context_lock.release_write()
+        if (current.status, current.unit_type, current.cluster_key) == \
+                (serving.status, serving.unit_type, serving.cluster_key):
+            return now
+        return read_at
 
     def _expose_through_hook(self, assignment: Assignment):
         # A subclass overriding queue_exposure (a v0.2.4 extension point)
@@ -2446,8 +2532,10 @@ class Context:
         return exposure
 
     def queue_exposure(self, assignment: Assignment):
+        exposed_at = assignment.exposedAt
         return self._queue_exposure_at(
-            assignment, assignment.exposedAt or self.clock.millis())
+            assignment, exposed_at if exposed_at is not None
+            else self.clock.millis())
 
     def _queue_exposure_at(self, assignment: Assignment, exposed_at):
         try:

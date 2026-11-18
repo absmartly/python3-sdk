@@ -60,8 +60,6 @@ STRICT_GOLD_AUDIENCE = json.dumps(
 class MutableClock(Clock):
     def __init__(self, now):
         self.now = now
-        # When set, the next read returns this value once, then reads fall
-        # back to `now`.
         self.next_read = None
 
     def millis(self):

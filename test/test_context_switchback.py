@@ -240,7 +240,6 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             self.assertEqual(-1, context.get_variable_value("sb.arm", -1))
         self.assertEqual(0, context.get_pending_count())
 
-        # Setting a linked unit later makes the experiment apply.
         context.set_unit(UNIT_TYPE, UID)
         self.assertEqual(EXPECTED_2_ARMS[2], context.get_treatment("exp_sb"))
         self.assert_published(context, exposure(
@@ -609,7 +608,6 @@ class ContextSwitchbackTest(SwitchbackTestCase):
             audience=STRICT_GOLD_AUDIENCE, audienceStrict=True)])
         self.assertEqual(-1, context.peek_variable_value("sb.arm", -1))
         self.assertEqual(-1, context.get_variable_value("sb.arm", -1))
-        # Visited, so its strict-mismatch exposure is recorded (see above).
         self.assertEqual(1, context.get_pending_count())
 
     def test_traffic_miss_on_eligible_cluster_is_recorded(self):
@@ -890,7 +888,6 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
         self.assertEqual(4, context.get_pending_count())
 
-        # An unchanged identity keeps the epoch.
         self.refresh_to(context, switchback())
         context.get_treatment("exp_sb")
         self.assertEqual(4, context.get_pending_count())
@@ -916,7 +913,6 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         matcher.rule_evaluations = 0
         self.assertEqual(1, context.peek_treatment("exp_sb"))
         self.assertEqual(2, matcher.rule_evaluations)
-        # Current again: no further evaluation.
         self.assertEqual(1, context.peek_treatment("exp_sb"))
         self.assertEqual(2, matcher.rule_evaluations)
 
@@ -994,7 +990,6 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         context = self.create_context([switchback(trafficSplit=[1.0, 0.0])])
         self.assertEqual(0, context.get_treatment("exp_sb"))
         self.assertEqual(0, context.get_pending_count())
-        # At the anchor the draw can run, so the miss is recorded.
         self.clock.now = ANCHOR
         self.assertEqual(0, context.get_treatment("exp_sb"))
         self.assert_published(context, exposure(1, "exp_sb", 0, ANCHOR,
@@ -1536,6 +1531,156 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
         self.clock.now = ANCHOR + 5
         self.treatment_within(context, "exp_sb")
         self.assertEqual(1, context.get_pending_count())
+
+
+class JervasionRoundOneTest(SwitchbackTestCase):
+
+    def test_unit_to_switchback_refresh_between_routing_and_assignment(self):
+        # A refresh installs a switchback after get_assignment routed the
+        # name to the unit path: the unit path must hand over, never apply
+        # the switchback definition as a unit experiment.
+        # A full-on switchback with no cluster value is a silent control, so
+        # serving 1 (or exposing at all) means the unit path applied it.
+        # With full-on 0 the switchback matches the cached unit slot on every
+        # field the unit path compares, so only the switchback check keeps
+        # the read path from serving (and exposing) the stale unit slot.
+        for primed, full_on in ((True, 1), (False, 1), (True, 0)):
+            context = self.create_context([unit_twin(1, "exp_sb")],
+                                          cluster_attribute=False)
+            self.clock.now = ANCHOR + 5
+            if primed:
+                context.peek_treatment("exp_sb")
+            refresh = context_data([switchback(fullOnVariant=full_on)])
+            swapped = []
+            acquire_read = context.context_lock.acquire_read
+
+            def refresh_then_read():
+                if not swapped:
+                    swapped.append(True)
+                    self.client.refresh_data = refresh
+                    context.refresh()
+                acquire_read()
+
+            context.context_lock.acquire_read = refresh_then_read
+            self.assertEqual(0, context.get_treatment("exp_sb"), primed)
+            context.context_lock.acquire_read = acquire_read
+            self.assertEqual(0, context.get_treatment("exp_sb"), primed)
+            self.assertEqual(0, context.get_pending_count(), primed)
+
+    def test_zero_timestamps_are_used_as_given(self):
+        # Anchor 0: a read at 0 is in period 0 even when the clock moves on.
+        self.clock.now = 0
+        context = self.create_context([switchback(switchbackStartAt=0)])
+        self.clock.now = HOUR
+        self.clock.next_read = 0
+        self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], 0))
+        self.clock.now = 0
+        context = self.create_context([switchback(switchbackStartAt=0)])
+        self.clock.now = HOUR
+        self.assertEqual(EXPECTED_2_ARMS[0],
+                         context.get_treatment("exp_sb", exposed_at=0))
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], 0))
+
+    def test_a_raising_queue_exposure_hook_leaves_no_stale_time(self):
+        context = self.create_context([switchback()])
+        calls = []
+        original = context.queue_exposure
+
+        def queue_exposure(assignment):
+            calls.append(assignment.exposedAt)
+            if len(calls) == 1:
+                raise RuntimeError("hook down")
+            return original(assignment)
+
+        context.queue_exposure = queue_exposure
+        self.clock.now = ANCHOR + 10
+        with self.assertRaises(RuntimeError):
+            context.get_treatment("exp_sb")
+        self.assertIsNone(context.get_assignment("exp_sb").exposedAt)
+        self.clock.now = ANCHOR + 20
+        context.get_treatment("exp_sb")
+        self.assertEqual([ANCHOR + 10, ANCHOR + 20], calls)
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + 20))
+
+    def test_peek_then_attribute_update_is_reconstructible(self):
+        # The Collector resolves the cluster from the published attributes
+        # at exposedAt (latest setAt <= exposedAt): that must be the cluster
+        # whose draw the exposure carries.
+        context = self.create_context([switchback(
+            arm_count=3, switchbackClusters=clusters(UNIT_TYPE, "city"))],
+            cluster_attribute=False)
+        self.assertNotEqual(draw("11", 0, 3), draw("10", 0, 3))
+        self.clock.now = ANCHOR + 10
+        context.set_attribute("city", "11")
+        self.assertEqual(draw("11", 0, 3), context.peek_treatment("exp_sb"))
+        self.clock.now = ANCHOR + 20
+        context.set_attribute("city", "10")
+        self.assertEqual(draw("11", 0, 3), context.get_treatment("exp_sb"))
+        event = self.publish_event(context)
+        exposed_at = event.exposures[0].exposedAt
+        visible = [a for a in event.attributes
+                   if a.name == "city" and a.setAt <= exposed_at]
+        latest = max(visible, key=lambda a: a.setAt).value
+        self.assertEqual("11", latest)
+        self.assertEqual(draw(latest, 0, 3), event.exposures[0].variant)
+        self.assertEqual(0, (exposed_at - ANCHOR) // HOUR)
+
+    def test_peek_then_unchanged_cluster_keeps_the_exposing_time(self):
+        context = self.create_context([switchback()])
+        self.clock.now = ANCHOR + 10
+        context.peek_treatment("exp_sb")
+        self.clock.now = ANCHOR + 20
+        context.set_attribute("other", "x")
+        context.get_treatment("exp_sb")
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + 20))
+
+    def test_a_long_digit_path_segment_does_not_reject_the_context(self):
+        long_path = "geo/" + "9" * 4301 + "/city"
+        context = self.create_context([
+            switchback(switchbackClusters=clusters(UNIT_TYPE, long_path)),
+            unit_twin(2, "exp_unit", fullOnVariant=1)])
+        self.assertTrue(context.is_ready())
+        self.assertFalse(context.is_failed())
+        self.assertEqual(1, context.get_treatment("exp_unit"))
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+
+    def test_an_unreadable_switchback_is_isolated_from_the_context(self):
+        class Hostile(dict):
+            def items(self):
+                raise RuntimeError("unreadable")
+
+        data = context_data([switchback(), unit_twin(2, "exp_unit",
+                                                     fullOnVariant=1)])
+        data.experiments[0].switchbackClusters = Hostile(store_id="x")
+        context = self.create_context([])
+        self.client.refresh_data = data
+        context.refresh()
+        self.assertFalse(context.is_failed())
+        self.assertEqual(1, context.get_treatment("exp_unit"))
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+        self.assertEqual(1, context.get_pending_count())
+
+    def test_deep_identity_metadata_does_not_reject_the_refresh(self):
+        nested = "x"
+        for _ in range(2000):
+            nested = [nested]
+        context = self.create_context([unit_twin(2, "exp_unit")])
+        self.refresh_to(context,
+                        switchback(switchbackDesignType=nested),
+                        unit_twin(2, "exp_unit", fullOnVariant=1))
+        self.assertFalse(context.is_failed())
+        self.assertEqual(1, context.get_treatment("exp_unit"))
+        self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
+        self.refresh_to(context,
+                        switchback(switchbackDesignType=nested),
+                        unit_twin(2, "exp_unit", fullOnVariant=1))
+        self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
+        self.assertEqual(2, context.get_pending_count())
 
 
 class NoSwitchbackCostTest(SwitchbackTestCase):

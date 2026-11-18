@@ -321,7 +321,9 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
         self.assertEqual(expected("Faro", 0), context.get_treatment("exp_sb"))
         self.assert_published(
             context, exposure(1, "exp_sb", 0, ANCHOR + 10, eligible=False),
-            exposure(1, "exp_sb", expected("Faro", 0), ANCHOR + 20))
+            # Stamped at the read that chose Faro: at ANCHOR + 20 the
+            # Collector would resolve Lisboa from the published attributes.
+            exposure(1, "exp_sb", expected("Faro", 0), ANCHOR + 10))
 
     def test_audience_revalidation_keeps_the_cluster(self):
         audience = json.dumps(
@@ -341,7 +343,8 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
                          context.get_treatment("exp_sb"))
         self.assert_published(
             context, exposure(1, "exp_sb", expected("Lisboa", 0), ANCHOR + 10),
-            exposure(1, "exp_sb", expected("Lisboa", 0), ANCHOR + 20,
+            # Stamped at the read that chose Lisboa (see above).
+            exposure(1, "exp_sb", expected("Lisboa", 0), ANCHOR + 10,
                      audience_mismatch=True))
 
     def test_unchanged_audience_keeps_the_exposed_slot(self):

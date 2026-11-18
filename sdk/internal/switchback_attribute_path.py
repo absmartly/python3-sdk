@@ -26,7 +26,6 @@ class SwitchbackAttributePath:
 
     def __init__(self, keys, indices):
         self.keys = keys
-        # Parallel to keys; None where the segment is a mapping key.
         self.indices = indices
 
     @staticmethod
@@ -160,7 +159,12 @@ def try_parse_int(s):
     digits = s[1:] if negative else s
     if not digits or any(c < "0" or c > "9" for c in digits):
         return None
-    value = -int(digits) if negative else int(digits)
+    # Leading zeros are allowed ("007" is 7); past ten significant digits
+    # the value is out of int32 range, so skip int() on unbounded input.
+    significant = digits.lstrip("0") or "0"
+    if len(significant) > 10:
+        return None
+    value = -int(significant) if negative else int(significant)
     if value < _INT32_MIN or value > _INT32_MAX:
         return None
     return value

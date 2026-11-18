@@ -13,7 +13,7 @@ import json
 import os
 import unittest
 
-from sdk.internal import switchback_assigner
+from sdk.internal import buffers, murmur32, switchback_assigner
 from sdk.internal import switchback_cluster_keys
 from sdk.internal.switchback_attribute_path import (
     SwitchbackAttributePath, try_parse_int)
@@ -123,12 +123,22 @@ class SwitchbackAssignerGoldenVectorsTest(unittest.TestCase):
                                            arm_count))
 
     def test_seed_is_written_little_endian_low_word_first(self):
-        # Swapping the seed halves, or sign-extending the low word, changes
-        # the draw: the 64-bit seed is (seedHi << 32) | (seedLo & 0xffffffff).
-        seeds = [(1 << 32) | 0xfffffff9, (0xfffffff9 << 32) | 1, -7]
-        draws = [switchback_assigner.base_hash("store-42", 0, seed)
-                 for seed in seeds]
-        self.assertEqual(len(set(draws)), len(draws))
+        # baseHash hashes le32(seed low word) ++ le32(seed high word) ++
+        # le32(keyHash), as the platform's le64(seed) does. Pinned against
+        # that byte layout built independently, and against golden vector
+        # assign("market_1", 0, 1, 2) = 1, which flips to 0 with the words
+        # swapped.
+        key_hash = murmur32.digest("market_1\u001f0".encode(), 0)
+        for seed in (1, 1 << 32, (1 << 32) | 0xfffffff9, -7,
+                     LONG_MIN, LONG_MAX):
+            layout = bytearray(12)
+            buffers.put_uint32(layout, 0, seed & 0xffffffff)
+            buffers.put_uint32(layout, 4, (seed >> 32) & 0xffffffff)
+            buffers.put_uint32(layout, 8, key_hash)
+            self.assertEqual(murmur32.digest(layout, 0),
+                             switchback_assigner.base_hash("market_1", 0,
+                                                           seed), seed)
+        self.assertEqual(1, switchback_assigner.assign("market_1", 0, 1, 2))
 
     def test_lone_surrogates_are_encoded_like_java(self):
         # Java's Buffers.encodeUTF8 writes a lone surrogate as three bytes.
@@ -257,8 +267,10 @@ class SwitchbackAttributePathTest(unittest.TestCase):
             "items/1/city").resolve_attribute(
                 ({"city": "Lisbon"}, {"city": "Porto"})))
         self.assertIsNone(path.resolve_attribute({"city": None}))
-        self.assertEqual(3.0, path.resolve_attribute({"city": 3.0}))
-        self.assertIsInstance(path.resolve_attribute({"city": 3}), int)
+        whole_float = path.resolve_attribute({"city": 3.0})
+        self.assertIs(float, type(whole_float))
+        self.assertIsNone(switchback_cluster_keys.normalize(whole_float))
+        self.assertIs(int, type(path.resolve_attribute({"city": 3})))
         self.assertIsNone(path.resolve_attribute(None))
         self.assertEqual("x", SwitchbackAttributePath.parse_supported(
             "geo").resolve_attribute("x"))
@@ -269,6 +281,10 @@ class SwitchbackAttributePathTest(unittest.TestCase):
         self.assertEqual(7, try_parse_int("007"))
         self.assertEqual(2147483647, try_parse_int("2147483647"))
         self.assertEqual(-2147483648, try_parse_int("-2147483648"))
+        self.assertEqual(7, try_parse_int("0" * 5000 + "7"))
+        # Past CPython's default int() digit limit: out of range, no error.
+        self.assertIsNone(try_parse_int("9" * 4301))
+        self.assertIsNone(try_parse_int("-" + "9" * 10000))
         for s in ("", "-", "+1", "1a", " 1", "2147483648", "-2147483649",
                   "99999999999999999999", "٠", "1.0", "１"):
             self.assertIsNone(try_parse_int(s), s)

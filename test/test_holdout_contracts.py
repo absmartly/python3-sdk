@@ -1239,3 +1239,21 @@ class QueueExposureHookTest(HoldoutTestCase):
         self.assertTrue(context._retire(assignment))
         self.assertFalse(context._expose(assignment))
         self.assertEqual([], context.exposures)
+
+    def test_hook_declining_the_own_exposure_still_gets_the_holdout(self):
+        from sdk.context import Context
+        calls = []
+
+        class Filter(Context):
+            def queue_exposure(self, assignment):
+                calls.append(assignment.name)
+                if assignment.id == 1:
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Filter
+        context.get_treatment("e1")
+        self.assertEqual(["e1", "h"], calls)
+        self.assertEqual(["h"], [e.name for e in context.exposures])

@@ -1142,3 +1142,21 @@ class QueueExposureHookTest(HoldoutTestCase):
         self.assertEqual([123], declined)
         self.assertEqual([("e1", 123), ("e2", NOW), ("h", NOW)],
                          [(e.name, e.exposedAt) for e in context.exposures])
+
+    def test_hook_is_called_once_per_published_exposure(self):
+        from sdk.context import Context
+        calls = []
+
+        class Recording(Context):
+            def queue_exposure(self, assignment):
+                calls.append(assignment.name)
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11]), self.covered(2, "e2", [11])],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Recording
+        context.get_treatment("e1")
+        context.get_treatment("e2")
+        self.assertEqual(["e1", "h", "e2"], calls)
+        self.assertEqual(calls, [e.name for e in context.exposures])

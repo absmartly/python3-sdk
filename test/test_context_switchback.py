@@ -4,6 +4,7 @@ sdk/ContextSwitchbackTest.java, merged in java-sdk#15). The rules are in the
 Java SDK's SWITCHBACK.md.
 """
 import json
+import sys
 import threading
 import time
 import unittest
@@ -1744,6 +1745,13 @@ class GatePassSixTest(SwitchbackTestCase):
         self.assertEqual(0, context.get_pending_count())
 
     def test_an_int_too_long_to_render_gives_no_cluster_value(self):
+        # Only CPythons with the int-to-text digit limit (3.9.14+, 3.10.7+)
+        # refuse to render it; pin the default limit for the test.
+        if not hasattr(sys, "set_int_max_str_digits"):
+            self.skipTest("this CPython renders ints of any length")
+        limit = sys.get_int_max_str_digits()
+        sys.set_int_max_str_digits(4300)
+        self.addCleanup(sys.set_int_max_str_digits, limit)
         context = self.create_context([switchback()],
                                       cluster_attribute=False,
                                       attributes={CLUSTER_PATH: 10 ** 5000})

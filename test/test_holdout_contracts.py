@@ -1102,3 +1102,43 @@ class QueueExposureHookTest(HoldoutTestCase):
         context.queue_exposure = recording
         context.get_treatment("exp")
         self.assertEqual(["exp", "holdout_b"], seen)
+
+    def test_hook_path_rejects_a_held_out_exposure_while_closing(self):
+        from sdk.context import Context
+
+        class Recording(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_a()]))
+        context.__class__ = Recording
+        assignment = context.get_assignment("exp")
+        self.assertTrue(assignment.suppressed)
+        context.closing.set(True)
+        with self.assertRaises(ContextError):
+            context._expose(assignment)
+        self.assertFalse(assignment.exposed.value)
+
+    def test_hook_path_leaves_the_shared_arm_untouched(self):
+        from sdk.context import Context
+        declined = []
+
+        class Declining(Context):
+            def queue_exposure(self, assignment):
+                if assignment.id == 11 and not declined:
+                    declined.append(assignment.exposedAt)
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11]), self.covered(2, "e2", [11])],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Declining
+        context.get_treatment("e1", exposed_at=123)
+        arm = context._holdout_assignments[(11, UNIT_TYPE)]
+        self.assertEqual(("h", None), (arm.name, arm.exposedAt))
+        context.get_treatment("e2")
+        self.assertEqual([123], declined)
+        self.assertEqual([("e1", 123), ("e2", NOW), ("h", NOW)],
+                         [(e.name, e.exposedAt) for e in context.exposures])

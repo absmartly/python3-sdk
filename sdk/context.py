@@ -1803,12 +1803,13 @@ class Context:
                 assignment.holdouts, assignment.holdout_assignments):
             if holdout_assignment is not None and \
                     not holdout_assignment.exposed.value:
-                # The hook receives the assignment, so it carries this
-                # snapshot's name and the read's exposure time.
-                holdout_assignment.name = holdout.name
-                if assignment.exposedAt is not None:
-                    holdout_assignment.exposedAt = assignment.exposedAt
-                self.queue_exposure(holdout_assignment)
+                # The hook gets a copy carrying this snapshot's name and the
+                # read's exposure time; it shares `exposed` (an AtomicBool)
+                # with the cached arm, so the arm stays exposed once only.
+                view = copy.copy(holdout_assignment)
+                view.name = holdout.name
+                view.exposedAt = assignment.exposedAt
+                self.queue_exposure(view)
         return True
 
     def _accept_exposure(self, assignment: Assignment, name, exposed_at):

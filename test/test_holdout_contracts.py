@@ -12,6 +12,7 @@ from types import MappingProxyType
 
 from sdk import context as context_module
 from sdk.context_error import ContextError
+from sdk.context_event_logger import EventType
 from sdk.default_context_data_deserializer import \
     DefaultContextDataDeserializer
 from sdk.json.context_data import ContextData
@@ -1257,3 +1258,104 @@ class QueueExposureHookTest(HoldoutTestCase):
         context.get_treatment("e1")
         self.assertEqual(["e1", "h"], calls)
         self.assertEqual(["h"], [e.name for e in context.exposures])
+
+    def test_hook_path_finishes_holdouts_after_a_failed_close(self):
+        from sdk.context import Context
+
+        class Delegating(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Delegating
+        failing = Future()
+        self.client.publish_results.append(failing)
+        closing = []
+
+        def close_on_own_exposure(event_type, data):
+            if event_type == EventType.EXPOSURE and data.id == 1 and \
+                    not closing:
+                closing.append(context.close_async())
+
+        self.logger.on_event = close_on_own_exposure
+        with self.assertRaises(ContextError):
+            context.get_treatment("exp")
+        self.logger.on_event = None
+        failing.set_exception(RuntimeError("publish failed"))
+        with self.assertRaises(RuntimeError):
+            closing[0].result(5)
+        self.assertFalse(context.is_closed())
+        self.assertEqual(NORMAL_VARIANT, context.get_treatment("exp"))
+        self.assertEqual([("exp", 1), ("h", 1)],
+                         [(e.name, e.variant) for e in context.exposures])
+        # Finished: further reads add nothing.
+        context.get_treatment("exp")
+        self.assertEqual(2, len(context.exposures))
+
+    def test_hook_path_uses_one_time_for_the_group(self):
+        from sdk.context import Context
+
+        class Delegating(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        times = iter([100, 200, 300, 400])
+        self.clock.millis = lambda: next(times)
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Delegating
+        context.get_treatment("exp")
+        self.assertEqual([("exp", 100), ("h", 100)],
+                         [(e.name, e.exposedAt) for e in context.exposures])
+
+    def test_hook_path_variable_read_finishes_holdouts_after_a_failed_close(self):
+        from sdk.context import Context
+
+        class Delegating(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [with_variables(self.covered(1, "exp", [11]), "color")],
+            [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Delegating
+        failing = Future()
+        self.client.publish_results.append(failing)
+        closing = []
+
+        def close_on_own_exposure(event_type, data):
+            if event_type == EventType.EXPOSURE and data.id == 1 and \
+                    not closing:
+                closing.append(context.close_async())
+
+        self.logger.on_event = close_on_own_exposure
+        with self.assertRaises(ContextError):
+            context.get_variable_value("color", "default")
+        self.logger.on_event = None
+        failing.set_exception(RuntimeError("publish failed"))
+        with self.assertRaises(RuntimeError):
+            closing[0].result(5)
+        self.assertEqual("treatment",
+                         context.get_variable_value("color", "default"))
+        self.assertEqual(["exp", "h"], [e.name for e in context.exposures])
+
+    def test_hook_path_stops_revisiting_once_holdouts_are_finished(self):
+        from sdk.context import Context
+        expose_calls = []
+
+        class Delegating(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+            def _expose(self, assignment):
+                expose_calls.append(assignment.name)
+                return super()._expose(assignment)
+
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = Delegating
+        for _ in range(3):
+            context.get_treatment("exp")
+        self.assertEqual(["exp"], expose_calls)
+        self.assertFalse(context.get_assignment("exp").holdouts_pending)

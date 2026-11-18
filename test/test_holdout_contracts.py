@@ -1359,3 +1359,107 @@ class QueueExposureHookTest(HoldoutTestCase):
             context.get_treatment("exp")
         self.assertEqual(["exp"], expose_calls)
         self.assertFalse(context.get_assignment("exp").holdouts_pending)
+
+
+class HookPathFollowUpTest(HoldoutTestCase):
+    """Override-path cases from the aa8f88d review."""
+
+    def recording_class(self, decline=None, on_call=None):
+        from sdk.context import Context
+
+        class Hook(Context):
+            def queue_exposure(self, assignment):
+                if on_call is not None:
+                    on_call(assignment)
+                if decline is not None and decline(assignment):
+                    return None
+                return super().queue_exposure(assignment)
+
+        return Hook
+
+    def test_held_out_hook_path_finishes_holdouts_after_a_failed_close(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11]), experiment(2, "plain")],
+            [self.holdout_a(name="h")]))
+        context.__class__ = self.recording_class()
+        failing = Future()
+        self.client.publish_results.append(failing)
+        context.get_treatment("plain")
+        closing = []
+
+        def close_on_holdout(assignment):
+            if assignment.id == 11 and not closing:
+                closing.append(context.close_async())
+
+        context.__class__ = self.recording_class(on_call=close_on_holdout)
+        with self.assertRaises(ContextError):
+            context.get_treatment("exp")
+        failing.set_exception(RuntimeError("publish failed"))
+        with self.assertRaises(RuntimeError):
+            closing[0].result(5)
+        self.assertEqual(0, context.get_treatment("exp"))
+        self.assertEqual([("plain", 1), ("h", 0)],
+                         [(e.name, e.variant) for e in context.exposures])
+
+    def test_declined_holdout_is_retried_by_the_same_experiment(self):
+        declined = []
+
+        def decline_once(assignment):
+            if assignment.id == 11 and not declined:
+                declined.append(1)
+                return True
+            return False
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.recording_class(decline=decline_once)
+        context.get_treatment("e1")
+        context.get_treatment("e1")
+        self.assertEqual(["e1", "h"], [e.name for e in context.exposures])
+
+    def test_holdout_reserved_by_another_reader_is_finished_later(self):
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.recording_class()
+        assignment = context.get_assignment("e1")
+        arm = assignment.holdout_assignments[0]
+        arm.hook_pending = True
+        context.get_treatment("e1")
+        self.assertTrue(assignment.holdouts_pending)
+        arm.hook_pending = False
+        context.get_treatment("e1")
+        self.assertFalse(assignment.holdouts_pending)
+        self.assertEqual(["e1", "h"], [e.name for e in context.exposures])
+
+    def test_held_out_hook_path_uses_one_time_for_two_holdouts(self):
+        times = iter([100, 200, 300, 400])
+        self.clock.millis = lambda: next(times)
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11, 12])],
+            [self.holdout_a(id=11, name="ha"),
+             self.holdout_b(id=12, name="hb")]))
+        context.__class__ = self.recording_class()
+        self.assertEqual(0, context.get_treatment("exp"))
+        self.assertEqual([("ha", 100), ("hb", 100)],
+                         [(e.name, e.exposedAt) for e in context.exposures])
+
+    def test_declined_own_exposure_is_stamped_by_the_next_read(self):
+        times = iter([100, 900, 950, 990])
+        self.clock.millis = lambda: next(times)
+        declined = []
+
+        def decline_first_own(assignment):
+            if assignment.id == 1 and not declined:
+                declined.append(assignment.exposedAt)
+                return True
+            return False
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.recording_class(decline=decline_first_own)
+        context.get_treatment("e1")
+        self.assertIsNone(context.get_assignment("e1").exposedAt)
+        context.get_treatment("e1")
+        self.assertEqual([100], declined)
+        self.assertEqual([("h", 100), ("e1", 900)],
+                         [(e.name, e.exposedAt) for e in context.exposures])

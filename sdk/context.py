@@ -1808,10 +1808,15 @@ class Context:
                     self.event_lock.release_write()
             else:
                 # The assignment itself goes to the hook, so a concurrent
-                # set_unit retirement is still seen; it records the read's
-                # time for the group.
+                # set_unit retirement is still seen; it carries the read's
+                # time for the group during the call only, so a declined
+                # exposure is stamped afresh by the next read.
+                caller_exposed_at = assignment.exposedAt
                 assignment.exposedAt = exposed_at
-                self.queue_exposure(assignment)
+                try:
+                    self.queue_exposure(assignment)
+                finally:
+                    assignment.exposedAt = caller_exposed_at
                 # Judged by the state, not the hook's return value: only an
                 # assignment set_unit retired before it was queued is
                 # retried.

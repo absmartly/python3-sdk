@@ -900,3 +900,27 @@ class HoldoutRefreshCostTest(HoldoutTestCase):
             after = context.get_experiment("exp").holdouts
             self.assertIsNot(before, after)
             before = after
+
+    def test_refresh_appending_a_holdout_publishes_it(self):
+        context = self.create_context(
+            context_data([self.covered(1, "exp", [11])],
+                         [self.holdout_a(), self.holdout_b()]),
+            units={UNIT_TYPE: UID_NOT_HELD_OUT})
+        self.refresh(context, context_data(
+            [self.covered(1, "exp", [11, 12])],
+            [self.holdout_a(), self.holdout_b()]))
+        context.get_treatment("exp")
+        self.assertEqual(["exp", "holdout_a", "holdout_b"],
+                         [e.name for e in context.exposures])
+
+    def test_refresh_dropping_the_last_holdout_stops_publishing_it(self):
+        context = self.create_context(
+            context_data([self.covered(1, "exp", [11, 12])],
+                         [self.holdout_a(), self.holdout_b()]),
+            units={UNIT_TYPE: UID_NOT_HELD_OUT})
+        self.refresh(context, context_data(
+            [self.covered(1, "exp", [11])],
+            [self.holdout_a(), self.holdout_b()]))
+        context.get_treatment("exp")
+        self.assertEqual(["exp", "holdout_a"],
+                         [e.name for e in context.exposures])

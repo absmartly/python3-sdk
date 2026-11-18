@@ -1489,6 +1489,19 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
         # lose the switchback it installs.
         context = self.create_context([switchback()])
         installed = []
+        # Set once the refresh thread reaches set_data's install step:
+        # either it is about to block on the data lock the name update holds
+        # or, without that lock, it installs immediately.
+        reached_install = threading.Event()
+        data_lock = context.data_lock
+        acquire_write = data_lock.acquire_write
+
+        def acquire_write_marked():
+            if threading.current_thread() is not threading.main_thread():
+                reached_install.set()
+            acquire_write()
+
+        data_lock.acquire_write = acquire_write_marked
 
         class Names(frozenset):
             def __or__(names, other):
@@ -1497,7 +1510,10 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
                     worker = threading.Thread(target=self.refresh_to, args=(
                         context, switchback(), switchback(2, "exp_new")))
                     worker.start()
-                    worker.join(0.5)
+                    self.assertTrue(reached_install.wait(10))
+                    # Without the lock the install completes right away; with
+                    # it this short join just times out.
+                    worker.join(0.2)
                     installed.append(worker)
                 return frozenset(names) | other
 

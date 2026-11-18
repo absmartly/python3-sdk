@@ -277,6 +277,29 @@ MUTANTS = [
      "                list(self._switchback_epochs))",
      "            self._switchback_names = frozenset(\n"
      "                [e.data.name for e in switchbacks])"),
+    ("name-not-kept-on-first-epoch", CONTEXT,
+     "                self._switchback_names = \\\n"
+     "                    self._switchback_names | {experiment_name}",
+     "                pass"),
+    ("get-assignment-gate-widened", CONTEXT,
+     "    def get_assignment(self, experiment_name: str, exposed_at: int = "
+     "None):\n        if experiment_name in self._switchback_names:",
+     "    def get_assignment(self, experiment_name: str, exposed_at: int = "
+     "None):\n        if self._switchback_names:"),
+    ("assignment-at-gate-removed", CONTEXT,
+     "    def _assignment_at(self, experiment_name, exposed_at, now):\n"
+     "        if experiment_name in self._switchback_names:",
+     "    def _assignment_at(self, experiment_name, exposed_at, now):\n"
+     "        if True:"),
+    ("prune-forgets-pending-epochs", CONTEXT,
+     "                 if experiment.switchback is not None] +\n"
+     "                list(self._switchback_epochs))\n        finally:",
+     "                 if experiment.switchback is not None])\n"
+     "        finally:"),
+    ("assignment-fields-per-instance", CONTEXT,
+     "        self.retired: bool = False\n",
+     "        self.retired: bool = False\n"
+     "        self.switchback_silent = False\n"),
     ("revalidation-not-recorded", CONTEXT,
      "        cached.rule_key = rule_key\n        cached.attrs_seq = "
      "self._attrs_seq\n        return True",

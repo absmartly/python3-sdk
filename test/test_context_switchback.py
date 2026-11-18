@@ -10,6 +10,7 @@ import unittest
 from concurrent.futures import Future
 
 from sdk.audience_matcher import AudienceMatcher
+from sdk.context import Assignment
 from sdk.default_audience_deserializer import DefaultAudienceDeserializer
 from sdk.internal.variant_assigner import VariantAssigner
 from sdk.utils import hash_unit
@@ -1271,8 +1272,10 @@ class ExposureFlagParityTest(SwitchbackTestCase):
 class SwitchbackConcurrencyTest(SwitchbackTestCase):
 
     class BarrierAudienceMatcher(AudienceMatcher):
-        # Holds both revalidating readers at a barrier, so both have found
-        # the cached slot stale before either rebuilds it.
+        # Unlike Java, the read path only reports a slot stale; the audience
+        # is re-checked on the write path, one reader at a time. Both
+        # readers start together at `readers`, and the re-check is slowed
+        # so the second one queues on the write lock behind the first.
         def __init__(self):
             super().__init__(DefaultAudienceDeserializer())
             self.evaluations = 0
@@ -1282,14 +1285,8 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
         def evaluate(self, audience, attributes):
             with self.lock:
                 self.evaluations += 1
-                call = self.evaluations
-            result = super().evaluate(audience, attributes)
-            if 2 <= call <= 3:
-                try:
-                    self.readers.wait()
-                except threading.BrokenBarrierError:
-                    pass
-            return result
+            time.sleep(0.05)
+            return super().evaluate(audience, attributes)
 
     def test_concurrent_resolution_of_the_same_period_exposes_once(self):
         matcher = self.BarrierAudienceMatcher()
@@ -1301,6 +1298,7 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
         variants = [None, None]
 
         def read(i):
+            matcher.readers.wait()
             variants[i] = context.get_treatment("exp_sb")
 
         workers = [threading.Thread(target=read, args=(i,), daemon=True)
@@ -1310,6 +1308,7 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
         for worker in workers:
             worker.join(10)
             self.assertFalse(worker.is_alive())
+        self.assertFalse(matcher.readers.broken)
         self.assertEqual([EXPECTED_2_ARMS[1]] * 2, variants)
         self.assertEqual(1, context.get_pending_count())
         self.assert_published(context, exposure(
@@ -1360,6 +1359,7 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
 
         def read(i):
             try:
+                matcher.readers.wait()
                 variants[i] = context.get_treatment("exp_sb")
             except Exception as e:  # pragma: no cover - reported below
                 failures.append(e)
@@ -1383,6 +1383,7 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
         writer.join(10)
         self.assertFalse(writer.is_alive())
         self.assertEqual([], failures)
+        self.assertFalse(matcher.readers.broken)
         self.assertEqual([1, 1], variants)
         self.assertEqual(1, context.get_pending_count())
         self.assert_published(context, exposure(
@@ -1448,6 +1449,23 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
     def test_refresh_in_revalidation_async_no_deadlock(self):
         self.refresh_from_audience_revalidation_completes(True)
 
+    def test_refresh_during_the_first_read_keeps_the_name_routed(self):
+        # The refresh turns the switchback into a unit experiment while its
+        # first read is resolving, before its epoch exists: the stale slot
+        # must still be dropped on the next read.
+        experiment = switchback(audience=TRUE_AUDIENCE,
+                                switchbackStartAt=ANCHOR + HOUR)
+        matcher = self.RefreshingAudienceMatcher()
+        context = self.create_context([experiment], audience_matcher=matcher)
+        matcher.context = context
+        self.client.refresh_data = context_data(
+            [unit_twin(1, "exp_sb", split=[0.0, 1.0])])
+        matcher.refresh_on_next_evaluation = True
+        self.clock.now = ANCHOR + 5
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+        self.assertEqual(1, context.get_treatment("exp_sb"))
+        self.assertEqual(1, context.get_pending_count())
+
     def test_refresh_in_first_resolution_async_no_deadlock(self):
         experiment = switchback(audience=TRUE_AUDIENCE)
         matcher = self.RefreshingAudienceMatcher()
@@ -1461,6 +1479,47 @@ class SwitchbackConcurrencyTest(SwitchbackTestCase):
 
 
 class NoSwitchbackCostTest(SwitchbackTestCase):
+
+    def test_unit_reads_next_to_a_switchback_skip_the_switchback_path(self):
+        unit = unit_twin(2, "exp_unit", variants=[
+            {"name": "A", "config": json.dumps({"unit.arm": 0})},
+            {"name": "B", "config": json.dumps({"unit.arm": 1})}])
+        context = self.create_context([switchback(), unit])
+        seen = []
+        original = context._get_switchback_assignment
+
+        def spy(name, *args):
+            seen.append(name)
+            return original(name, *args)
+
+        context._get_switchback_assignment = spy
+        context.get_treatment("exp_unit")
+        context.peek_treatment("exp_unit")
+        context.get_variable_value("unit.arm", -1)
+        context.peek_variable_value("unit.arm", -1)
+        self.assertEqual([], seen)
+        context.get_treatment("exp_sb")
+        self.assertEqual(["exp_sb"], seen)
+
+    def test_assignment_switchback_fields_are_class_defaults(self):
+        fields = {"switchback", "switchback_generation", "switchback_serving",
+                  "switchback_custom", "switchback_silent"}
+        self.assertEqual(set(), fields & set(vars(Assignment())))
+
+    def test_two_pre_anchor_switchbacks_refreshed_to_unit_experiments(self):
+        # Reading the first after the refresh drops its slots and prunes the
+        # names; the second still has pending slots and must stay routed.
+        context = self.create_context([
+            switchback(1, "a", switchbackStartAt=ANCHOR + HOUR),
+            switchback(2, "b", switchbackStartAt=ANCHOR + HOUR)])
+        self.clock.now = ANCHOR + 5
+        self.assertEqual(0, context.get_treatment("a"))
+        self.assertEqual(0, context.get_treatment("b"))
+        self.refresh_to(context, unit_twin(1, "a", split=[0.0, 1.0]),
+                        unit_twin(2, "b", split=[0.0, 1.0]))
+        self.assertEqual(1, context.get_treatment("a"))
+        self.assertEqual(1, context.get_treatment("b"))
+        self.assertEqual(2, context.get_pending_count())
 
     def test_no_switchbacks_never_takes_the_switchback_path(self):
         context = self.create_context([unit_twin(1, "exp_unit")])

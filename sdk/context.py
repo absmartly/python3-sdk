@@ -2028,6 +2028,15 @@ class Context:
         if epoch is None:
             epoch = _SwitchbackEpoch(switchback.generation)
             self._switchback_epochs[experiment_name] = epoch
+            # A refresh during this first resolution rebuilt the names
+            # before the epoch existed; keep the name routed here until its
+            # slots are dropped.
+            try:
+                self.data_lock.acquire_write()
+                self._switchback_names = \
+                    self._switchback_names | {experiment_name}
+            finally:
+                self.data_lock.release_write()
         if period is None:
             return
         epoch.periods.add(period)

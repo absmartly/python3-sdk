@@ -18,6 +18,7 @@ from sdk.json.context_data import ContextData
 from sdk.json.experiment import Experiment
 from sdk.json.holdout import Holdout
 from test.holdout_fixtures import (
+    NOW,
     HOLDOUT_A_SEEDS, HOLDOUT_B_SEEDS, NORMAL_VARIANT, THREE_ARM_0_SEEDS,
     THREE_ARM_1_SEEDS, THREE_ARM_2_SEEDS, THREE_ARM_SPLIT, UID,
     UID_NOT_HELD_OUT, UNIT_TYPE, context_data, experiment, holdout,
@@ -1049,3 +1050,55 @@ class QueueExposureHookTest(HoldoutTestCase):
         self.assertEqual(["exp_covered", "hb", "ha", "exp_plain"], seen)
         self.assertEqual(["exp_covered", "hb", "ha", "exp_plain"],
                          [e.name for e in context.exposures])
+
+    def test_hook_path_publishes_what_a_plain_context_publishes(self):
+        from sdk.context import Context
+
+        class Recording(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        audience = json.dumps({"filter": [{"eq": [{"var": "country"},
+                                                  {"value": "US"}]}]})
+
+        def run(subclass, seeds):
+            self.set_up_fixture()
+            context = self.create_context(context_data(
+                [self.covered(1, "exp", [11], audience=audience),
+                 self.covered(2, "exp_b", [11])],
+                [holdout(11, "h4", seeds)]))
+            if subclass:
+                context.__class__ = Recording
+            context.peek_treatment("exp")
+            context.set_attribute("country", "GB")
+            self.refresh(context, context_data(
+                [self.covered(1, "exp", [11], audience=audience),
+                 self.covered(2, "exp_b", [11])],
+                [holdout(11, "h4x", seeds)]))
+            context.get_treatment("exp", exposed_at=123)
+            context.get_treatment("exp_b", exposed_at=456)
+            return [(e.name, e.exposedAt) for e in context.exposures]
+
+        # Held out: the audience recheck rebuilds the assignment, so the
+        # renamed holdout is published at the read's time.
+        plain = run(False, HOLDOUT_A_SEEDS)
+        self.assertEqual([("h4x", 123)], plain)
+        self.assertEqual(plain, run(True, HOLDOUT_A_SEEDS))
+        # Not held out: the cached assignment and its snapshot are kept.
+        plain = run(False, HOLDOUT_B_SEEDS)
+        self.assertEqual([("exp", NOW), ("h4", NOW), ("exp_b", 456)], plain)
+        self.assertEqual(plain, run(True, HOLDOUT_B_SEEDS))
+
+    def test_instance_level_override_is_honoured(self):
+        seen = []
+        context = self.create_context(context_data(
+            [self.covered(1, "exp", [11])], [self.holdout_b(id=11)]))
+        original = context.queue_exposure
+
+        def recording(assignment):
+            seen.append(assignment.name)
+            return original(assignment)
+
+        context.queue_exposure = recording
+        context.get_treatment("exp")
+        self.assertEqual(["exp", "holdout_b"], seen)

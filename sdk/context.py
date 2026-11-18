@@ -1745,7 +1745,8 @@ class Context:
         """
         if assignment.holdout_assignments is None:
             return self.queue_exposure(assignment) is not False
-        if type(self).queue_exposure is not Context.queue_exposure:
+        if getattr(self.queue_exposure, "__func__", None) is not \
+                Context.queue_exposure:
             return self._expose_through_hook(assignment)
 
         accepted = []
@@ -1790,6 +1791,7 @@ class Context:
                 not assignment.rule_override:
             try:
                 self.event_lock.acquire_write()
+                self.check_not_closed()
                 if assignment.retired:
                     return False
                 assignment.exposed.compare_and_set(False, True)
@@ -1797,9 +1799,15 @@ class Context:
                 self.event_lock.release_write()
         elif self.queue_exposure(assignment) is False:
             return False
-        for holdout_assignment in assignment.holdout_assignments:
+        for holdout, holdout_assignment in zip(
+                assignment.holdouts, assignment.holdout_assignments):
             if holdout_assignment is not None and \
                     not holdout_assignment.exposed.value:
+                # The hook receives the assignment, so it carries this
+                # snapshot's name and the read's exposure time.
+                holdout_assignment.name = holdout.name
+                if assignment.exposedAt is not None:
+                    holdout_assignment.exposedAt = assignment.exposedAt
                 self.queue_exposure(holdout_assignment)
         return True
 

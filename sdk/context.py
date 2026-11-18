@@ -2455,19 +2455,36 @@ class Context:
                 finally:
                     self.event_lock.release_write()
             else:
-                # The assignment itself goes to the hook, so a concurrent
-                # set_unit retirement is still seen; it records the read's
-                # time for the group.
+                try:
+                    # Reserved under event_lock, like the holdouts below: a
+                    # retired assignment is never offered, concurrent reads
+                    # offer it once, and holdouts stay pending even if the
+                    # hook raises after queuing it.
+                    self.event_lock.acquire_write()
+                    if assignment.retired:
+                        return False
+                    if assignment.hook_pending:
+                        return True
+                    assignment.hook_pending = True
+                    assignment.holdouts_pending = True
+                finally:
+                    self.event_lock.release_write()
+                # The assignment itself goes to the hook, so a set_unit
+                # retirement during the call is still seen; it carries the
+                # read's time for the group during the call only, so a
+                # declined exposure is stamped afresh by the next read.
+                caller_exposed_at = assignment.exposedAt
                 assignment.exposedAt = exposed_at
-                self.queue_exposure(assignment)
+                try:
+                    self.queue_exposure(assignment)
+                finally:
+                    assignment.exposedAt = caller_exposed_at
+                    assignment.hook_pending = False
                 # Judged by the state, not the hook's return value: only an
                 # assignment set_unit retired before it was queued is
                 # retried.
-                if not assignment.exposed.value:
-                    if assignment.retired:
-                        return False
-                else:
-                    assignment.holdouts_pending = True
+                if not assignment.exposed.value and assignment.retired:
+                    return False
         finished = True
         for holdout, holdout_assignment in zip(
                 assignment.holdouts, assignment.holdout_assignments):

@@ -1463,3 +1463,43 @@ class HookPathFollowUpTest(HoldoutTestCase):
         self.assertEqual([100], declined)
         self.assertEqual([("h", 100), ("e1", 900)],
                          [(e.name, e.exposedAt) for e in context.exposures])
+
+    def test_declined_own_exposure_keeps_the_callers_time(self):
+        times = iter([900, 950, 990])
+        self.clock.millis = lambda: next(times)
+        declined = []
+
+        def decline_first_own(assignment):
+            if assignment.id == 1 and not declined:
+                declined.append(assignment.exposedAt)
+                return True
+            return False
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.recording_class(decline=decline_first_own)
+        context.get_treatment("e1", exposed_at=500)
+        self.assertEqual(500, context.get_assignment("e1").exposedAt)
+        context.get_treatment("e1")
+        self.assertEqual([("h", 500), ("e1", 500)],
+                         [(e.name, e.exposedAt) for e in context.exposures])
+
+    def test_raising_hook_still_restores_the_time(self):
+        times = iter([100, 900, 950, 990])
+        self.clock.millis = lambda: next(times)
+        raised = []
+
+        def raise_once(assignment):
+            if assignment.id == 1 and not raised:
+                raised.append(1)
+                raise RuntimeError("hook failed")
+
+        context = self.create_context(context_data(
+            [self.covered(1, "e1", [11])], [self.holdout_b(id=11, name="h")]))
+        context.__class__ = self.recording_class(on_call=raise_once)
+        with self.assertRaises(RuntimeError):
+            context.get_treatment("e1")
+        self.assertIsNone(context.get_assignment("e1").exposedAt)
+        context.get_treatment("e1")
+        self.assertEqual([("e1", 900), ("h", 900)],
+                         [(e.name, e.exposedAt) for e in context.exposures])

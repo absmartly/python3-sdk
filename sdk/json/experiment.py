@@ -23,3 +23,8 @@ class Experiment:
     audience: typing.Optional[str] = None
     customFieldValues: typing.Optional[list[CustomFieldValue]] = None
     assignmentRules: typing.Optional[str] = None
+    # The ids of the holdouts (in ContextData.holdouts) covering this
+    # experiment. Untyped for the same reason as ContextData.holdouts: any
+    # value other than a list of ids means "not covered".
+    holdoutIds: typing.Any = None
+    holdoutType: typing.Optional[str] = None

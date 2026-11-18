@@ -1,6 +1,16 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.4.0 (unreleased)
+
+### Added
+- Holdouts, evaluated like the JS SDK. Context data may carry `holdouts` (each with `id`, `name`, `iteration`, `seedHi`, `seedLo` and `split`), and an experiment lists the holdouts covering it in `holdoutIds`. Each covering holdout places the unit in an arm, drawn from the holdout's `split` and seeds with the covered experiment's unit, and kept for the context while the holdout's `iteration` is unchanged. Arm 0 holds the unit out of the experiment; in a holdout with three arms, arm 1 holds the unit out only of experiments that are not full-on. A unit held out by any of its holdouts gets the control variant (`assigned` false), and audience, full-on, traffic and custom assignments do not apply. A variable read returns the held-out experiment's control value only when no assigned or overridden experiment defining the same key wins it. The held-out experiment publishes no exposure of its own, unless an override or a matching assignment rule chose its variant: both still win over the holdout. The first treatment or variable read of a covered experiment queues each holdout's exposure, named after the holdout, with the arm as its variant. That happens once per holdout, unit type and holdout iteration, however many reads or covered experiments follow; a new iteration is a new exposure. While the covered experiment's unit is not set, a holdout neither holds the unit out nor publishes. `peek_treatment` and `peek_variable_value` publish nothing. Payloads without holdouts are assigned and published exactly as before.
+- `ContextData.holdouts`, `Experiment.holdoutIds` and `Experiment.holdoutType` (all default `None`) and `sdk.json.holdout.Holdout`. Holdout entries may be the dicts the default deserializer produces, any `Mapping`, or objects with the same attributes; entries without a non-empty `split`, malformed entries (for example ids, seeds or split values that are not JSON numbers) and unknown fields are ignored.
+
+### Changed
+- Payloads with `holdouts` change assignment for held-out units. 0.3.0 ignored holdouts, so a unit the backend holds out still got its experiment's variant and an experiment exposure. From 0.4.0 that unit gets the control variant, and the holdout's exposure replaces the experiment's. Units that are not held out keep their variants, but their reads of covered experiments now also publish the holdout exposures. Payloads without holdouts are unaffected.
+- The `X-Agent` header and `sdk_version` report `0.4.0`.
+
+## 0.3.0
 
 ### BREAKING
 - `ContextEventHandler` renamed to `ContextPublisher` (`context_event_handler` deprecated). The v0.2.4 import paths (`sdk.absmartly.ABSmartlyConfig`, `sdk.absmartly.DefaultContextEventHandler`, `ContextEventHandler` from `sdk.context_event_handler`, `sdk.absmartly_config` and `sdk.context`) still work and do not warn on import; `ContextEventHandler` stays a plain base class (a subclass without `publish` can still be instantiated) registered as a virtual `ContextPublisher`.

@@ -124,7 +124,8 @@ MUTANTS = [
      "self.period_ms is not None and self.period_ms > 0 and \\",
      "self.period_ms is not None and self.period_ms != 0 and \\"),
     ("historic-exposed-at-ignored", CONTEXT,
-     "            now = exposed_at if exposed_at else self.clock.millis()\n"
+     "            now = exposed_at if exposed_at is not None else \\\n"
+     "                self.clock.millis()\n"
      "            assignment = self._assignment_at(",
      "            now = self.clock.millis()\n"
      "            assignment = self._assignment_at("),
@@ -145,10 +146,9 @@ MUTANTS = [
      '        _identity_value(getattr(experiment, "switchbackClusterValues", '
      'None)),\n', ""),
     ("cluster-order-not-identity", CONTEXT,
-     "        return (\"map\", tuple((key, _identity_value(item))\n"
-     "                             for key, item in value.items()))",
-     "        return (\"map\", tuple(sorted((key, _identity_value(item))\n"
-     "                             for key, item in value.items())))"),
+     "            for key, child in reversed(list(item.items())):",
+     "            for key, child in reversed(sorted(item.items(), "
+     "key=lambda e: repr(e[0]))):"),
     # Holdouts never apply to a switchback.
     ("holdouts-apply", CONTEXT,
      "                switchbacks.append(experiment_variables)\n"
@@ -201,9 +201,9 @@ MUTANTS = [
      "        if assignment.switchback_silent:\n",
      "        if assignment.switchback_silent and False:\n"),
     ("exposed-at-enqueue-time", CONTEXT,
-     "        exposed_at = assignment.exposedAt or resolved_at or \\\n"
-     "            self.clock.millis()",
-     "        exposed_at = assignment.exposedAt or self.clock.millis()"),
+     "            assignment, resolved_at if resolved_at is not None\n"
+     "            else self.clock.millis())",
+     "            assignment, self.clock.millis())"),
     ("override-under-unit-type", CONTEXT,
      "                assignment.unit_type = cached_serving.unit_type or \\\n"
      "                    self._switchback_fallback_unit_type(experiment)",
@@ -346,7 +346,12 @@ MUTANTS = [
      "                assignment.exposed.compare_and_set(False, True)\n"
      "                return True"),
     ("hook-reject-keeps-exposed-at", CONTEXT,
-     "                assignment.exposedAt = previous\n", ""),
+     "            try:\n                return self.queue_exposure("
+     "assignment) is not False\n            finally:\n"
+     "                assignment.exposedAt = None",
+     "            if self.queue_exposure(assignment) is False:\n"
+     "                return False\n            assignment.exposedAt = None\n"
+     "            return True"),
     ("unit-path-applies-switchback", CONTEXT,
      "            if experiment is not None and experiment.switchback is not "
      "None:\n                return None\n            assignment = "

@@ -1903,6 +1903,63 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
         self.assert_published(context, exposure(
             1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
 
+    def test_walk_handoff_after_a_switchback_keeps_the_walk_reading(self):
+        # exp_a (a silent switchback) takes the walk's reading at HOUR-1; a
+        # refresh during exp_b's unit read makes exp_b a switchback, which
+        # must resolve at that same reading, as Java does.
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        context = self.create_context([silent, unit_twin(2, "exp_b")])
+        readings = iter([ANCHOR + HOUR - 1])
+        self.clock.millis = lambda: next(readings, ANCHOR + HOUR)
+        original = context._get_unit_assignment
+        done = []
+
+        def hooked(name, *args):
+            if name == "exp_b" and not done:
+                done.append(1)
+                self.refresh_to(context, silent, switchback(2, "exp_b"))
+            return original(name, *args)
+
+        context._get_unit_assignment = hooked
+        value = context.get_variable_value("sb.arm", -1)
+        del self.clock.millis
+        self.assertEqual([1], done)
+        self.assertEqual(EXPECTED_2_ARMS[0], value)
+        self.assert_published(context, exposure(
+            2, "exp_b", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
+
+    def test_treatment_retry_handoff_keeps_the_resolution_time(self):
+        # set_unit retires the unit assignment during its first exposure and
+        # a refresh makes the name a switchback; the retry resolves the
+        # switchback at HOUR-1 and must expose at that time, though the next
+        # clock reading is already in period 1.
+        context = self.create_context([unit_twin(1, "exp_sb",
+                                                 unitType="late_id")],
+                                      units={UNIT_TYPE: UID})
+        self.assertNotEqual(EXPECTED_2_ARMS[0], EXPECTED_2_ARMS[1])
+        original_queue = context.queue_exposure
+        calls = []
+
+        def queue_exposure(assignment):
+            calls.append(assignment.switchback)
+            if len(calls) == 1:
+                context.set_unit("late_id", "late")
+                self.refresh_to(context, switchback())
+                # Readings: the retired unit attempt's enqueue, then the
+                # retry's resolution, then a later one in period 1.
+                readings = iter([ANCHOR + 1, ANCHOR + HOUR - 1])
+                self.clock.millis = lambda: next(readings, ANCHOR + HOUR)
+            return original_queue(assignment)
+
+        context.queue_exposure = queue_exposure
+        self.assertEqual(EXPECTED_2_ARMS[0], context.get_treatment("exp_sb"))
+        del self.clock.millis
+        self.assertEqual([False, True], calls)
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
+
     def test_overlapping_hook_failure_cannot_change_forwarded_time(self):
         context = self.create_context([switchback()])
         self.clock.now = ANCHOR + 10

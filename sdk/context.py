@@ -1292,6 +1292,10 @@ class Context:
                 if now is None:
                     now = self.clock.millis()
                 assignment = self._assignment_at(name, None, now)
+            elif now is not None:
+                # A refresh may turn this name into a switchback mid-read;
+                # it then resolves at the walk's reading too.
+                assignment = self._assignment_at(name, None, now)
             else:
                 assignment = self.get_assignment(name)
             if assignment.variables is not None:

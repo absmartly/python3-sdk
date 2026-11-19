@@ -415,6 +415,18 @@ MUTANTS = [
      "            if self._switchback_names:\n"
      "                if now is None:\n"
      "                    now = self.clock.millis()"),
+    ("treatment-retry-exposes-without-time", CONTEXT,
+     "                if assignment.exposed.value or \\\n"
+     "                        self._expose_at(assignment, None):\n"
+     "                    break\n"
+     "        return assignment.variant",
+     "                if assignment.exposed.value or \\\n"
+     "                        self._expose(assignment):\n"
+     "                    break\n"
+     "        return assignment.variant"),
+    ("walk-unit-branch-rereads-clock", CONTEXT,
+     "            elif now is not None:\n",
+     "            elif False:\n"),
     ("unit-fast-path-for-every-name", CONTEXT,
      "        if experiment_name not in self._switchback_names:\n"
      "            # Unit experiments keep",

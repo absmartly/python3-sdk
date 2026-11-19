@@ -2227,7 +2227,7 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
                 context.get_treatment("exp_b")
                 context.get_treatment("exp_b")
                 names = [e[1] for e in self.published_exposures(context)]
-                self.assertLessEqual(len(names), 1, (start, api, names))
+                self.assertEqual(["exp_b"], names, (start, api))
                 self.assertNotIn("exp_b", context._switchback_epochs)
                 self.assertNotIn("exp_b", context._switchback_names)
 

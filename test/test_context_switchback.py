@@ -1867,6 +1867,42 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
         self.assert_published(context, exposure(
             1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
 
+    def test_variable_walk_double_handoff_keeps_the_walk_reading(self):
+        # exp_sb is a switchback when the walk reaches it; a refresh makes
+        # it a unit experiment before its switchback lock, and another
+        # makes it a switchback again before its unit lock. The retry must
+        # resolve at the walk's single reading, not a later one.
+        unit = unit_twin(1, "exp_sb", variants=[
+            {"name": "A", "config": json.dumps({"sb.arm": 0})},
+            {"name": "B", "config": json.dumps({"sb.arm": 1})}])
+        context = self.create_context([switchback()])
+        original_sb = context._get_switchback_assignment
+        original_unit = context._get_unit_assignment
+        changes = []
+
+        def sb(name, at, now):
+            if not changes:
+                changes.append("unit")
+                self.refresh_to(context, unit)
+            return original_sb(name, at, now)
+
+        def unit_path(name, at):
+            if changes == ["unit"]:
+                changes.append("sb")
+                self.refresh_to(context, switchback())
+            return original_unit(name, at)
+
+        context._get_switchback_assignment = sb
+        context._get_unit_assignment = unit_path
+        reads = iter([ANCHOR + HOUR - 1])
+        self.clock.millis = lambda: next(reads, ANCHOR + HOUR)
+        self.assertEqual(EXPECTED_2_ARMS[0],
+                         context.get_variable_value("sb.arm", -1))
+        del self.clock.millis
+        self.assertEqual(["unit", "sb"], changes)
+        self.assert_published(context, exposure(
+            1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
+
     def test_overlapping_hook_failure_cannot_change_forwarded_time(self):
         context = self.create_context([switchback()])
         self.clock.now = ANCHOR + 10

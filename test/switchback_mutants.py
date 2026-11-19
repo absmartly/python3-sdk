@@ -32,6 +32,13 @@ def analysis_field(name):
             '"%s", None)),\n' % name)
 
 
+# Not probed because they are equivalent to the code as routed: every
+# caller of _assignment_at has already checked the name against the routed
+# switchback names, and _get_assignment_at only sees a name outside them
+# after its unit path returned None, so widening either gate changes no
+# result (unit names are pinned off the switchback path by
+# test_unit_reads_leave_the_switchback_read_time_alone and
+# test_switchback_reads_skip_the_unit_path).
 MUTANTS = [
     # Cluster order and serving unit.
     ("cluster-order-sorted", SERVING,
@@ -298,16 +305,6 @@ MUTANTS = [
      "            self._switchback_names = \\\n"
      "                self._switchback_names | {experiment_name}\n"
      "        if period is None:"),
-    ("get-assignment-gate-widened", CONTEXT,
-     "            if experiment_name in self._switchback_names:\n"
-     "                if now is None:",
-     "            if self._switchback_names:\n"
-     "                if now is None:"),
-    ("assignment-at-gate-removed", CONTEXT,
-     "    def _assignment_at(self, experiment_name, exposed_at, now):\n"
-     "        if experiment_name in self._switchback_names:",
-     "    def _assignment_at(self, experiment_name, exposed_at, now):\n"
-     "        if True:"),
     ("prune-forgets-pending-epochs", CONTEXT,
      "                 if experiment.switchback is not None] +\n"
      "                list(self._switchback_epochs))\n        finally:",

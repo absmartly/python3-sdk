@@ -2285,6 +2285,35 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
         context.peek_treatment("exp_b")
         self.assertEqual([], calls)
 
+    def test_pre_anchor_epoch_is_dropped_on_the_unit_write_path(self):
+        # The race lands after the unit read path found no slot and before
+        # the unit write path reads the definition: the name was a
+        # pre-anchor switchback whose epoch holds only the bare-name slot
+        # (no periods). The write path must still drop that epoch, or the
+        # next read drops the new unit slot and exposes it again.
+        silent = self._silent_exp_a()
+        context = self.create_context([silent, unit_twin(2, "exp_b")])
+        self.clock.now = ANCHOR + 5
+        original = context._get_resolution_state
+        done = []
+
+        def hooked(name):
+            if name == "exp_b" and not done:
+                done.append(1)
+                self.refresh_to(context, silent, switchback(
+                    2, "exp_b", switchbackStartAt=ANCHOR + HOUR))
+                context.peek_treatment("exp_b")
+                self.refresh_to(context, silent, unit_twin(2, "exp_b"))
+            return original(name)
+
+        context._get_resolution_state = hooked
+        for _ in range(3):
+            context.get_treatment("exp_b")
+        self.assertEqual([1], done)
+        self.assertEqual(["exp_b"],
+                         [e[1] for e in self.published_exposures(context)])
+        self.assertNotIn("exp_b", context._switchback_epochs)
+
     def test_stale_period_slots_are_dropped_with_the_epoch(self):
         silent = self._silent_exp_a()
         unit = unit_twin(2, "exp_b")

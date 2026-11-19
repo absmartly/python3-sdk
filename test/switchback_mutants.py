@@ -475,6 +475,12 @@ MUTANTS = [
      "                # The name was a switchback until a refresh",
      "            if False:\n"
      "                # The name was a switchback until a refresh"),
+    ("unit-write-drop-only-with-periods", CONTEXT,
+     "            if experiment_name in self._switchback_epochs:\n"
+     "                # The name was a switchback until a refresh",
+     "            if experiment_name in self._switchback_epochs and \\\n"
+     "                    self._switchback_epochs[experiment_name].periods:\n"
+     "                # The name was a switchback until a refresh"),
     ("unit-write-drop-without-prune", CONTEXT,
      "                self._drop_switchback_epoch(experiment_name)\n"
      "                self._prune_switchback_names()\n"

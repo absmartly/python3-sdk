@@ -166,6 +166,55 @@ class LocalServerIntegrationTest(unittest.TestCase):
              for e in body["exposures"]])
         context.close()
 
+    def test_switchback_exposure_time_over_real_put(self):
+        # A read just before a period boundary publishes the time that chose
+        # the period, even when the clock has crossed the boundary by the
+        # time the exposure is queued.
+        hour = 3_600_000
+        anchor = 1_767_225_600_000
+
+        class Clock:
+            def __init__(self):
+                self.reads = [anchor + hour - 1]
+
+            def millis(self):
+                return self.reads.pop(0) if self.reads else anchor + hour
+
+        experiment = {
+            "id": 7, "name": "exp_sb", "iteration": 1, "unitType": "store_id",
+            "seedHi": -5, "seedLo": -7, "split": [0.5, 0.5],
+            "trafficSeedHi": 1, "trafficSeedLo": 2, "trafficSplit": [0, 1],
+            "fullOnVariant": 0, "applications": [{"name": "website"}],
+            "variants": [{"name": "A", "config": None},
+                         {"name": "B", "config": None}],
+            "audienceStrict": False, "audience": None,
+            "randomizationType": "switchback",
+            "switchbackClusters": {"store_id": "store_key"},
+            "switchbackStartAt": anchor, "switchbackPeriodMs": hour,
+        }
+        CONTEXT["experiments"] = [experiment]
+        sdk = ABsmartly.create(endpoint=self.base_url, api_key="test-api-key",
+                               application="website", environment="dev")
+        config = ContextConfig()
+        config.units = {"store_id": "e791e240fcd3df7d238cfc285f475e8152fcc0ec"}
+        context = sdk.create_context(config)
+        context.wait_until_ready()
+        clock = Clock()
+        context.clock = clock
+        clock.reads = [anchor]
+        context.set_attribute("store_key", "store-42")
+        clock.reads = [anchor + hour - 1]
+        # Period 0 of "store-42" under seed (-5, -7) draws 0, period 1 draws 1.
+        self.assertEqual(0, context.get_treatment("exp_sb"))
+        context.publish()
+
+        body = [r for r in RECORDED if r["method"] == "PUT"][0]["body"]
+        self.assertEqual(
+            [(7, "exp_sb", "store_id", 0, anchor + hour - 1)],
+            [(e["id"], e["name"], e["unit"], e["variant"], e["exposedAt"])
+             for e in body["exposures"]])
+        context.close()
+
 
 if __name__ == "__main__":
     unittest.main()

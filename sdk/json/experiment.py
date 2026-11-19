@@ -28,3 +28,19 @@ class Experiment:
     # value other than a list of ids means "not covered".
     holdoutIds: typing.Any = None
     holdoutType: typing.Optional[str] = None
+    # Switchback experiments (R33, cluster-defined). Untyped like holdoutIds,
+    # so a malformed value only makes the experiment unservable instead of
+    # failing the whole context. randomizationType "switchback" opts in;
+    # absent or "unit" is a unit experiment, which ignores the other fields.
+    # switchbackClusters maps a unit type to an attribute path in served
+    # order; the order is semantic and kept as decoded.
+    randomizationType: typing.Any = None
+    switchbackClusters: typing.Any = None
+    switchbackClusterValues: typing.Any = None
+    switchbackStartAt: typing.Any = None
+    switchbackPeriodMs: typing.Any = None
+    switchbackCarryoverDurationMs: typing.Any = None
+    switchbackBurnInDurationMs: typing.Any = None
+    switchbackBurnOutDurationMs: typing.Any = None
+    switchbackDesignType: typing.Any = None
+    switchbackEstimand: typing.Any = None

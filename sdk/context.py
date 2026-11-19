@@ -1580,6 +1580,13 @@ class Context:
         return True
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
+        if experiment_name not in self._switchback_names:
+            # Unit experiments keep their original path, with no switchback
+            # bookkeeping; a refresh that installed a switchback in between
+            # makes it return None and falls through to the handoff.
+            assignment = self._get_unit_assignment(experiment_name, exposed_at)
+            if assignment is not None:
+                return assignment
         return self._get_assignment_at(experiment_name, exposed_at, None)
 
     def _get_assignment_at(self, experiment_name, exposed_at, now):

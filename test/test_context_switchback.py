@@ -1826,6 +1826,21 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
         self.assert_published(context, exposure(
             1, "exp_sb", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
 
+    def test_variable_walk_resolves_every_switchback_at_one_reading(self):
+        # exp_a has no linked unit (silent) and exp_b wins the key; the
+        # boundary passes after the walk's single clock reading.
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        context = self.create_context([silent, switchback(2, "exp_b")])
+        reads = iter([ANCHOR + HOUR - 1])
+        self.clock.millis = lambda: next(reads, ANCHOR + HOUR)
+        self.assertEqual(EXPECTED_2_ARMS[0],
+                         context.get_variable_value("sb.arm", -1))
+        self.assertEqual([("exp_b", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1)],
+                         [(e[1], e[3], e[4])
+                          for e in self.published_exposures(context)])
+
     def test_variable_read_fallback_reads_the_clock_once(self):
         # Another switchback is installed, so the walk reads the clock once;
         # the refreshed experiment must resolve and expose at that reading.
@@ -1990,6 +2005,23 @@ class GatePassSixTest(SwitchbackTestCase):
 
 
 class NoSwitchbackCostTest(SwitchbackTestCase):
+
+    def test_unit_reads_leave_the_switchback_read_time_alone(self):
+        context = self.create_context([unit_twin(1, "exp_unit")])
+        writes = []
+
+        class Recorder:
+            def __setattr__(self, name, value):
+                writes.append(name)
+                object.__setattr__(self, name, value)
+
+        context._switchback_read = Recorder()
+        context.get_treatment("exp_unit")
+        context.peek_treatment("exp_unit")
+        context.get_variable_value("sb.arm", -1)
+        context.peek_variable_value("sb.arm", -1)
+        context.get_assignment("exp_unit")
+        self.assertEqual([], writes)
 
     def test_unit_reads_next_to_a_switchback_skip_the_switchback_path(self):
         unit = unit_twin(2, "exp_unit", variants=[

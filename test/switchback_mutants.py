@@ -411,6 +411,14 @@ MUTANTS = [
      "        except ValueError:",
      "        try:\n            return str(int(value))\n"
      "        except ZeroDivisionError:"),
+    ("unit-fast-path-removed", CONTEXT,
+     "        if experiment_name not in self._switchback_names:\n"
+     "            # Unit experiments keep",
+     "        if False:\n"
+     "            # Unit experiments keep"),
+    ("variable-walk-reads-per-experiment", CONTEXT,
+     "        now = self.clock.millis() if self._switchback_names else None",
+     "        now = None"),
     ("hook-view-loses-retirement", CONTEXT,
      "            view._origin = assignment\n", ""),
     ("variable-fallback-rereads-clock", CONTEXT,

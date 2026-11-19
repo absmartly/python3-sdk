@@ -1930,6 +1930,66 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
         self.assert_published(context, exposure(
             2, "exp_b", EXPECTED_2_ARMS[0], ANCHOR + HOUR - 1))
 
+    def test_peek_walk_handoff_after_a_switchback_keeps_the_walk_reading(self):
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        context = self.create_context([silent, unit_twin(2, "exp_b")])
+        readings = iter([ANCHOR + HOUR - 1])
+        self.clock.millis = lambda: next(readings, ANCHOR + HOUR)
+        original = context._get_unit_assignment
+        done = []
+
+        def hooked(name, *args):
+            if name == "exp_b" and not done:
+                done.append(1)
+                self.refresh_to(context, silent, switchback(2, "exp_b"))
+            return original(name, *args)
+
+        context._get_unit_assignment = hooked
+        value = context.peek_variable_value("sb.arm", -1)
+        del self.clock.millis
+        self.assertEqual([1], done)
+        self.assertEqual(EXPECTED_2_ARMS[0], value)
+
+    def test_unit_candidate_after_a_switchback_skips_switchback_lookup(self):
+        # Once the walk has read the clock at exp_a, the unit candidate
+        # exp_b must still stay off the switchback lookup.
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        context = self.create_context([silent, unit_twin(2, "exp_b")])
+        self.clock.now = ANCHOR + 5
+        context.get_variable_value("sb.arm", -1)
+        seen = []
+        original = context._get_switchback_assignment
+
+        def spy(name, *args):
+            seen.append(name)
+            return original(name, *args)
+
+        context._get_switchback_assignment = spy
+        context.get_variable_value("sb.arm", -1)
+        context.peek_variable_value("sb.arm", -1)
+        self.assertEqual(["exp_a", "exp_a"], seen)
+
+    def test_unit_key_walk_next_to_a_switchback_writes_no_read_time(self):
+        unit = unit_twin(2, "exp_unit", variants=[
+            {"name": "A", "config": json.dumps({"unit.arm": 0})},
+            {"name": "B", "config": json.dumps({"unit.arm": 1})}])
+        context = self.create_context([switchback(), unit])
+        writes = []
+
+        class Recorder:
+            def __setattr__(self, name, value):
+                writes.append(name)
+                object.__setattr__(self, name, value)
+
+        context._switchback_read = Recorder()
+        context.get_variable_value("unit.arm", -1)
+        context.peek_variable_value("unit.arm", -1)
+        self.assertEqual([], writes)
+
     def test_treatment_retry_handoff_keeps_the_resolution_time(self):
         # set_unit retires the unit assignment during its first exposure and
         # a refresh makes the name a switchback; the retry resolves the

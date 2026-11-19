@@ -32,13 +32,13 @@ def analysis_field(name):
             '"%s", None)),\n' % name)
 
 
-# Not probed, because they are equivalent: forcing _assignment_at's name
-# check to True, and widening _get_assignment_at's check to any routed name.
-# Both are reached only for a routed switchback name or after the unit path
-# returned None (the name became a switchback), so neither ever sees a unit
-# name; the unit fast paths themselves are pinned by
-# test_unit_reads_leave_the_switchback_read_time_alone and
-# test_unit_candidate_after_a_switchback_skips_switchback_lookup.
+# Not probed: forcing _assignment_at's name check to True, and widening
+# _get_assignment_at's check to any routed name. They are reached for a
+# routed switchback name, or after the unit path returned None; that can be
+# a unit name when a refresh restored a unit definition, but the switchback
+# path then returns None for it and the unit path resolves it, so neither
+# changes a result. The cost they would add is outside these probes; the
+# unit fast paths are pinned by the routing tests.
 MUTANTS = [
     # Cluster order and serving unit.
     ("cluster-order-sorted", SERVING,
@@ -436,6 +436,22 @@ MUTANTS = [
      "    def _unit_first_at(self, experiment_name, now):\n",
      "    def _unit_first_at(self, experiment_name, now):\n"
      "        self._switchback_read.now = None\n"),
+    ("unit-first-cold-switchback-lookup", CONTEXT,
+     "    def _unit_first_at(self, experiment_name, now):\n",
+     "    def _unit_first_at(self, experiment_name, now):\n"
+     "        if experiment_name not in self.assignment_cache:\n"
+     "            self._get_switchback_assignment(experiment_name, None, "
+     "now)\n"),
+    ("unit-first-cold-handoff", CONTEXT,
+     "    def _unit_first_at(self, experiment_name, now):\n",
+     "    def _unit_first_at(self, experiment_name, now):\n"
+     "        if experiment_name not in self.assignment_cache:\n"
+     "            return self._assignment_at(experiment_name, None, now)\n"),
+    ("unit-cache-reuses-switchback-slot", CONTEXT,
+     "                if assignment.switchback:\n"
+     "                    # A switchback slot left",
+     "                if False:\n"
+     "                    # A switchback slot left"),
     ("unit-first-skipped-after-a-switchback", CONTEXT,
      "        assignment = self._get_unit_assignment(experiment_name, None)\n"
      "        if assignment is not None:\n"

@@ -1635,6 +1635,11 @@ class Context:
                 if experiment is not None and \
                         experiment.switchback is not None:
                     return None
+                if assignment.switchback:
+                    # A switchback slot left under the bare name by a
+                    # definition that is now a unit experiment: the unit
+                    # path never reuses it. The handoff drops it.
+                    return None
                 if assignment.data_failed and not failed:
                     # Computed before a refresh recovered the context; its
                     # placeholder exposure was dropped, so recompute.

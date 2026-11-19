@@ -411,6 +411,11 @@ MUTANTS = [
      "        except ValueError:",
      "        try:\n            return str(int(value))\n"
      "        except ZeroDivisionError:"),
+    ("unit-fast-path-for-every-name", CONTEXT,
+     "        if experiment_name not in self._switchback_names:\n"
+     "            # Unit experiments keep",
+     "        if True:\n"
+     "            # Unit experiments keep"),
     ("unit-fast-path-removed", CONTEXT,
      "        if experiment_name not in self._switchback_names:\n"
      "            # Unit experiments keep",

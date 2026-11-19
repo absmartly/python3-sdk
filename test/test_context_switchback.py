@@ -2006,6 +2006,26 @@ class GatePassSixTest(SwitchbackTestCase):
 
 class NoSwitchbackCostTest(SwitchbackTestCase):
 
+    def test_switchback_reads_skip_the_unit_path(self):
+        # The unit fast path is only for names that are not switchbacks; a
+        # warmed switchback read must not pay for a unit lookup first.
+        context = self.create_context([switchback(),
+                                       unit_twin(2, "exp_unit")])
+        context.peek_treatment("exp_sb")
+        seen = []
+        original = context._get_unit_assignment
+
+        def spy(name, *args):
+            seen.append(name)
+            return original(name, *args)
+
+        context._get_unit_assignment = spy
+        context.peek_treatment("exp_sb")
+        context.get_treatment("exp_sb")
+        context.get_assignment("exp_sb")
+        context.peek_variable_value("sb.arm", -1)
+        self.assertNotIn("exp_sb", seen)
+
     def test_unit_reads_leave_the_switchback_read_time_alone(self):
         context = self.create_context([unit_twin(1, "exp_unit")])
         writes = []

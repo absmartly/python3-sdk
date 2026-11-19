@@ -432,6 +432,10 @@ MUTANTS = [
     ("walk-unit-branch-rereads-clock", CONTEXT,
      "                    else self._unit_first_at(name, now)",
      "                    else self.get_assignment(name)"),
+    ("unit-first-writes-read-time", CONTEXT,
+     "    def _unit_first_at(self, experiment_name, now):\n",
+     "    def _unit_first_at(self, experiment_name, now):\n"
+     "        self._switchback_read.now = None\n"),
     ("unit-first-skipped-after-a-switchback", CONTEXT,
      "        assignment = self._get_unit_assignment(experiment_name, None)\n"
      "        if assignment is not None:\n"

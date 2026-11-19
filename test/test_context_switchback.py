@@ -1984,6 +1984,27 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
         # through the switchback handoff.
         self.assertEqual(["exp_a", "exp_a"], routed)
 
+    def test_mixed_walk_writes_no_read_time_for_unit_candidates(self):
+        # After the walk reads the clock at exp_a, the unit candidate exp_b
+        # must not write the switchback read time either.
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        context = self.create_context([silent, unit_twin(2, "exp_b")])
+        self.clock.now = ANCHOR + 5
+        context.get_variable_value("sb.arm", -1)
+        writes = []
+
+        class Recorder:
+            def __setattr__(self, name, value):
+                writes.append(name)
+                object.__setattr__(self, name, value)
+
+        context._switchback_read = Recorder()
+        context.get_variable_value("sb.arm", -1)
+        context.peek_variable_value("sb.arm", -1)
+        self.assertEqual([], writes)
+
     def test_unit_key_walk_next_to_a_switchback_writes_no_read_time(self):
         unit = unit_twin(2, "exp_unit", variants=[
             {"name": "A", "config": json.dumps({"unit.arm": 0})},

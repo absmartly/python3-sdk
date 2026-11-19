@@ -1719,6 +1719,12 @@ class Context:
                 self._get_resolution_state(experiment_name)
             if experiment is not None and experiment.switchback is not None:
                 return None
+            if experiment_name in self._switchback_epochs:
+                # The name was a switchback until a refresh: drop its stale
+                # slots before installing the unit slot, as Java does, so a
+                # later epoch cleanup cannot remove (and re-expose) it.
+                self._drop_switchback_epoch(experiment_name)
+                self._prune_switchback_names()
             assignment = Assignment()
             assignment.name = experiment_name
             assignment.eligible = True

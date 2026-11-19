@@ -356,8 +356,8 @@ MUTANTS = [
      "                if experiment is not None and \\\n"
      "                        experiment.switchback is not None:\n"
      "                    return None\n"
-     "                if assignment.data_failed and not failed:",
-     "                if assignment.data_failed and not failed:"),
+     "                if assignment.switchback:",
+     "                if assignment.switchback:"),
     ("zero-time-is-absent", CONTEXT,
      "            now = exposed_at if exposed_at is not None else \\\n"
      "                self.clock.millis()\n"
@@ -447,6 +447,34 @@ MUTANTS = [
      "    def _unit_first_at(self, experiment_name, now):\n"
      "        if experiment_name not in self.assignment_cache:\n"
      "            return self._assignment_at(experiment_name, None, now)\n"),
+    ("guard-silent-only", CONTEXT,
+     "                if assignment.switchback:\n"
+     "                    # A switchback slot left",
+     "                if assignment.switchback_silent:\n"
+     "                    # A switchback slot left"),
+    ("guard-unexposed-only", CONTEXT,
+     "                if assignment.switchback:\n"
+     "                    # A switchback slot left",
+     "                if assignment.switchback and "
+     "not assignment.exposed.value:\n"
+     "                    # A switchback slot left"),
+    ("guard-not-overridden-only", CONTEXT,
+     "                if assignment.switchback:\n"
+     "                    # A switchback slot left",
+     "                if assignment.switchback and "
+     "experiment_name not in self.overrides:\n"
+     "                    # A switchback slot left"),
+    ("guard-installed-only", CONTEXT,
+     "                if assignment.switchback:\n"
+     "                    # A switchback slot left",
+     "                if assignment.switchback and "
+     "experiment is not None:\n"
+     "                    # A switchback slot left"),
+    ("unit-write-keeps-stale-epoch", CONTEXT,
+     "            if experiment_name in self._switchback_epochs:\n"
+     "                # The name was a switchback until a refresh",
+     "            if False:\n"
+     "                # The name was a switchback until a refresh"),
     ("unit-cache-reuses-switchback-slot", CONTEXT,
      "                if assignment.switchback:\n"
      "                    # A switchback slot left",

@@ -2075,6 +2075,142 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
             self.assertEqual(["exp_b"] if api == "get_variable_value"
                              else [], published, api)
 
+    def _restored_unit_reads(self, api, start):
+        # exp_b becomes a switchback (anchored at `start`) mid-walk, a read
+        # caches its slot and opens an epoch, then the unit definition is
+        # restored. Returns the reads and the published exposure names.
+        self.client.published.clear()
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        unit = unit_twin(2, "exp_b", variants=[
+            {"name": "A", "config": json.dumps({"sb.arm": "unit"})},
+            {"name": "B", "config": json.dumps({"sb.arm": "unit"})}])
+        context = self.create_context([silent, unit])
+        self.clock.now = ANCHOR + 5
+        original = context._get_unit_assignment
+        done = []
+
+        def hooked(name, *args):
+            if name == "exp_b" and not done:
+                done.append(1)
+                self.refresh_to(context, silent, switchback(
+                    2, "exp_b", switchbackStartAt=start))
+                context.peek_treatment("exp_b")
+                self.refresh_to(context, silent, unit)
+            return original(name, *args)
+
+        context._get_unit_assignment = hooked
+        first = getattr(context, api)("sb.arm", -1)
+        context._get_unit_assignment = original
+        second = getattr(context, api)("sb.arm", -1)
+        context.get_treatment("exp_b")
+        context.get_treatment("exp_b")
+        return (first, second,
+                [e[1] for e in self.published_exposures(context)])
+
+    def test_restored_unit_exposes_once_after_a_post_anchor_switchback(self):
+        for api in ("get_variable_value", "peek_variable_value"):
+            for start in (ANCHOR, ANCHOR + HOUR):
+                self.assertEqual(("unit", "unit", ["exp_b"]),
+                                 self._restored_unit_reads(api, start),
+                                 (api, start))
+
+    def test_restored_unit_treatment_exposes_once(self):
+        # The same race entered through get_treatment.
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        for start in (ANCHOR, ANCHOR + HOUR):
+            self.client.published.clear()
+            context = self.create_context([silent, unit_twin(2, "exp_b",
+                                                             fullOnVariant=1)])
+            self.clock.now = ANCHOR + 5
+            original = context._get_unit_assignment
+            done = []
+
+            def hooked(name, *args):
+                if name == "exp_b" and not done:
+                    done.append(1)
+                    self.refresh_to(context, silent, switchback(
+                        2, "exp_b", switchbackStartAt=start))
+                    context.peek_treatment("exp_b")
+                    self.refresh_to(context, silent, unit_twin(
+                        2, "exp_b", fullOnVariant=1))
+                return original(name, *args)
+
+            context._get_unit_assignment = hooked
+            for _ in range(3):
+                self.assertEqual(1, context.get_treatment("exp_b"), start)
+            self.assertEqual(["exp_b"], [e[1] for e in
+                                         self.published_exposures(context)],
+                             start)
+
+    def test_restored_unit_ignores_an_exposed_overridden_switchback_slot(self):
+        # The stale bare-name slot is overridden, and in one case exposed.
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        unit = unit_twin(2, "exp_b", variants=[
+            {"name": "A", "config": json.dumps({"sb.arm": "unit A"})},
+            {"name": "B", "config": json.dumps({"sb.arm": "unit B"})}])
+        sb = switchback(2, "exp_b", switchbackStartAt=ANCHOR + HOUR,
+                        variants=[
+                            {"name": "A",
+                             "config": json.dumps({"sb.arm": "sb A"})},
+                            {"name": "B",
+                             "config": json.dumps({"sb.arm": "sb B"})}])
+        for hook_read in ("peek_treatment", "get_treatment"):
+            for api in ("get_variable_value", "peek_variable_value"):
+                context = self.create_context([silent, unit],
+                                              overrides={"exp_b": 1})
+                self.clock.now = ANCHOR + 5
+                original = context._get_unit_assignment
+                done = []
+
+                def hooked(name, *args):
+                    if name == "exp_b" and not done:
+                        done.append(1)
+                        self.refresh_to(context, silent, sb)
+                        getattr(context, hook_read)("exp_b")
+                        self.refresh_to(context, silent, unit)
+                    return original(name, *args)
+
+                context._get_unit_assignment = hooked
+                self.assertEqual("unit B",
+                                 getattr(context, api)("sb.arm", -1),
+                                 (hook_read, api))
+
+    def test_removed_experiment_never_serves_a_stale_switchback_slot(self):
+        silent = switchback(1, "exp_a", unitType="other_id",
+                            switchbackClusters=clusters("other_id",
+                                                        CLUSTER_PATH))
+        sb = switchback(2, "exp_b", switchbackStartAt=ANCHOR + HOUR,
+                        variants=[
+                            {"name": "A",
+                             "config": json.dumps({"sb.arm": "sb A"})},
+                            {"name": "B",
+                             "config": json.dumps({"sb.arm": "sb B"})}])
+        for api in ("get_variable_value", "peek_variable_value"):
+            self.client.published.clear()
+            context = self.create_context([silent, unit_twin(2, "exp_b")],
+                                          overrides={"exp_b": 1})
+            self.clock.now = ANCHOR + 5
+            original = context._get_unit_assignment
+            done = []
+
+            def hooked(name, *args):
+                if name == "exp_b" and not done:
+                    done.append(1)
+                    self.refresh_to(context, silent, sb)
+                    context.peek_treatment("exp_b")
+                    self.refresh_to(context, silent)
+                return original(name, *args)
+
+            context._get_unit_assignment = hooked
+            self.assertEqual(-1, getattr(context, api)("sb.arm", -1), api)
+            self.assertEqual([], self.published_exposures(context), api)
+
     def test_treatment_retry_handoff_keeps_the_resolution_time(self):
         # set_unit retires the unit assignment during its first exposure and
         # a refresh makes the name a switchback; the retry resolves the

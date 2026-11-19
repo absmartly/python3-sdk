@@ -32,10 +32,13 @@ def analysis_field(name):
             '"%s", None)),\n' % name)
 
 
-# Not probed: forcing _assignment_at's name check to True is equivalent.
-# Each caller reaches it only for a routed switchback name or after the unit
-# path returned None (the name became a switchback), so the check never
-# sees a unit name.
+# Not probed, because they are equivalent: forcing _assignment_at's name
+# check to True, and widening _get_assignment_at's check to any routed name.
+# Both are reached only for a routed switchback name or after the unit path
+# returned None (the name became a switchback), so neither ever sees a unit
+# name; the unit fast paths themselves are pinned by
+# test_unit_reads_leave_the_switchback_read_time_alone and
+# test_unit_candidate_after_a_switchback_skips_switchback_lookup.
 MUTANTS = [
     # Cluster order and serving unit.
     ("cluster-order-sorted", SERVING,
@@ -412,11 +415,6 @@ MUTANTS = [
      "            if self._switchback_names:\n"
      "                if now is None:\n"
      "                    now = self.clock.millis()"),
-    ("get-assignment-gate-widened", CONTEXT,
-     "            if experiment_name in self._switchback_names:\n"
-     "                if now is None:",
-     "            if self._switchback_names:\n"
-     "                if now is None:"),
     ("walk-handoff-only-when-exposing", CONTEXT,
      "                assignment = self.get_assignment(name) if now is None "
      "\\\n",

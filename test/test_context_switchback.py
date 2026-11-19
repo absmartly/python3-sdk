@@ -2004,6 +2004,33 @@ class GatePassSixTest(SwitchbackTestCase):
 
 class NoSwitchbackCostTest(SwitchbackTestCase):
 
+    def test_unit_variable_walk_next_to_a_switchback_keeps_unit_timing(self):
+        # unit.arm is defined only by a unit experiment; an unrelated
+        # switchback on sb.arm must not add a clock read or move the unit
+        # exposure's time (it is stamped at enqueue, as before).
+        unit = unit_twin(2, "exp_unit", variants=[
+            {"name": "A", "config": json.dumps({"unit.arm": 0})},
+            {"name": "B", "config": json.dumps({"unit.arm": 1})}])
+        for payload in ([unit], [switchback(), unit]):
+            self.client.published.clear()
+            context = self.create_context(payload)
+            readings = iter([ANCHOR + 1, ANCHOR + 2])
+            reads = []
+
+            def millis():
+                reads.append(1)
+                return next(readings, ANCHOR + 3)
+
+            self.clock.millis = millis
+            context.peek_variable_value("unit.arm", -1)
+            self.assertEqual([], reads, len(payload))
+            context.get_variable_value("unit.arm", -1)
+            self.assertEqual(1, len(reads), len(payload))
+            del self.clock.millis
+            self.assertEqual([ANCHOR + 1], [e[4] for e in
+                                            self.published_exposures(context)],
+                             len(payload))
+
     def test_switchback_reads_skip_the_unit_path(self):
         # The unit fast path is only for names that are not switchbacks; a
         # warmed switchback read must not pay for a unit lookup first.

@@ -411,6 +411,13 @@ MUTANTS = [
      "        except ValueError:",
      "        try:\n            return str(int(value))\n"
      "        except ZeroDivisionError:"),
+    ("variable-walk-clock-for-every-key", CONTEXT,
+     "            if name in self._switchback_names:\n"
+     "                if now is None:\n"
+     "                    now = self.clock.millis()",
+     "            if self._switchback_names:\n"
+     "                if now is None:\n"
+     "                    now = self.clock.millis()"),
     ("unit-fast-path-for-every-name", CONTEXT,
      "        if experiment_name not in self._switchback_names:\n"
      "            # Unit experiments keep",
@@ -422,8 +429,11 @@ MUTANTS = [
      "        if False:\n"
      "            # Unit experiments keep"),
     ("variable-walk-reads-per-experiment", CONTEXT,
-     "        now = self.clock.millis() if self._switchback_names else None",
-     "        now = None"),
+     "                if now is None:\n"
+     "                    now = self.clock.millis()\n"
+     "                assignment = self._assignment_at(name, None, now)",
+     "                now = self.clock.millis()\n"
+     "                assignment = self._assignment_at(name, None, now)"),
     ("hook-view-loses-retirement", CONTEXT,
      "            view._origin = assignment\n", ""),
     ("variable-fallback-rereads-clock", CONTEXT,
@@ -489,7 +499,12 @@ MUTANTS = [
 
 
 def main(selected):
+    unknown = selected - {name for name, _, _, _ in MUTANTS}
+    if unknown:
+        print(f"unknown mutants: {sorted(unknown)}")
+        return 2
     failures = []
+    executed = 0
     with tempfile.TemporaryDirectory() as tmp:
         work = pathlib.Path(tmp) / "repo"
         shutil.copytree(REPO, work, ignore=shutil.ignore_patterns(
@@ -511,6 +526,7 @@ def main(selected):
                 failures.append(name + " (invalid)")
                 continue
             path.write_text(mutated)
+            executed += 1
             try:
                 result = subprocess.run(
                     [sys.executable, "-m", "unittest", *TESTS], cwd=work,
@@ -523,7 +539,8 @@ def main(selected):
             print(f"{name}: {'killed' if killed else 'SURVIVED'}", flush=True)
             if not killed:
                 failures.append(name)
-    print(f"{len(MUTANTS)} mutants, failures: {failures or 'none'}")
+    print(f"{executed} of {len(MUTANTS)} mutants run, failures: "
+          f"{failures or 'none'}")
     return 1 if failures else 0
 
 

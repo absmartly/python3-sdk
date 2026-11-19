@@ -191,7 +191,17 @@ class ContextSwitchbackClusterTest(ClusterTestCase):
         class Opaque:
             __slots__ = ()
 
-        for value in (cyclic, Opaque(), {"city": {1, 2}}):
+        class Unencodable:
+            # Passes the cycle check but jsons cannot dump it.
+            def __getstate__(self):
+                raise TypeError("not encodable")
+
+            @property
+            def __dict__(self):
+                raise TypeError("not encodable")
+
+        for value in (cyclic, Opaque(), {"city": {1, 2}},
+                      {"city": Unencodable()}):
             context = self.context([attribute_switchback("geo/city")],
                                    attributes={"geo": value})
             self.assertEqual(0, context.get_treatment("exp_sb"))

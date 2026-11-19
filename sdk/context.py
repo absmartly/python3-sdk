@@ -497,12 +497,11 @@ class Context:
         # valid while the holdout's iteration is unchanged.
         self._holdouts_by_id = {}
         self._holdout_assignments = {}
-        # Switchbacks: whether the installed data has any, the epoch of
-        # every switchback with cached slots, and the generation source.
-        # The names that take the switchback path: switchbacks in the
-        # installed data and experiments whose epoch still has slots to
-        # drop. Empty when the data has no switchbacks, which leaves unit
-        # experiments on the path they took before switchbacks.
+        # Switchbacks. The routed names are the switchbacks in the installed
+        # data plus former switchbacks whose epoch still has slots to drop;
+        # every other name stays on the unit path. Epochs hold each
+        # switchback's cached period slots, and the counter issues their
+        # generations.
         self._switchback_names = frozenset()
         self._switchback_epochs = {}
         self._switchback_read = threading.local()
@@ -1281,14 +1280,20 @@ class Context:
         # candidate is kept even if it lacks the key.
         experiments = Concurrency.get_rw(
             self.data_lock, self.index_variables, key) or []
-        # A switchback is resolved and exposed at one clock reading per
-        # walk; a retry takes a fresh one.
-        now = self.clock.millis() if self._switchback_names else None
+        # The first switchback the walk visits reads the clock once, and
+        # every later switchback in the walk resolves and exposes at that
+        # reading; unit candidates keep their own timing. A retry reads
+        # afresh.
+        now = None
         suppressed_fallback = None
         for experiment in list(experiments):
-            assignment = self._assignment_at(experiment.data.name, None, now) \
-                if now is not None else \
-                self.get_assignment(experiment.data.name)
+            name = experiment.data.name
+            if name in self._switchback_names:
+                if now is None:
+                    now = self.clock.millis()
+                assignment = self._assignment_at(name, None, now)
+            else:
+                assignment = self.get_assignment(name)
             if assignment.variables is not None:
                 if expose and (not assignment.exposed.value or
                                assignment.holdouts_pending) and \
@@ -1333,20 +1338,14 @@ class Context:
             return self._switchback_treatment(experiment_name, exposed_at)
         assignment = self.get_assignment(experiment_name, exposed_at=exposed_at)
         if (not assignment.exposed.value or assignment.holdouts_pending) and \
-                not self._expose_handoff(assignment):
+                not self._expose_at(assignment, None):
             for _ in range(_MAX_EXPOSURE_ATTEMPTS - 1):
                 assignment = self.get_assignment(experiment_name,
                                                  exposed_at=exposed_at)
-                if assignment.exposed.value or self._expose_handoff(assignment):
+                if assignment.exposed.value or \
+                        self._expose_at(assignment, None):
                     break
         return assignment.variant
-
-    def _expose_handoff(self, assignment):
-        # A switchback slot reached through the unit path (a refresh during
-        # the read) is exposed at the time it was resolved at.
-        if assignment.switchback:
-            return self._expose_at(assignment, None)
-        return self._expose(assignment)
 
     def _switchback_treatment(self, experiment_name, exposed_at):
         # Each attempt resolves and exposes at one clock reading (exposed_at

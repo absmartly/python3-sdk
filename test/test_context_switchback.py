@@ -631,7 +631,6 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assertIsNone(context.get_custom_field_value("exp_sb", "missing"))
 
     def test_per_period_cache_is_bounded(self):
-        # Each experiment keeps entries for at most its two latest periods.
         context = self.create_context([switchback()])
         for i in range(50):
             self.clock.now = ANCHOR + i * HOUR
@@ -1132,7 +1131,6 @@ class ContextSwitchbackTest(SwitchbackTestCase):
         self.assertEqual(1, context.get_treatment("exp_sb"))
         self.assert_published(context, exposure(1, "exp_sb", 1, ANCHOR + 5,
                                                 full_on=True))
-        # Its slots are gone, so its reads are back on the unit path.
         self.assertEqual(frozenset(), context._switchback_names)
 
     def test_pre_anchor_slot_refreshed_to_identical_unit(self):

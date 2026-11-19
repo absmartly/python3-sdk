@@ -349,9 +349,9 @@ MUTANTS = [
      "            view = assignment\n"),
     ("unit-path-applies-switchback", CONTEXT,
      "            if experiment is not None and experiment.switchback is not "
-     "None:\n                return None\n            assignment = "
-     "Assignment()",
-     "            assignment = Assignment()"),
+     "None:\n                return None\n"
+     "            if experiment_name in self._switchback_epochs:",
+     "            if experiment_name in self._switchback_epochs:"),
     ("unit-read-path-applies-switchback", CONTEXT,
      "                if experiment is not None and \\\n"
      "                        experiment.switchback is not None:\n"
@@ -475,6 +475,34 @@ MUTANTS = [
      "                # The name was a switchback until a refresh",
      "            if False:\n"
      "                # The name was a switchback until a refresh"),
+    ("unit-write-drop-without-prune", CONTEXT,
+     "                self._drop_switchback_epoch(experiment_name)\n"
+     "                self._prune_switchback_names()\n"
+     "            assignment = Assignment()",
+     "                self._drop_switchback_epoch(experiment_name)\n"
+     "            assignment = Assignment()"),
+    ("unit-write-drop-only-if-installed", CONTEXT,
+     "            if experiment_name in self._switchback_epochs:\n"
+     "                # The name was a switchback until a refresh",
+     "            if experiment_name in self._switchback_epochs and "
+     "experiment is not None:\n"
+     "                # The name was a switchback until a refresh"),
+    ("unit-write-drop-before-switchback-check", CONTEXT,
+     "            if experiment is not None and experiment.switchback is not "
+     "None:\n                return None\n"
+     "            if experiment_name in self._switchback_epochs:\n",
+     "            if experiment_name in self._switchback_epochs:\n"
+     "                self._drop_switchback_epoch(experiment_name)\n"
+     "            if experiment is not None and experiment.switchback is not "
+     "None:\n                return None\n"
+     "            if experiment_name in self._switchback_epochs:\n"),
+    ("unit-write-pops-epoch-only", CONTEXT,
+     "                self._drop_switchback_epoch(experiment_name)\n"
+     "                self._prune_switchback_names()\n"
+     "            assignment = Assignment()",
+     "                self._switchback_epochs.pop(experiment_name, None)\n"
+     "                self._prune_switchback_names()\n"
+     "            assignment = Assignment()"),
     ("unit-cache-reuses-switchback-slot", CONTEXT,
      "                if assignment.switchback:\n"
      "                    # A switchback slot left",

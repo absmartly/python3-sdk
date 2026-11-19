@@ -2181,6 +2181,129 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
                                  getattr(context, api)("sb.arm", -1),
                                  (hook_read, api))
 
+    def _race_exp_b(self, context, during):
+        # Runs `during` once, when the unit path first resolves exp_b.
+        original = context._get_unit_assignment
+        done = []
+
+        def hooked(name, *args):
+            if name == "exp_b" and not done:
+                done.append(1)
+                during()
+            return original(name, *args)
+
+        context._get_unit_assignment = hooked
+        return original
+
+    def _silent_exp_a(self):
+        return switchback(1, "exp_a", unitType="other_id",
+                          switchbackClusters=clusters("other_id",
+                                                      CLUSTER_PATH))
+
+    def test_removed_switchback_epoch_exposes_once(self):
+        # The epoch opened mid-read belongs to an experiment the second
+        # refresh removes; the stale epoch is still dropped on the unit
+        # write, so later reads publish nothing further.
+        for start in (ANCHOR, ANCHOR + HOUR):
+            for api in ("get_treatment", "get_variable_value"):
+                self.client.published.clear()
+                silent = self._silent_exp_a()
+                context = self.create_context([silent,
+                                               unit_twin(2, "exp_b")])
+                self.clock.now = ANCHOR + 5
+
+                def during():
+                    self.refresh_to(context, silent, switchback(
+                        2, "exp_b", switchbackStartAt=start))
+                    context.peek_treatment("exp_b")
+                    self.refresh_to(context, silent)
+
+                original = self._race_exp_b(context, during)
+                if api == "get_treatment":
+                    context.get_treatment("exp_b")
+                else:
+                    context.get_variable_value("sb.arm", -1)
+                context._get_unit_assignment = original
+                context.get_treatment("exp_b")
+                context.get_treatment("exp_b")
+                names = [e[1] for e in self.published_exposures(context)]
+                self.assertLessEqual(len(names), 1, (start, api, names))
+                self.assertNotIn("exp_b", context._switchback_epochs)
+                self.assertNotIn("exp_b", context._switchback_names)
+
+    def test_live_switchback_epoch_survives_unit_path_handoff(self):
+        # The refresh leaves exp_b a live switchback whose period slot a
+        # read already exposed: the unit path hands over without dropping
+        # that epoch, so the period is not exposed again.
+        for start in (ANCHOR, ANCHOR + HOUR):
+            self.client.published.clear()
+            silent = self._silent_exp_a()
+            context = self.create_context([silent, unit_twin(2, "exp_b")])
+            self.clock.now = ANCHOR + 5
+            live = switchback(2, "exp_b", switchbackStartAt=start)
+
+            def during():
+                self.refresh_to(context, silent, live)
+                context.get_treatment("exp_b")
+
+            original = self._race_exp_b(context, during)
+            context.get_treatment("exp_b")
+            context._get_unit_assignment = original
+            context.get_treatment("exp_b")
+            # Before its anchor the switchback is a silent control.
+            self.assertEqual(["exp_b"] if start == ANCHOR else [],
+                             [e[1] for e in self.published_exposures(context)],
+                             start)
+
+    def test_restored_unit_leaves_the_switchback_route_at_once(self):
+        silent = self._silent_exp_a()
+        unit = unit_twin(2, "exp_b")
+        context = self.create_context([silent, unit])
+        self.clock.now = ANCHOR + 5
+
+        def during():
+            self.refresh_to(context, silent, switchback(
+                2, "exp_b", switchbackStartAt=ANCHOR))
+            context.peek_treatment("exp_b")
+            self.refresh_to(context, silent, unit)
+
+        original = self._race_exp_b(context, during)
+        context.get_treatment("exp_b")
+        context._get_unit_assignment = original
+        self.assertNotIn("exp_b", context._switchback_names)
+        calls = []
+        lookup = context._get_switchback_assignment
+
+        def spy(name, *args):
+            if name == "exp_b":
+                calls.append(name)
+            return lookup(name, *args)
+
+        context._get_switchback_assignment = spy
+        context.get_treatment("exp_b")
+        context.get_variable_value("sb.arm", -1)
+        context.peek_treatment("exp_b")
+        self.assertEqual([], calls)
+
+    def test_stale_period_slots_are_dropped_with_the_epoch(self):
+        silent = self._silent_exp_a()
+        unit = unit_twin(2, "exp_b")
+        context = self.create_context([silent, unit])
+        self.clock.now = ANCHOR + 5
+
+        def during():
+            self.refresh_to(context, silent, switchback(
+                2, "exp_b", switchbackStartAt=ANCHOR))
+            context.peek_treatment("exp_b")
+            self.refresh_to(context, silent, unit)
+
+        original = self._race_exp_b(context, during)
+        context.get_treatment("exp_b")
+        context._get_unit_assignment = original
+        self.assertEqual(["exp_b"], [
+            key for key in context.assignment_cache
+            if (key[0] if isinstance(key, tuple) else key) == "exp_b"])
+
     def test_removed_experiment_never_serves_a_stale_switchback_slot(self):
         silent = switchback(1, "exp_a", unitType="other_id",
                             switchbackClusters=clusters("other_id",

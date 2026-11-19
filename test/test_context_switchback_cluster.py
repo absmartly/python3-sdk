@@ -764,10 +764,13 @@ class ContextSwitchbackClusterRuleTest(ClusterTestCase):
         self.assertEqual(scheduled(key), linked["variant"])
 
     def test_context_matches_the_sdk_switchback_wire_rule_parity_grid(self):
-        # The Collector's SdkSwitchbackRule oracle, transcribed: period from
-        # the anchor, traffic on the serving uid's hash, then the draw over
-        # the cluster key; no key (no value, disagreement, filtered) has no
-        # draw.
+        # The Collector's SdkSwitchbackRule wire rule, transcribed: period
+        # from the anchor, traffic on the serving uid's hash, then the draw
+        # over the cluster key; no key (no value, disagreement, filtered)
+        # has no draw. It checks serving, eligibility and exposure against
+        # that rule, not the assigner: the draw uses the SDK's own
+        # switchback_assigner, which the golden-vector tests pin
+        # independently.
         def oracle(data, uid, key, now):
             start, period_ms = data["switchbackStartAt"], \
                 data["switchbackPeriodMs"]

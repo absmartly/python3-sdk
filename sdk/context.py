@@ -497,11 +497,13 @@ class Context:
         # valid while the holdout's iteration is unchanged.
         self._holdouts_by_id = {}
         self._holdout_assignments = {}
-        # Switchbacks. The routed names are the switchbacks in the installed
-        # data plus former switchbacks whose epoch still has slots to drop;
-        # every other name stays on the unit path. Epochs hold each
-        # switchback's cached period slots, and the counter issues their
-        # generations.
+        # Switchbacks. _switchback_names routes reads to the switchback
+        # path: the installed switchbacks plus every name that has an epoch
+        # (a former switchback keeps its name until a read drops its
+        # slots); other names take the unit path. _switchback_epochs maps a
+        # name to its cached period slots, _switchback_read holds, per
+        # thread, the time the current read resolved a switchback slot at,
+        # and the counter issues epoch generations.
         self._switchback_names = frozenset()
         self._switchback_epochs = {}
         self._switchback_read = threading.local()
@@ -1292,12 +1294,12 @@ class Context:
                 if now is None:
                     now = self.clock.millis()
                 assignment = self._assignment_at(name, None, now)
-            elif now is not None:
-                # A refresh may turn this name into a switchback mid-read;
-                # it then resolves at the walk's reading too.
-                assignment = self._assignment_at(name, None, now)
             else:
-                assignment = self.get_assignment(name)
+                # get_assignment tries the unit path first. If a refresh
+                # turned the name into a switchback mid-read, the walk's
+                # reading (taken at an earlier switchback) still applies.
+                assignment = self.get_assignment(name) if now is None \
+                    else self._unit_first_at(name, now)
             if assignment.variables is not None:
                 if expose and (not assignment.exposed.value or
                                assignment.holdouts_pending) and \
@@ -1361,6 +1363,12 @@ class Context:
             if assignment.exposed.value or self._expose_at(assignment, now):
                 break
         return assignment.variant
+
+    def _unit_first_at(self, experiment_name, now):
+        assignment = self._get_unit_assignment(experiment_name, None)
+        if assignment is not None:
+            return assignment
+        return self._assignment_at(experiment_name, None, now)
 
     def _assignment_at(self, experiment_name, exposed_at, now):
         if experiment_name in self._switchback_names:

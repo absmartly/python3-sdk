@@ -1968,10 +1968,21 @@ class JervasionRoundTwoTest(SwitchbackTestCase):
             seen.append(name)
             return original(name, *args)
 
+        routed = []
+        original_at = context._assignment_at
+
+        def spy_at(name, *args):
+            routed.append(name)
+            return original_at(name, *args)
+
         context._get_switchback_assignment = spy
+        context._assignment_at = spy_at
         context.get_variable_value("sb.arm", -1)
         context.peek_variable_value("sb.arm", -1)
         self.assertEqual(["exp_a", "exp_a"], seen)
+        # The unit candidate is resolved on the unit path first, not routed
+        # through the switchback handoff.
+        self.assertEqual(["exp_a", "exp_a"], routed)
 
     def test_unit_key_walk_next_to_a_switchback_writes_no_read_time(self):
         unit = unit_twin(2, "exp_unit", variants=[

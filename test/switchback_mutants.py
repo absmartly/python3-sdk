@@ -32,6 +32,10 @@ def analysis_field(name):
             '"%s", None)),\n' % name)
 
 
+# Not probed: forcing _assignment_at's name check to True is equivalent.
+# Each caller reaches it only for a routed switchback name or after the unit
+# path returned None (the name became a switchback), so the check never
+# sees a unit name.
 MUTANTS = [
     # Cluster order and serving unit.
     ("cluster-order-sorted", SERVING,
@@ -413,14 +417,11 @@ MUTANTS = [
      "                if now is None:",
      "            if self._switchback_names:\n"
      "                if now is None:"),
-    ("assignment-at-gate-removed", CONTEXT,
-     "    def _assignment_at(self, experiment_name, exposed_at, now):\n"
-     "        if experiment_name in self._switchback_names:",
-     "    def _assignment_at(self, experiment_name, exposed_at, now):\n"
-     "        if True:"),
     ("walk-handoff-only-when-exposing", CONTEXT,
-     "            elif now is not None:\n",
-     "            elif now is not None and expose:\n"),
+     "                assignment = self.get_assignment(name) if now is None "
+     "\\\n",
+     "                assignment = self.get_assignment(name) if now is None "
+     "or not expose \\\n"),
     ("treatment-retry-exposes-without-time", CONTEXT,
      "                if assignment.exposed.value or \\\n"
      "                        self._expose_at(assignment, None):\n"
@@ -431,8 +432,14 @@ MUTANTS = [
      "                    break\n"
      "        return assignment.variant"),
     ("walk-unit-branch-rereads-clock", CONTEXT,
-     "            elif now is not None:\n",
-     "            elif False:\n"),
+     "                    else self._unit_first_at(name, now)",
+     "                    else self.get_assignment(name)"),
+    ("unit-first-skipped-after-a-switchback", CONTEXT,
+     "        assignment = self._get_unit_assignment(experiment_name, None)\n"
+     "        if assignment is not None:\n"
+     "            return assignment\n"
+     "        return self._assignment_at(experiment_name, None, now)",
+     "        return self._assignment_at(experiment_name, None, now)"),
     ("unit-fast-path-for-every-name", CONTEXT,
      "        if experiment_name not in self._switchback_names:\n"
      "            # Unit experiments keep",

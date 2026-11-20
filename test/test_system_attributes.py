@@ -420,7 +420,6 @@ class SystemAttributesTest(unittest.TestCase):
                     for attr in payload["attributes"]
                     if attr["name"] != "tier"]
 
-        # The exposure is earliest.
         self.clock.value = 1_620_000_000_200
         self.assertEqual(1, context.get_treatment("exp_test_ab"))
         self.clock.value = 1_620_000_000_500
@@ -429,7 +428,6 @@ class SystemAttributesTest(unittest.TestCase):
                           ("sdk_version", 1_620_000_000_200)],
                          publish_stamps())
 
-        # The goal is earliest.
         self.clock.value = 1_620_000_000_100
         context.track("goal", None)
         self.clock.value = 1_620_000_000_300
@@ -439,7 +437,6 @@ class SystemAttributesTest(unittest.TestCase):
                           ("sdk_version", 1_620_000_000_100)],
                          publish_stamps())
 
-        # Only a goal.
         self.clock.value = 1_620_000_000_150
         context.track("goal", None)
         self.assertEqual([("sdk_name", 1_620_000_000_150),

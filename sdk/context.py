@@ -1089,19 +1089,30 @@ class Context:
         # default and later candidates are not consulted. A held-out
         # candidate never wins over another, but when none wins the first
         # held-out one supplies its control variant (and is exposed).
+        # A raising queue_exposure hook does not stop the walk: the first
+        # error is raised once the winner is found, as in Java.
         experiments = Concurrency.get_rw(
             self.data_lock, self.index_variables, key) or []
         suppressed_fallback = None
+        failure = None
         for experiment in list(experiments):
             assignment = self.get_assignment(experiment.data.name)
             if expose:
-                self._expose_holdouts(assignment)
+                try:
+                    self._expose_holdouts(assignment)
+                except Exception as error:
+                    if failure is None:
+                        failure = error
             if assignment.assigned or assignment.overridden or \
                     assignment.rule_override:
-                return assignment
+                break
             if assignment.suppressed and suppressed_fallback is None:
                 suppressed_fallback = assignment
-        return suppressed_fallback
+        else:
+            assignment = suppressed_fallback
+        if failure is not None:
+            raise failure
+        return assignment
 
     def peek_treatment(self, experiment_name: str):
         self.check_ready(True)
@@ -1848,8 +1859,12 @@ class Context:
 
     def _offer_holdouts_through_hook(self, assignment: Assignment,
                                      exposed_at):
-        # True when every holdout pinned on the assignment is exposed.
+        # True when every holdout pinned on the assignment is exposed. A
+        # raising hook does not stop the other holdouts: the first error is
+        # raised after every one was offered (Java
+        # triggerApplicableHoldoutExposures).
         finished = True
+        failure = None
         for holdout, holdout_assignment in zip(
                 assignment.holdouts, assignment.holdout_assignments):
             if holdout_assignment is None:
@@ -1875,10 +1890,15 @@ class Context:
                 view.name = holdout.name
                 view.exposedAt = exposed_at
                 self.queue_exposure(view)
+            except Exception as error:
+                if failure is None:
+                    failure = error
             finally:
                 holdout_assignment.hook_pending = False
             if not holdout_assignment.exposed.value:
                 finished = False
+        if failure is not None:
+            raise failure
         return finished
 
     def _expose_holdouts(self, assignment: Assignment):

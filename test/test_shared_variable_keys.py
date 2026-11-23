@@ -241,6 +241,77 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
                          context.get_variable_value(KEY, "d"))
         self.assertEqual(["holdout_b", "exp_b"], offered)
 
+    def test_losing_candidate_holdouts_are_not_queued_while_closing(self):
+        from sdk.context_error import ContextError
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        # Closing starts after the read's readiness check, while the
+        # candidates are being resolved.
+        get_assignment = context.get_assignment
+        context.get_assignment = \
+            lambda name: context.closing.set(True) or get_assignment(name)
+        with self.assertRaises(ContextError):
+            context.get_variable_value(KEY, "d")
+        self.assertEqual([], self.names(context))
+        self.assertEqual(0, context.get_pending_count())
+        self.assertFalse(
+            context._holdout_assignments[(12, UNIT_TYPE)].exposed.value)
+
+    def test_losing_candidate_holdout_is_named_from_its_snapshot(self):
+        # The arm is cached under the old name; a same-iteration rename
+        # keeps it, and the exposure carries the payload's current name.
+        context = self.create_context(context_data(
+            [assigned(3, "exp_c", holdout_ids=[12])],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.peek_treatment("exp_c")
+        self.refresh(context, context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")],
+            [holdout(12, "renamed", HOLDOUT_B_SEEDS)]))
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["renamed", "exp_b"], self.names(context))
+
+    def test_warm_read_takes_no_event_lock(self):
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b", holdout_ids=[12])],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.get_variable_value(KEY, "d")
+        calls = []
+        acquire = context.event_lock.acquire_write
+        context.event_lock.acquire_write = \
+            lambda: calls.append(1) or acquire()
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual([], calls)
+
+    def test_raising_hook_does_not_stop_the_other_holdouts(self):
+        # Java collects the first failure, fires every visited candidate's
+        # holdouts and rethrows before the winner is exposed.
+        from sdk.context import Context
+
+        class Raising(Context):
+            def queue_exposure(self, assignment):
+                if assignment.name == "h1" and \
+                        not assignment.exposed.value:
+                    raise RuntimeError("hook failed")
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[11, 12]),
+             strict_mismatch(2, "exp_b", holdout_ids=[13]),
+             assigned(3, "exp_c")],
+            [holdout(11, "h1", HOLDOUT_B_SEEDS),
+             holdout(12, "h2", HOLDOUT_B_SEEDS),
+             holdout(13, "h3", HOLDOUT_B_SEEDS)]))
+        context.__class__ = Raising
+        with self.assertRaisesRegex(RuntimeError, "hook failed"):
+            context.get_variable_value(KEY, "d")
+        self.assertEqual(["h2", "h3"], self.names(context))
+
     def test_unit_type_of_exposure(self):
         context = self.assert_winner(
             [missing_unit(1, "exp_a"), assigned(2, "exp_b")],

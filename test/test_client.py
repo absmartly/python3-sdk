@@ -38,12 +38,12 @@ class ClientTest(unittest.TestCase):
         self.assertEqual("2.4.1", client.get_application_version())
         self.assertEqual("dev", client.get_environment())
         self.assertEqual("absmartly-python-sdk", client.get_agent_name())
-        self.assertEqual("0.3.0", client.get_agent_version())
-        self.assertEqual("absmartly-python-sdk/0.3.0", client.get_agent())
+        self.assertEqual("0.4.0", client.get_agent_version())
+        self.assertEqual("absmartly-python-sdk/0.4.0", client.get_agent())
         # The collector reads X-Application-Version as a number, so a dotted
         # version is sent as "0"; the getter keeps the configured value.
         self.assertEqual("0", client.headers["X-Application-Version"])
-        self.assertEqual("absmartly-python-sdk/0.3.0", client.headers["X-Agent"])
+        self.assertEqual("absmartly-python-sdk/0.4.0", client.headers["X-Agent"])
 
     def test_application_version_header_is_numeric(self):
         # The collector binds X-Application-Version to a long, so only a
@@ -174,7 +174,7 @@ class ClientTest(unittest.TestCase):
              "X-Application": "website",
              "X-Environment": "dev",
              "X-Application-Version": '0',
-             "X-Agent": "absmartly-python-sdk/0.3.0"})
+             "X-Agent": "absmartly-python-sdk/0.4.0"})
         http_client.get.reset_mock()
         client.publish(event)
         time.sleep(0.1)
@@ -214,7 +214,7 @@ class ClientTest(unittest.TestCase):
              "X-Application": "website",
              "X-Environment": "dev",
              "X-Application-Version": '0',
-             "X-Agent": "absmartly-python-sdk/0.3.0"})
+             "X-Agent": "absmartly-python-sdk/0.4.0"})
         http_client.get.reset_mock()
 
         result = future.result()
@@ -236,7 +236,7 @@ class ClientTest(unittest.TestCase):
                             "X-Application": "website",
                             "X-Environment": "dev",
                             "X-Application-Version": '0',
-                            "X-Agent": "absmartly-python-sdk/0.3.0"}
+                            "X-Agent": "absmartly-python-sdk/0.4.0"}
 
         deserializer = DefaultContextDataDeserializer()
         deserializer.deserialize = MagicMock(return_value=expected)

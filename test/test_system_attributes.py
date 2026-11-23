@@ -359,7 +359,7 @@ class SystemAttributesTest(unittest.TestCase):
         # them server-side), even with include_system_attributes=True.
         self.assertEqual([("tier", "gold")], self.published_attributes(False))
         self.assertEqual([("sdk_name", "absmartly-python-sdk"),
-                          ("sdk_version", "0.3.0"),
+                          ("sdk_version", "0.4.0"),
                           ("tier", "gold")],
                          self.published_attributes(True))
 
@@ -384,7 +384,7 @@ class SystemAttributesTest(unittest.TestCase):
         context.publish()
         event = self.client._publish_calls[0]
         payload = json.loads(bytes(self.serializer.serialize(event)))
-        self.assertEqual([("sdk_version", "0.3.0"),
+        self.assertEqual([("sdk_version", "0.4.0"),
                           ("application", "my-app"),
                           ("environment", "staging"),
                           ("app_version", "1.2.3"),

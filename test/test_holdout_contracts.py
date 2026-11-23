@@ -303,8 +303,8 @@ class HoldoutConformanceTest(HoldoutTestCase):
                          context.get_variable_value("color", "default"))
         self.assertEqual(
             [self.holdout_exposure(11, "holdout_a", 0),
-             self.exposure(2, "exp_second", NORMAL_VARIANT),
-             self.holdout_exposure(12, "holdout_b", 1)],
+             self.holdout_exposure(12, "holdout_b", 1),
+             self.exposure(2, "exp_second", NORMAL_VARIANT)],
             self.exposure_tuples(context.exposures))
 
     def test_223_exposure_state_survives_publish(self):
@@ -512,9 +512,9 @@ class HoldoutMutationProbeTest(HoldoutTestCase):
                 self.assertTrue(assignment.suppressed)
                 self.assertTrue(assignment.rule_override)
                 self.assertEqual(
-                    [self.exposure(1, "exp_rule", 1, assigned=False,
-                                   rule_override=True),
-                     self.holdout_exposure(11, "holdout_a", 0)],
+                    [self.holdout_exposure(11, "holdout_a", 0),
+                     self.exposure(1, "exp_rule", 1, assigned=False,
+                                   rule_override=True)],
                     self.exposure_tuples(context.exposures))
 
     def test_holdout_arm_uses_the_holdout_seeds_and_split(self):
@@ -831,8 +831,9 @@ class HoldoutRevalidationTest(HoldoutTestCase):
 
 
 class SuppressedFallbackTest(HoldoutTestCase):
-    """JS _resolveVariableValue: only a held-out candidate that neither an
-    override nor a rule decided becomes the control-value fallback."""
+    """Only a held-out candidate that neither an override nor a rule decided
+    becomes the control-value fallback: an overridden or rule-won one wins
+    the key, even when its variant lacks it (Java getVariableAssignment)."""
 
     def two_candidates(self, first_fields=None, overrides=None):
         first = self.covered(1, "exp_first", [11], **(first_fields or {}))
@@ -845,19 +846,29 @@ class SuppressedFallbackTest(HoldoutTestCase):
 
     def test_overridden_held_out_candidate_is_not_the_fallback(self):
         context = self.two_candidates(overrides={"exp_first": 0})
-        self.assertEqual("control",
+        self.assertEqual("default",
                          context.peek_variable_value("color", "default"))
-        self.assertEqual("control",
+        self.assertEqual("default",
                          context.get_variable_value("color", "default"))
+        self.assertEqual(
+            [self.holdout_exposure(11, "holdout_a", 0),
+             self.exposure(1, "exp_first", 0, assigned=False,
+                           overridden=True)],
+            self.exposure_tuples(context.exposures))
 
     def test_rule_won_held_out_candidate_is_not_the_fallback(self):
         rule = json.dumps({"rules": [{"type": "assign", "variant": 0}]})
         context = self.two_candidates({"assignmentRules": rule})
         self.assertTrue(context.get_assignment("exp_first").rule_override)
-        self.assertEqual("control",
+        self.assertEqual("default",
                          context.peek_variable_value("color", "default"))
-        self.assertEqual("control",
+        self.assertEqual("default",
                          context.get_variable_value("color", "default"))
+        self.assertEqual(
+            [self.holdout_exposure(11, "holdout_a", 0),
+             self.exposure(1, "exp_first", 0, assigned=False,
+                           rule_override=True)],
+            self.exposure_tuples(context.exposures))
 
     def test_held_out_assignment_rechecks_the_audience_once_like_js(self):
         # JS audienceMatches runs for a held-out assignment too; a changed
@@ -1329,20 +1340,23 @@ class QueueExposureHookTest(HoldoutTestCase):
             def queue_exposure(self, assignment):
                 return super().queue_exposure(assignment)
 
+        # The candidate's holdouts are offered before its own exposure, so
+        # closing on the first one leaves the second and the experiment.
         context = self.create_context(context_data(
-            [with_variables(self.covered(1, "exp", [11]), "color")],
-            [self.holdout_b(id=11, name="h")]))
+            [with_variables(self.covered(1, "exp", [11, 12]), "color")],
+            [self.holdout_b(id=11, name="h"),
+             self.holdout_b(id=12, name="h2")]))
         context.__class__ = Delegating
         failing = Future()
         self.client.publish_results.append(failing)
         closing = []
 
-        def close_on_own_exposure(event_type, data):
-            if event_type == EventType.EXPOSURE and data.id == 1 and \
+        def close_on_first_holdout(event_type, data):
+            if event_type == EventType.EXPOSURE and data.id == 11 and \
                     not closing:
                 closing.append(context.close_async())
 
-        self.logger.on_event = close_on_own_exposure
+        self.logger.on_event = close_on_first_holdout
         with self.assertRaises(ContextError):
             context.get_variable_value("color", "default")
         self.logger.on_event = None
@@ -1351,7 +1365,8 @@ class QueueExposureHookTest(HoldoutTestCase):
             closing[0].result(5)
         self.assertEqual("treatment",
                          context.get_variable_value("color", "default"))
-        self.assertEqual(["exp", "h"], [e.name for e in context.exposures])
+        self.assertEqual(["h", "h2", "exp"],
+                         [e.name for e in context.exposures])
 
     def test_hook_path_stops_revisiting_once_holdouts_are_finished(self):
         from sdk.context import Context

@@ -76,6 +76,14 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
                     [missing_unit(1, "exp_a"), assigned(2, "exp_b")][::order],
                     "exp_b_treatment", ["exp_b"])
 
+    def test_only_candidate_the_unit_is_not_in_is_not_exposed(self):
+        # 0.3.0 exposed it; nothing wins the key now, as in Java.
+        for only in (strict_mismatch(1, "exp_a"), missing_unit(1, "exp_a")):
+            with self.subTest(unit_type=only["unitType"]):
+                context = self.assert_winner([only], "d", [])
+                context.get_treatment("exp_a")
+                self.assertEqual(["exp_a"], self.names(context))
+
     def test_winner_exposure_is_the_winning_assignment(self):
         context = self.assert_winner(
             [strict_mismatch(1, "exp_a"), missing_unit(2, "exp_b"),
@@ -352,6 +360,37 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         context.get_variable_value(KEY, "d")
         self.assertEqual(["exp_b", "holdout_b"], self.names(context))
         self.assertTrue(context.get_assignment("exp_a").holdouts_exposed)
+
+    def test_winner_holdout_a_hook_declines_is_offered_once_per_read(self):
+        # The walk offers the winner's holdouts; queuing the winner's own
+        # exposure must not offer a declined one again in the same read.
+        from sdk.context import Context
+        offered = []
+
+        class Declining(Context):
+            def queue_exposure(self, assignment):
+                offered.append(assignment.name)
+                if assignment.name == "holdout_b" and \
+                        offered.count("holdout_b") == 1:
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a", holdout_ids=[12])],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.__class__ = Declining
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["holdout_b", "exp_a"], offered)
+        self.assertEqual(["exp_a"], self.names(context))
+        self.assertTrue(context.get_assignment("exp_a").holdouts_pending)
+        # The next read offers the declined holdout again, and only it.
+        context.get_variable_value(KEY, "d")
+        self.assertEqual(["holdout_b", "exp_a", "holdout_b"], offered)
+        self.assertEqual(["exp_a", "holdout_b"], self.names(context))
+        self.assertFalse(context.get_assignment("exp_a").holdouts_pending)
+        context.get_variable_value(KEY, "d")
+        self.assertEqual(3, len(offered))
 
     def test_raising_hook_does_not_stop_the_other_holdouts(self):
         # Java collects the first failure, fires every visited candidate's

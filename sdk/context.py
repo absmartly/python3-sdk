@@ -1066,10 +1066,11 @@ class Context:
     def _variable_value(self, key: str, default_value: object, expose: bool,
                         attempt: int = 1):
         assignment = self._variable_assignment(key, expose)
+        # The walk offered the winner's holdouts, and offers any left
+        # unexposed again on the next read: only its own exposure is left.
         if expose and assignment is not None and \
-                (not assignment.exposed.value or
-                 assignment.holdouts_pending) and \
-                not self._expose(assignment) and \
+                not assignment.exposed.value and \
+                not self._expose(assignment, offer_holdouts=False) and \
                 attempt < _MAX_EXPOSURE_ATTEMPTS:
             # set_unit retired the winner in between, so the key may
             # resolve differently: walk it again.
@@ -1756,7 +1757,7 @@ class Context:
         finally:
             self.event_lock.release_write()
 
-    def _expose(self, assignment: Assignment):
+    def _expose(self, assignment: Assignment, offer_holdouts: bool = True):
         """Expose an assignment; False when set_unit retired it first.
 
         JS _triggerExposures: a held-out experiment publishes no exposure of
@@ -1766,13 +1767,16 @@ class Context:
         so a refresh in between cannot mix epochs. The whole group is
         accepted in one event_lock section, so a concurrent close either
         rejects all of it (and a later read retries) or publishes all of it;
-        the events are logged after the lock is released.
+        the events are logged after the lock is released. A variable read
+        passes offer_holdouts=False: its walk already offered the holdouts
+        (_expose_holdouts), so a queue_exposure override is not offered a
+        declined one twice in a read.
         """
         if assignment.holdout_assignments is None:
             return self.queue_exposure(assignment) is not False
         if getattr(self.queue_exposure, "__func__", None) is not \
                 Context.queue_exposure:
-            return self._expose_through_hook(assignment)
+            return self._expose_through_hook(assignment, offer_holdouts)
 
         accepted = []
         try:
@@ -1791,7 +1795,7 @@ class Context:
                     accepted.append(exposure)
             for holdout, holdout_assignment in zip(
                     assignment.holdouts, assignment.holdout_assignments):
-                if holdout_assignment is not None:
+                if offer_holdouts and holdout_assignment is not None:
                     # Named from this assignment's snapshot, like JS
                     # holdouts[i].data.name; the shared holdout assignment
                     # is not modified.
@@ -1808,7 +1812,8 @@ class Context:
             self.set_timeout()
         return True
 
-    def _expose_through_hook(self, assignment: Assignment):
+    def _expose_through_hook(self, assignment: Assignment,
+                             offer_holdouts: bool = True):
         # A subclass overriding queue_exposure (a v0.2.4 extension point)
         # keeps seeing every exposure, one call each, at the cost of the
         # grouped acceptance. The read's time is taken once for the group.
@@ -1856,7 +1861,10 @@ class Context:
                 # retried.
                 if not assignment.exposed.value and assignment.retired:
                     return False
-        if self._offer_holdouts_through_hook(assignment, exposed_at):
+        if not offer_holdouts:
+            if assignment.holdouts_exposed:
+                assignment.holdouts_pending = False
+        elif self._offer_holdouts_through_hook(assignment, exposed_at):
             assignment.holdouts_pending = False
         return True
 
@@ -1919,13 +1927,15 @@ class Context:
         if not self._holdouts_unexposed(assignment):
             # The pinned arms never change and stay exposed.
             assignment.holdouts_exposed = True
+            assignment.holdouts_pending = False
             return
         exposed_at = assignment.exposedAt or self.clock.millis()
         if getattr(self.queue_exposure, "__func__", None) is not \
                 Context.queue_exposure:
             self._offer_holdouts_through_hook(assignment, exposed_at)
-            assignment.holdouts_exposed = \
-                not self._holdouts_unexposed(assignment)
+            if not self._holdouts_unexposed(assignment):
+                assignment.holdouts_exposed = True
+                assignment.holdouts_pending = False
             return
 
         accepted = []
@@ -1944,6 +1954,7 @@ class Context:
 
         # Each arm is now exposed, by this read or an earlier one.
         assignment.holdouts_exposed = True
+        assignment.holdouts_pending = False
         for exposure in accepted:
             self.log_event(EventType.EXPOSURE, exposure)
         if accepted:

@@ -326,6 +326,31 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual([], calls)
         self.assertTrue(context.get_assignment("exp_a").holdouts_exposed)
 
+    def test_hook_winner_holdouts_leave_nothing_pending(self):
+        # Through a queue_exposure override, a variable read that exposes
+        # the winner and its holdouts leaves no holdout pending, so later
+        # treatment reads take no event lock.
+        from sdk.context import Context
+
+        class PassThrough(Context):
+            def queue_exposure(self, assignment):
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a", holdout_ids=[12])],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.__class__ = PassThrough
+        context.get_variable_value(KEY, "d")
+        self.assertEqual(["holdout_b", "exp_a"], self.names(context))
+        self.assertFalse(context.get_assignment("exp_a").holdouts_pending)
+        calls = []
+        acquire = context.event_lock.acquire_write
+        context.event_lock.acquire_write = \
+            lambda: calls.append(1) or acquire()
+        for _ in range(3):
+            context.get_treatment("exp_a")
+        self.assertEqual([], calls)
+
     def test_losing_candidate_holdouts_use_its_exposure_time(self):
         # Like Context._expose: a candidate resolved with an exposure time
         # (get_treatment(name, exposed_at)) stamps its holdouts with it.

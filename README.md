@@ -235,7 +235,7 @@ When several experiments define the same variable key (in any of their variants)
 
 - The value comes from the winner's variant. If that variant does not define the key, the default you passed is returned; later experiments are not consulted, so which arm the unit got never changes which experiment is used.
 - Only the winner is exposed. Experiments that were checked and lost (for example a strict audience mismatch, or a unit type that is not set) get no exposure.
-- This also applies when only one experiment defines the key: if the unit is not in it (a strict audience mismatch, or a unit type that is not set), nothing wins, the default is returned and nothing is exposed. `get_treatment` still exposes that experiment.
+- This also applies when only one experiment defines the key: if the unit is not in it (a strict audience mismatch, or a unit type that is not set), nothing wins, the default is returned and no experiment exposure is published. A non-suppressing holdout can still publish its exposure when the candidate’s unit is set. `get_treatment` still exposes that experiment.
 - If no experiment wins, a held-out experiment defining the key supplies its control value (see [Holdouts](#holdouts)); otherwise the default is returned and nothing is exposed.
 - `peek_variable_value` resolves the same winner and exposes nothing.
 

@@ -84,6 +84,9 @@ class Assignment:
         # holdout exposure of this assignment, so a later read of the same
         # experiment finishes them (e.g. after a failed close reopens).
         self.holdouts_pending: bool = False
+        # Every holdout pinned on this assignment is exposed, so a variable
+        # read visiting it skips them (see Context._expose_holdouts).
+        self.holdouts_exposed: bool = False
 
 
 class ExperimentVariables:
@@ -1911,14 +1914,18 @@ class Context:
         read.
         """
         if assignment.holdout_assignments is None or \
-                all(holdout_assignment is None or
-                    holdout_assignment.exposed.value
-                    for holdout_assignment in assignment.holdout_assignments):
+                assignment.holdouts_exposed:
+            return
+        if not self._holdouts_unexposed(assignment):
+            # The pinned arms never change and stay exposed.
+            assignment.holdouts_exposed = True
             return
         exposed_at = assignment.exposedAt or self.clock.millis()
         if getattr(self.queue_exposure, "__func__", None) is not \
                 Context.queue_exposure:
             self._offer_holdouts_through_hook(assignment, exposed_at)
+            assignment.holdouts_exposed = \
+                not self._holdouts_unexposed(assignment)
             return
 
         accepted = []
@@ -1935,10 +1942,18 @@ class Context:
         finally:
             self.event_lock.release_write()
 
+        # Each arm is now exposed, by this read or an earlier one.
+        assignment.holdouts_exposed = True
         for exposure in accepted:
             self.log_event(EventType.EXPOSURE, exposure)
         if accepted:
             self.set_timeout()
+
+    @staticmethod
+    def _holdouts_unexposed(assignment: Assignment):
+        return any(holdout_assignment is not None and
+                   not holdout_assignment.exposed.value
+                   for holdout_assignment in assignment.holdout_assignments)
 
     def _accept_exposure(self, assignment: Assignment, name, exposed_at):
         # Under event_lock, after check_not_closed: the exposure to queue,

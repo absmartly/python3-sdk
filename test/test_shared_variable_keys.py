@@ -280,13 +280,42 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
              assigned(2, "exp_b", holdout_ids=[12])],
             [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
         context.get_variable_value(KEY, "d")
+        for name in ("exp_a", "exp_b"):
+            self.assertTrue(context.get_assignment(name).holdouts_exposed)
         calls = []
         acquire = context.event_lock.acquire_write
         context.event_lock.acquire_write = \
             lambda: calls.append(1) or acquire()
+        scans = []
+        context._holdouts_unexposed = \
+            lambda assignment: scans.append(1) or True
         self.assertEqual("exp_b_treatment",
                          context.get_variable_value(KEY, "d"))
         self.assertEqual([], calls)
+        self.assertEqual([], scans)
+
+    def test_holdout_a_hook_declines_is_offered_again(self):
+        from sdk.context import Context
+        declined = []
+
+        class Declining(Context):
+            def queue_exposure(self, assignment):
+                if assignment.name == "holdout_b" and not declined:
+                    declined.append(1)
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.__class__ = Declining
+        context.get_variable_value(KEY, "d")
+        self.assertEqual(["exp_b"], self.names(context))
+        self.assertFalse(context.get_assignment("exp_a").holdouts_exposed)
+        context.get_variable_value(KEY, "d")
+        self.assertEqual(["exp_b", "holdout_b"], self.names(context))
+        self.assertTrue(context.get_assignment("exp_a").holdouts_exposed)
 
     def test_raising_hook_does_not_stop_the_other_holdouts(self):
         # Java collects the first failure, fires every visited candidate's
@@ -311,6 +340,26 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "hook failed"):
             context.get_variable_value(KEY, "d")
         self.assertEqual(["h2", "h3"], self.names(context))
+
+    def test_losing_candidate_holdout_exposure_is_logged(self):
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.get_variable_value(KEY, "d")
+        self.assertEqual(["holdout_b", "exp_b"],
+                         [e.name for e in self.exposure_events()])
+
+    def test_override_to_a_missing_variant_still_wins(self):
+        # Java: an overridden candidate wins even when the override names a
+        # variant the experiment does not have; it has no variables, so the
+        # default is returned and only it is exposed.
+        context = self.assert_winner(
+            [assigned(1, "exp_a"), assigned(2, "exp_b")],
+            "d", ["exp_a"], overrides={"exp_a": 5})
+        self.assertEqual(
+            [self.exposure(1, "exp_a", 5, assigned=False, overridden=True)],
+            self.exposure_tuples(context.exposures))
 
     def test_unit_type_of_exposure(self):
         context = self.assert_winner(

@@ -258,6 +258,14 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual(0, context.get_pending_count())
         self.assertFalse(
             context._holdout_assignments[(12, UNIT_TYPE)].exposed.value)
+        # A failed close reopens the context: the next read still queues
+        # the holdout the closing read could not.
+        context.get_assignment = get_assignment
+        context.closing.set(False)
+        self.assertFalse(context.get_assignment("exp_a").holdouts_exposed)
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["holdout_b", "exp_b"], self.names(context))
 
     def test_losing_candidate_holdout_is_named_from_its_snapshot(self):
         # The arm is cached under the old name; a same-iteration rename
@@ -293,6 +301,34 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
                          context.get_variable_value(KEY, "d"))
         self.assertEqual([], calls)
         self.assertEqual([], scans)
+
+    def test_holdouts_exposed_by_a_treatment_take_no_event_lock(self):
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b"), assigned(3, "exp_c", holdout_ids=[12])],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.get_treatment("exp_c")
+        context.get_treatment("exp_b")
+        calls = []
+        acquire = context.event_lock.acquire_write
+        context.event_lock.acquire_write = \
+            lambda: calls.append(1) or acquire()
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual([], calls)
+        self.assertTrue(context.get_assignment("exp_a").holdouts_exposed)
+
+    def test_losing_candidate_holdouts_use_its_exposure_time(self):
+        # Like Context._expose: a candidate resolved with an exposure time
+        # (get_treatment(name, exposed_at)) stamps its holdouts with it.
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.get_assignment("exp_a").exposedAt = 123
+        context.get_variable_value(KEY, "d")
+        self.assertEqual([("holdout_b", 123), ("exp_b", self.clock.millis())],
+                         [(e.name, e.exposedAt) for e in context.exposures])
 
     def test_holdout_a_hook_declines_is_offered_again(self):
         from sdk.context import Context

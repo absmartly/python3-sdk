@@ -1081,8 +1081,9 @@ class Context:
             Context.queue_exposure
         if expose and assignment is not None and \
                 not assignment.exposed.value and \
-                not self._expose(assignment, offer_holdouts=offer_holdouts,
-                               holdouts_first=offer_holdouts) and \
+                not self._expose(
+                    assignment, offer_holdouts=offer_holdouts,
+                    holdouts_first=offer_holdouts) and \
                 attempt < _MAX_EXPOSURE_ATTEMPTS:
             return self._variable_value(key, default_value, expose,
                                         attempt + 1)
@@ -1806,6 +1807,7 @@ class Context:
             if assignment.retired:
                 return False
             exposed_at = assignment.exposedAt or self.clock.millis()
+
             def accept_assignment():
                 if assignment.suppressed and not assignment.overridden and \
                         not assignment.rule_override:

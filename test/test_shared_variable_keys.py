@@ -95,10 +95,12 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
     def test_winner_variant_without_the_key_returns_default(self):
         # The unit gets exp_a's variant 1, which does not define the key:
         # the default is returned and exp_b is never consulted or exposed.
-        self.assert_winner(
+        context = self.assert_winner(
             [configs(1, "exp_a", {KEY: "a0"}, {"other": "x"}),
-             assigned(2, "exp_b")],
+             assigned(2, "exp_b", holdout_ids=[12])],
             "d", ["exp_a"])
+        self.assertEqual([], [e.name for e in context.exposures
+                              if e.name == "holdout_b"])
 
     def test_winner_variant_without_any_config_returns_default(self):
         self.assert_winner(
@@ -203,11 +205,12 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
 
     def test_not_eligible_winner_is_exposed_with_control(self):
         # Outside traffic is still assigned (variant 0): it wins the key.
-        self.assert_winner(
+        context = self.assert_winner(
             [missing_unit(1, "exp_a"),
              assigned(2, "exp_b", trafficSplit=[1.0, 0.0]),
              assigned(3, "exp_c")],
             "exp_b_control", ["exp_b"])
+        self.assertFalse(context.exposures[0].eligible)
 
     def test_losing_candidate_fires_only_its_holdouts(self):
         # Java fires the applicable holdouts of every candidate visited on
@@ -424,9 +427,9 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
 
         class Raising(Context):
             def queue_exposure(self, assignment):
-                if assignment.name == "h1" and \
+                if assignment.name in ("h1", "h2") and \
                         not assignment.exposed.value:
-                    raise RuntimeError("hook failed")
+                    raise RuntimeError(assignment.name + " failed")
                 return super().queue_exposure(assignment)
 
         context = self.create_context(context_data(
@@ -437,9 +440,9 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
              holdout(12, "h2", HOLDOUT_B_SEEDS),
              holdout(13, "h3", HOLDOUT_B_SEEDS)]))
         context.__class__ = Raising
-        with self.assertRaisesRegex(RuntimeError, "hook failed"):
+        with self.assertRaisesRegex(RuntimeError, "h1 failed"):
             context.get_variable_value(KEY, "d")
-        self.assertEqual(["h2", "h3"], self.names(context))
+        self.assertEqual(["h3"], self.names(context))
 
     def test_losing_candidate_holdout_exposure_is_logged(self):
         context = self.create_context(context_data(

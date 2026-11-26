@@ -5,9 +5,11 @@ wins, and only the winner is exposed."""
 import json
 import unittest
 
+from sdk.context_event_logger import EventType
 from test.holdout_fixtures import (
-    HOLDOUT_B_SEEDS, NORMAL_VARIANT, UNIT_TYPE, HoldoutFixture, context_data,
-    experiment, holdout, with_variables)
+    HOLDOUT_A_SEEDS, HOLDOUT_B_SEEDS, NORMAL_VARIANT, UID, UID_NOT_HELD_OUT,
+    UNIT_TYPE, HoldoutFixture, context_data, experiment, holdout,
+    with_variables)
 
 KEY = "banner.size"
 GOLD_ONLY = json.dumps(
@@ -469,6 +471,103 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
             [missing_unit(1, "exp_a"), assigned(2, "exp_b")],
             "exp_b_treatment", ["exp_b"])
         self.assertEqual(UNIT_TYPE, context.exposures[0].unit)
+
+    def test_no_winner_still_fires_the_holdouts_of_both_arms(self):
+        # Java fires the holdouts of every visited candidate even when none
+        # wins, so held-out and not held-out units both publish the holdout.
+        # The held-out unit gets the suppressed fallback's control value.
+        for uid, arm, value in ((UID, 0, "exp_a_control"),
+                                (UID_NOT_HELD_OUT, 1, "d")):
+            with self.subTest(arm=arm):
+                self.setUp()
+                context = self.create_context(context_data(
+                    [strict_mismatch(1, "exp_a", holdout_ids=[11])],
+                    [holdout(11, "holdout_a", HOLDOUT_A_SEEDS)]),
+                    units={UNIT_TYPE: uid})
+                self.assertEqual(value,
+                                 context.get_variable_value(KEY, "d"))
+                self.assertEqual(
+                    [self.holdout_exposure(11, "holdout_a", arm)],
+                    self.exposure_tuples(context.exposures))
+
+    def test_warm_read_without_holdouts_skips_the_holdout_pass(self):
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a"), assigned(2, "exp_b")]))
+        context.get_variable_value(KEY, "d")
+        calls = []
+        context._expose_holdouts = lambda assignment: calls.append(1)
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual([], calls)
+
+    def test_set_unit_during_the_walk_walks_the_key_again(self):
+        # Both candidates' units are missing when the read starts. set_unit
+        # retires exp_a after the walk resolved it, so exp_b is never the
+        # first eligible candidate: the read walks again and exp_a wins.
+        context = self.create_context(context_data(
+            [missing_unit(1, "exp_a"),
+             assigned(2, "exp_b", unit_type="user_id")]), units={})
+        get_assignment = context.get_assignment
+        resolved = []
+
+        def set_units_after_exp_a(name, exposed_at=None):
+            assignment = get_assignment(name, exposed_at=exposed_at)
+            resolved.append(name)
+            if resolved == ["exp_a"]:
+                context.set_unit("device_id", UID)
+                context.set_unit("user_id", UID)
+            return assignment
+
+        context.get_assignment = set_units_after_exp_a
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        context.get_assignment = get_assignment
+        self.assertEqual(["exp_a"], self.names(context))
+        self.assertEqual("exp_a_treatment",
+                         context.peek_variable_value(KEY, "d"))
+
+    def test_experiment_removed_by_a_refresh_during_the_walk_cannot_win(self):
+        # exp_a is overridden, so its placeholder would claim the key once a
+        # refresh removed it; the remaining candidate wins instead.
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a"), assigned(2, "exp_b")]),
+            overrides={"exp_a": 1})
+        get_assignment = context.get_assignment
+        refreshed = []
+
+        def refresh_first(name, exposed_at=None):
+            if not refreshed:
+                refreshed.append(name)
+                self.refresh(context, context_data([assigned(2, "exp_b")]))
+            return get_assignment(name, exposed_at=exposed_at)
+
+        context.get_assignment = refresh_first
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual([self.exposure(2, "exp_b", NORMAL_VARIANT)],
+                         self.exposure_tuples(context.exposures))
+
+    def test_close_cannot_publish_the_winner_holdouts_without_the_winner(self):
+        # Closing from the logger on the holdout exposure publishes the
+        # winner's whole group, accepted before the logger runs.
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a", holdout_ids=[12])],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+
+        def close_on_holdout(event_type, data):
+            if event_type == EventType.EXPOSURE and \
+                    data.name == "holdout_b":
+                self.logger.on_event = None
+                context.close_async()
+
+        self.logger.on_event = close_on_holdout
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.client.wait_for_publish(1)
+        self.assertEqual(
+            [self.holdout_exposure(12, "holdout_b", 1),
+             self.exposure(1, "exp_a", NORMAL_VARIANT)],
+            self.exposure_tuples(self.client.published[0].exposures))
 
 
 if __name__ == "__main__":

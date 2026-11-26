@@ -87,8 +87,6 @@ class Assignment:
         # Every holdout pinned on this assignment is exposed, so a variable
         # read visiting it skips them (see Context._expose_holdouts).
         self.holdouts_exposed: bool = False
-        # A candidate retired while the shared-key walk was in progress.
-        self.selection_invalidated: bool = False
 
 
 class ExperimentVariables:
@@ -1067,24 +1065,17 @@ class Context:
 
     def _variable_value(self, key: str, default_value: object, expose: bool,
                         attempt: int = 1):
-        assignment = self._variable_assignment(key, expose)
-        if expose and assignment is not None and \
-                assignment.selection_invalidated and \
-                attempt < _MAX_EXPOSURE_ATTEMPTS:
+        assignment, invalidated = self._variable_assignment(key, expose)
+        retry = attempt < _MAX_EXPOSURE_ATTEMPTS
+        if expose and invalidated and retry:
+            # set_unit retired a candidate the walk visited, so the key may
+            # resolve differently: walk it again before exposing anything.
             return self._variable_value(key, default_value, expose,
                                         attempt + 1)
-        # The walk offers losing candidates' holdouts. For the winner, the
-        # built-in path queues the experiment and its holdouts together so a
-        # close cannot drain only half of the winner group; hook paths have
-        # already offered the holdouts and retain the separate calls.
-        offer_holdouts = getattr(self.queue_exposure, "__func__", None) is \
-            Context.queue_exposure
         if expose and assignment is not None and \
                 not assignment.exposed.value and \
-                not self._expose(
-                    assignment, offer_holdouts=offer_holdouts,
-                    holdouts_first=offer_holdouts) and \
-                attempt < _MAX_EXPOSURE_ATTEMPTS:
+                not self._expose_winner(assignment) and retry:
+            # set_unit retired the winner in between: walk it again.
             return self._variable_value(key, default_value, expose,
                                         attempt + 1)
         if assignment is not None and assignment.variables is not None and \
@@ -1092,52 +1083,74 @@ class Context:
             return assignment.variables[key]
         return default_value
 
+    def _expose_winner(self, assignment: Assignment):
+        # The built-in queue accepts the winner and its holdouts in one
+        # event_lock section (holdouts first, as on the walk), so a close
+        # cannot publish one without the other. A queue_exposure override
+        # was already offered the holdouts by the walk.
+        if getattr(self.queue_exposure, "__func__", None) is \
+                Context.queue_exposure:
+            return self._expose(assignment, holdouts_first=True)
+        return self._expose(assignment, offer_holdouts=False)
+
     def _variable_assignment(self, key: str, expose: bool):
-        # Port of the Java SDK's getVariableAssignment. Candidates are
-        # ordered by id; the first assigned, overridden, or rule-assigned
-        # candidate wins, while the first suppressed candidate is the
-        # fallback. Losing candidates publish only their holdouts.
+        # Port of the Java SDK's getVariableAssignment: the candidates are
+        # the experiments defining the key in any variant, in id order, and
+        # the first one the unit is assigned to, overridden in or
+        # rule-assigned to wins. Only the winner is exposed, by the caller:
+        # a candidate that was checked and lost publishes no exposure of its
+        # own, though its holdouts still fire, whether or not anything wins
+        # (a held-out unit and a not held-out one fire the same holdouts).
+        # The winner's variant decides alone: if it lacks the key, the
+        # caller gets the default and later candidates are not consulted. A
+        # held-out candidate never wins over another, but when none wins the
+        # first held-out one supplies its control variant (and is exposed).
+        # A raising queue_exposure hook does not stop the walk: the first
+        # error is raised once every visited candidate was offered, as in
+        # Java. Returns the winner and whether set_unit retired a visited
+        # candidate, which makes the caller walk again.
         experiments = Concurrency.get_rw(
             self.data_lock, self.index_variables, key) or []
+        winner = None
         suppressed_fallback = None
-        failure = None
-        visited = []
+        invalidated = False
+        pending = None
         for experiment in list(experiments):
             assignment = self.get_assignment(experiment.data.name)
-            # A refresh may have removed the indexed experiment between the
-            # index read and resolution; its placeholder must not win.
-            if assignment.id == 0 and self.get_experiment(
-                    experiment.data.name) is None:
-                assignment.selection_invalidated = True
+            # A refresh removed the indexed experiment after the index was
+            # read: its placeholder (id 0) must not win, even when overridden.
+            if assignment.id == 0 and \
+                    self.get_experiment(experiment.data.name) is None:
                 continue
-            visited.append(assignment)
+            invalidated = invalidated or assignment.retired
+            if expose and assignment.holdout_assignments is not None and \
+                    not assignment.holdouts_exposed:
+                pending = pending or []
+                pending.append(assignment)
             if assignment.assigned or assignment.overridden or \
                     assignment.rule_override:
+                winner = assignment
                 break
             if assignment.suppressed and suppressed_fallback is None:
                 suppressed_fallback = assignment
         else:
-            assignment = suppressed_fallback
-        if assignment is None:
-            return None
-        assignment.selection_invalidated = any(
-            candidate.retired for candidate in visited)
-        if expose:
+            winner = suppressed_fallback
+        if pending:
             native = getattr(self.queue_exposure, "__func__", None) is \
                 Context.queue_exposure
-            # Defer the native winner's holdouts to _expose, which accepts
-            # the winner and all its holdouts under one event-lock section.
-            for candidate in visited:
-                if native and candidate is assignment:
+            failure = None
+            for candidate in pending:
+                if native and candidate is winner:
+                    # Accepted with the winner, see _expose_winner.
                     continue
                 try:
                     self._expose_holdouts(candidate)
                 except Exception as error:
                     if failure is None:
                         failure = error
-        if failure is not None:
-            raise failure
-        return assignment
+            if failure is not None:
+                raise failure
+        return winner, invalidated
 
     def peek_treatment(self, experiment_name: str):
         self.check_ready(True)
@@ -1790,9 +1803,10 @@ class Context:
         accepted in one event_lock section, so a concurrent close either
         rejects all of it (and a later read retries) or publishes all of it;
         the events are logged after the lock is released. A variable read
-        passes offer_holdouts=False: its walk already offered the holdouts
-        (_expose_holdouts), so a queue_exposure override is not offered a
-        declined one twice in a read.
+        passes holdouts_first=True so the holdouts precede the winner, as on
+        the walk; through a queue_exposure override it passes
+        offer_holdouts=False, since its walk already offered the holdouts
+        (_expose_holdouts) and a declined one is not offered twice in a read.
         """
         if assignment.holdout_assignments is None:
             return self.queue_exposure(assignment) is not False

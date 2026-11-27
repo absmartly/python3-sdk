@@ -1206,6 +1206,30 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual([(False, True)], handed)
         self.assertEqual(1, context.get_pending_count())
 
+    def test_offered_arms_are_tracked_by_object_not_id(self):
+        # The per-read set keeps the offered arm itself: an arm a refresh
+        # creates must be offered even if it would reuse a released arm's
+        # id. Simulated by an arm whose id() collides with an offered one.
+        from sdk.context import Context
+        offered_to_hook = []
+
+        class Declining(Context):
+            def queue_exposure(self, assignment):
+                offered_to_hook.append(assignment.name)
+                return None
+
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.__class__ = Declining
+        loser = context.get_assignment("exp_a")
+        arm = loser.holdout_assignments[0]
+        offered = {id(arm)}
+        context._offer_holdouts_through_hook(loser, 1, offered)
+        self.assertEqual(["holdout_b"], offered_to_hook)
+        self.assertIn(arm, offered)
+
     def test_set_unit_retiring_the_winner_before_exposure_walks_again(self):
         # exp_b wins while exp_a's unit is missing; the unit arrives as
         # exp_b is exposed and retires it, so the read walks again and

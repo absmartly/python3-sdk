@@ -2059,12 +2059,15 @@ class Context:
                     continue
                 if holdout_assignment.hook_pending or (
                         offered is not None and
-                        id(holdout_assignment) in offered):
+                        holdout_assignment in offered):
                     finished = False
                     continue
                 holdout_assignment.hook_pending = True
                 if offered is not None:
-                    offered.add(id(holdout_assignment))
+                    # The arm itself, kept alive for the read: an id could be
+                    # reused by an arm a refresh creates after this one is
+                    # released.
+                    offered.add(holdout_assignment)
             finally:
                 self.event_lock.release_write()
             try:

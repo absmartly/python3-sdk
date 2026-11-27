@@ -1431,15 +1431,15 @@ class Context:
                     pass
                 elif experiment_name in self.overrides:
                     override = self.overrides[experiment_name]
-                    # Kept while its experiment is absent (as in JS, so a
-                    # refresh removing it does not expose it again) or has
-                    # the cached id: a placeholder (id 0) cached while the
+                    # Kept across refreshes, as in JS, so removing, restoring
+                    # or re-identifying the experiment does not expose it
+                    # again; only a placeholder (id 0) cached while the
                     # experiment was missing is recomputed once a refresh
                     # adds it.
                     if assignment.overridden and \
                             assignment.variant == override and \
-                            (experiment is None or
-                             experiment.data.id == assignment.id) and \
+                            (experiment is None or assignment.id != 0 or
+                             experiment.data.id == 0) and \
                             (experiment is None or
                              experiment.holdouts is assignment.holdouts or
                              _holdout_set_matches(experiment, assignment)):

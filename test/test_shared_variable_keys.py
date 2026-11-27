@@ -833,6 +833,18 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
             [self.exposure(1, "exp_a", 1, assigned=False, overridden=True)],
             self.exposure_tuples(context.exposures))
 
+    def test_exposed_override_is_not_exposed_again_when_its_id_changes(self):
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a"), assigned(2, "exp_b")]),
+            overrides={"exp_a": 1})
+        self.assertEqual(1, context.get_treatment("exp_a"))
+        self.refresh(context, context_data(
+            [assigned(5, "exp_a"), assigned(2, "exp_b")]))
+        self.assertEqual(1, context.get_treatment("exp_a"))
+        self.assertEqual(
+            [self.exposure(1, "exp_a", 1, assigned=False, overridden=True)],
+            self.exposure_tuples(context.exposures))
+
     def test_override_of_an_experiment_with_id_0_is_exposed_once(self):
         context = self.create_context(context_data([assigned(0, "exp_a")]),
                                       overrides={"exp_a": 1})

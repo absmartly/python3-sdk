@@ -326,6 +326,10 @@ class Context:
             self._system_attributes["environment"] = environment
 
         self.units = {}
+        # Bumped by set_unit whenever a unit is added (and unexposed
+        # assignments for it are retired), so a variable read can tell that
+        # a unit arrived during its walk.
+        self._units_seq = 0
         self.index = {}
         self.index_variables = {}
         self.context_custom_fields = {}
@@ -490,6 +494,7 @@ class Context:
             added = unit_type not in self.units
             self.units[unit_type] = uid
             if added:
+                self._units_seq += 1
                 # Like the JS SDK's unit(): an unexposed assignment for this
                 # unit type was resolved while the unit was missing, so drop
                 # it and let the next read resolve it with the unit. Exposed
@@ -1068,8 +1073,8 @@ class Context:
         assignment, invalidated = self._variable_assignment(key, expose)
         retry = attempt < _MAX_EXPOSURE_ATTEMPTS
         if expose and invalidated and retry:
-            # set_unit retired a candidate the walk visited, so the key may
-            # resolve differently: walk it again before exposing anything.
+            # set_unit added a unit during the walk, so the key may resolve
+            # differently: walk it again before exposing anything.
             return self._variable_value(key, default_value, expose,
                                         attempt + 1)
         if expose and assignment is not None and \
@@ -1107,13 +1112,13 @@ class Context:
         # first held-out one supplies its control variant (and is exposed).
         # A raising queue_exposure hook does not stop the walk: the first
         # error is raised once every visited candidate was offered, as in
-        # Java. Returns the winner and whether set_unit retired a visited
-        # candidate, which makes the caller walk again.
+        # Java. Returns the winner and whether set_unit added a unit during
+        # the walk, which makes the caller walk again.
+        units_seq = self._units_seq
         experiments = Concurrency.get_rw(
             self.data_lock, self.index_variables, key) or []
         winner = None
         suppressed_fallback = None
-        invalidated = False
         pending = None
         for experiment in list(experiments):
             assignment = self.get_assignment(experiment.data.name)
@@ -1122,7 +1127,6 @@ class Context:
             if assignment.id == 0 and \
                     self.get_experiment(experiment.data.name) is None:
                 continue
-            invalidated = invalidated or assignment.retired
             if expose and assignment.holdout_assignments is not None and \
                     not assignment.holdouts_exposed:
                 pending = pending or []
@@ -1135,6 +1139,10 @@ class Context:
                 suppressed_fallback = assignment
         else:
             winner = suppressed_fallback
+        # A unit added during the walk may have retired a candidate it
+        # already passed (a missing-unit loser that could now win), even
+        # after that candidate was checked: the caller walks again.
+        invalidated = self._units_seq != units_seq
         if pending:
             native = getattr(self.queue_exposure, "__func__", None) is \
                 Context.queue_exposure

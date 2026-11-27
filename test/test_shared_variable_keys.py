@@ -526,6 +526,70 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual("exp_a_treatment",
                          context.peek_variable_value(KEY, "d"))
 
+    def test_set_unit_after_a_candidate_was_checked_walks_the_key_again(self):
+        # The units arrive after exp_a was checked (and not retired at that
+        # point) but before exp_b is looked up: exp_b would win a key exp_a
+        # now wins, so the read walks again instead of exposing exp_b.
+        context = self.create_context(context_data(
+            [missing_unit(1, "exp_a"),
+             assigned(2, "exp_b", unit_type="user_id")]), units={})
+        get_assignment = context.get_assignment
+
+        def set_units_before_exp_b(name, exposed_at=None):
+            if name == "exp_b" and context.get_unit("user_id") is None:
+                context.set_unit("device_id", UID)
+                context.set_unit("user_id", UID)
+            return get_assignment(name, exposed_at=exposed_at)
+
+        context.get_assignment = set_units_before_exp_b
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        context.get_assignment = get_assignment
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["exp_a"], self.names(context))
+
+    def test_set_unit_retiring_the_winner_before_exposure_walks_again(self):
+        # exp_b wins while exp_a's unit is missing; the unit arrives as
+        # exp_b is exposed and retires it, so the read walks again and
+        # returns and exposes exp_a, which wins with the unit.
+        context = self.create_context(context_data(
+            [missing_unit(1, "exp_a"),
+             assigned(2, "exp_b", unit_type="device_id",
+                      holdout_ids=[12])],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS,
+                     unit_type="device_id")]),
+            units={}, overrides={"exp_b": 1})
+        expose_winner = context._expose_winner
+        calls = []
+
+        def set_unit_first(assignment):
+            if not calls:
+                calls.append(assignment.name)
+                context.set_unit("device_id", UID)
+            return expose_winner(assignment)
+
+        context._expose_winner = set_unit_first
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["exp_b"], calls)
+        self.assertEqual(["exp_a"], self.names(context))
+
+    def test_warm_read_skips_holdouts_already_exposed(self):
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        context.get_variable_value(KEY, "d")
+        calls = []
+        expose_holdouts = context._expose_holdouts
+        context._expose_holdouts = \
+            lambda assignment: calls.append(1) or expose_holdouts(assignment)
+        for _ in range(3):
+            self.assertEqual("exp_b_treatment",
+                             context.get_variable_value(KEY, "d"))
+        self.assertEqual([], calls)
+
     def test_experiment_removed_by_a_refresh_during_the_walk_cannot_win(self):
         # exp_a is overridden, so its placeholder would claim the key once a
         # refresh removed it; the remaining candidate wins instead.

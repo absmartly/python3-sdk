@@ -881,6 +881,21 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
                           context.get_variable_value(KEY, "d"),
                           context.peek_variable_value(KEY, "d")])
 
+    def test_override_to_a_missing_variant_takes_it_once_a_refresh_adds_it(
+            self):
+        # Same experiment (id 1) throughout: the kept override gets the new
+        # variant's variables, as JS followArm does.
+        two = configs(1, "exp_a", {KEY: "a0"}, {KEY: "a1"})
+        context = self.create_context(context_data(
+            [two, assigned(9, "exp_b")]), overrides={"exp_a": 2})
+        self.assertEqual("d", context.get_variable_value(KEY, "d"))
+        three = configs(1, "exp_a", {KEY: "a0"}, {KEY: "a1"}, {KEY: "a2"})
+        self.refresh(context, context_data([three, assigned(9, "exp_b")]))
+        self.assertEqual(["a2", "a2"],
+                         [context.get_variable_value(KEY, "d"),
+                          context.peek_variable_value(KEY, "d")])
+        self.assertEqual(["exp_a"], self.names(context))
+
     def test_override_to_a_missing_variant_of_a_reidentified_experiment(
             self):
         # The override names a variant exp_a does not have; a refresh adds

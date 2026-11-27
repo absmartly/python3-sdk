@@ -845,6 +845,21 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
             [self.exposure(1, "exp_a", 1, assigned=False, overridden=True)],
             self.exposure_tuples(context.exposures))
 
+    def test_override_kept_from_before_an_id_0_experiment_gets_its_value(
+            self):
+        # The override is cached while exp_a is missing; a refresh adds exp_a
+        # with id 0, so the cache keeps the override, which must then carry
+        # the experiment's variables instead of returning the default.
+        context = self.create_context(context_data([assigned(2, "exp_b")]),
+                                      overrides={"exp_a": 1})
+        context.peek_treatment("exp_a")
+        self.refresh(context, context_data(
+            [assigned(0, "exp_a"), assigned(2, "exp_b")]))
+        self.assertEqual("exp_a_treatment",
+                         context.peek_variable_value(KEY, "d"))
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+
     def test_override_of_an_experiment_with_id_0_is_exposed_once(self):
         context = self.create_context(context_data([assigned(0, "exp_a")]),
                                       overrides={"exp_a": 1})

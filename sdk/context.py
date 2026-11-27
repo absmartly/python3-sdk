@@ -1443,6 +1443,15 @@ class Context:
                             (experiment is None or
                              experiment.holdouts is assignment.holdouts or
                              _holdout_set_matches(experiment, assignment)):
+                        if assignment.variables is None and \
+                                experiment is not None and \
+                                0 <= assignment.variant < \
+                                len(experiment.data.variants):
+                            # Kept from before the experiment was known (an
+                            # id-0 experiment): take its variables now, as
+                            # JS does on refresh.
+                            assignment.variables = \
+                                experiment.variables[assignment.variant]
                         return assignment
                 elif experiment is None:
                     if assignment.assigned is False and \

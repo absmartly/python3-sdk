@@ -691,27 +691,111 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
                 self.assertNotIn("exp_b", self.names(context))
 
     def test_removed_experiment_cannot_win_on_the_last_walk(self):
-        # Every walk sees exp_a removed after it read the index and restored
-        # by the time it reaches exp_b, so the last walk cannot retry: its
-        # cached override must still not win.
-        context = self.create_context(context_data(
-            [assigned(1, "exp_a"), assigned(2, "exp_b")]),
-            overrides={"exp_a": 1})
+        # Every walk sees exp_a removed right after its cached override was
+        # resolved and restored by the time it reaches exp_m, so the last
+        # walk cannot retry: the override must still not win, and the last
+        # walk still fires the holdout of the loser it visited.
+        holdouts = [holdout(13, "holdout_m", HOLDOUT_B_SEEDS)]
+        others = [strict_mismatch(2, "exp_m", holdout_ids=[13]),
+                  assigned(3, "exp_b")]
+        full = context_data([assigned(1, "exp_a")] + others, holdouts)
+        context = self.create_context(full, overrides={"exp_a": 1})
         context.get_assignment("exp_a")
         get_assignment = context.get_assignment
 
         def flip(name, exposed_at=None):
             if name == "exp_a":
-                self.refresh(context, context_data([assigned(2, "exp_b")]))
-            else:
-                self.refresh(context, context_data(
-                    [assigned(1, "exp_a"), assigned(2, "exp_b")]))
+                assignment = get_assignment(name, exposed_at=exposed_at)
+                self.refresh(context, context_data(others, holdouts))
+                return assignment
+            if name == "exp_m":
+                self.refresh(context, full)
             return get_assignment(name, exposed_at=exposed_at)
 
         context.get_assignment = flip
         self.assertEqual("exp_b_treatment",
                          context.get_variable_value(KEY, "d"))
-        self.assertEqual(["exp_b"], self.names(context))
+        self.assertEqual(["holdout_m", "exp_b"], self.names(context))
+
+    def test_override_placeholder_cached_before_a_refresh_adds_the_experiment(
+            self):
+        # peek_treatment caches exp_a's override while exp_a is missing (id
+        # 0); once a refresh adds it, the read must resolve it again and win
+        # with its real id, not return the default with an id-0 exposure.
+        context = self.create_context(context_data([assigned(2, "exp_b")]),
+                                      overrides={"exp_a": 1})
+        context.peek_treatment("exp_a")
+        self.refresh(context, context_data(
+            [assigned(1, "exp_a"), assigned(2, "exp_b")]))
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(
+            [self.exposure(1, "exp_a", 1, assigned=False, overridden=True)],
+            self.exposure_tuples(context.exposures))
+
+    def test_warm_shared_key_read_takes_no_data_lookup(self):
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a"), assigned(2, "exp_b")]))
+        context.get_variable_value(KEY, "d")
+        calls = []
+        get_experiment = context.get_experiment
+        context.get_experiment = \
+            lambda name: calls.append(name) or get_experiment(name)
+        for _ in range(3):
+            self.assertEqual("exp_b_treatment",
+                             context.get_variable_value(KEY, "d"))
+        self.assertEqual([], calls)
+
+    def test_refresh_by_a_hook_during_the_holdout_pass_walks_again(self):
+        # The override refreshes in a lower-id overridden exp_a while it is
+        # offered exp_b's holdout; only re-checking the index after the
+        # holdout pass makes the read return and expose exp_a.
+        from sdk.context import Context
+        fixture = self
+        holdouts = [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]
+
+        class Refreshing(Context):
+            def queue_exposure(self, assignment):
+                if assignment.name == "holdout_b" and \
+                        self.get_experiment("exp_a") is None:
+                    fixture.refresh(self, context_data(
+                        [assigned(1, "exp_a"),
+                         assigned(2, "exp_b", holdout_ids=[12])], holdouts))
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [assigned(2, "exp_b", holdout_ids=[12])], holdouts),
+            overrides={"exp_a": 1})
+        context.__class__ = Refreshing
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertNotIn("exp_b", self.names(context))
+
+    def test_index_is_read_under_the_data_lock(self):
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a"), assigned(2, "exp_b")]))
+        lock = context.data_lock
+        held = []
+        acquire, release = lock.acquire_write, lock.release_write
+        state = {"in": False}
+
+        def acquire_write():
+            acquire()
+            state["in"] = True
+
+        def release_write():
+            state["in"] = False
+            release()
+
+        class Index(dict):
+            def get(self, key, default=None):
+                held.append(state["in"])
+                return dict.get(self, key, default)
+
+        lock.acquire_write, lock.release_write = acquire_write, release_write
+        context.index_variables = Index(context.index_variables)
+        context.get_variable_value(KEY, "d")
+        self.assertEqual([True], held)
 
     def test_set_unit_retiring_the_winner_before_exposure_walks_again(self):
         # exp_b wins while exp_a's unit is missing; the unit arrives as

@@ -1121,11 +1121,13 @@ class Context:
         # walk again; a walk that will be repeated offers no holdouts.
         units_seq = self._units_seq
         try:
-            self.data_lock.acquire_read()
+            # The write side, like Concurrency.get_rw: this lock's read side
+            # costs more for a single short section.
+            self.data_lock.acquire_write()
             index = self.index
             experiments = self.index_variables.get(key) or []
         finally:
-            self.data_lock.release_read()
+            self.data_lock.release_write()
         winner = None
         suppressed_fallback = None
         pending = None
@@ -1429,8 +1431,13 @@ class Context:
                     pass
                 elif experiment_name in self.overrides:
                     override = self.overrides[experiment_name]
+                    # Only while the experiment is still present, or still
+                    # absent: a placeholder (id 0) cached while it was missing
+                    # is recomputed once a refresh adds it, and a real one
+                    # once a refresh removes it.
                     if assignment.overridden and \
                             assignment.variant == override and \
+                            (experiment is None) == (assignment.id == 0) and \
                             (experiment is None or
                              experiment.holdouts is assignment.holdouts or
                              _holdout_set_matches(experiment, assignment)):

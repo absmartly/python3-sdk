@@ -549,6 +549,24 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
                          context.get_variable_value(KEY, "d"))
         self.assertEqual(["exp_a"], self.names(context))
 
+    def test_set_unit_with_a_unit_already_set_does_not_walk_again(self):
+        # Only a newly added unit retires assignments; setting the same UID
+        # again during the walk must not make the read walk a second time.
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a"), assigned(2, "exp_b")]))
+        get_assignment = context.get_assignment
+        resolved = []
+
+        def set_same_unit(name, exposed_at=None):
+            resolved.append(name)
+            context.set_unit(UNIT_TYPE, UID)
+            return get_assignment(name, exposed_at=exposed_at)
+
+        context.get_assignment = set_same_unit
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["exp_a", "exp_b"], resolved)
+
     def test_set_unit_retiring_the_winner_before_exposure_walks_again(self):
         # exp_b wins while exp_a's unit is missing; the unit arrives as
         # exp_b is exposed and retires it, so the read walks again and

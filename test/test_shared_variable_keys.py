@@ -1154,6 +1154,58 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
                          context.get_variable_value(KEY, "d"))
         self.assertEqual(["exp_a"], self.names(context))
 
+    def test_treatment_hook_judged_by_state_after_it_adds_the_unit(self):
+        # exp_a is overridden on a missing unit. On its first call the hook
+        # adds the unit (retiring the assignment it was handed) without
+        # queuing it; get_treatment must resolve again and queue exactly one
+        # exposure for the fresh assignment.
+        from sdk.context import Context
+        seen = []
+
+        class SettingUnit(Context):
+            def queue_exposure(self, assignment):
+                seen.append(self.get_unit("device_id"))
+                if self.get_unit("device_id") is None:
+                    self.set_unit("device_id", "dev-1")
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [missing_unit(1, "exp_a")]), units={}, overrides={"exp_a": 1})
+        context.__class__ = SettingUnit
+        self.assertEqual(1, context.get_treatment("exp_a"))
+        self.assertEqual([None, "dev-1"], seen)
+        self.assertEqual(1, context.get_pending_count())
+
+    def test_hook_is_never_handed_a_retired_assignment(self):
+        # set_unit lands between resolving the assignment and exposing it:
+        # the hook is called once, with the fresh assignment.
+        from sdk.context import Context
+        handed = []
+
+        class Recording(Context):
+            def queue_exposure(self, assignment):
+                handed.append((assignment.retired, assignment.assigned))
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [missing_unit(1, "exp_a")]), units={})
+        context.__class__ = Recording
+        get_assignment = context.get_assignment
+        calls = []
+
+        def set_unit_after_first(name, exposed_at=None):
+            assignment = get_assignment(name, exposed_at=exposed_at)
+            if not calls:
+                calls.append(name)
+                context.set_unit("device_id", "dev-1")
+            return assignment
+
+        context.get_assignment = set_unit_after_first
+        context.get_treatment("exp_a")
+        self.assertEqual([(False, True)], handed)
+        self.assertEqual(1, context.get_pending_count())
+
     def test_set_unit_retiring_the_winner_before_exposure_walks_again(self):
         # exp_b wins while exp_a's unit is missing; the unit arrives as
         # exp_b is exposed and retires it, so the read walks again and

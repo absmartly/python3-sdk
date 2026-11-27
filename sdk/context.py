@@ -1908,14 +1908,21 @@ class Context:
         (_expose_holdouts) and a declined one is not offered twice in a read.
         """
         if assignment.holdout_assignments is None:
-            queued = self.queue_exposure(assignment)
-            if getattr(self.queue_exposure, "__func__", None) is not \
+            if getattr(self.queue_exposure, "__func__", None) is \
                     Context.queue_exposure:
-                # Judged by the state, like _expose_through_hook: an
-                # override's return value (v0.2.4 hooks may return False to
-                # decline) is not a set_unit retirement.
-                return assignment.exposed.value or not assignment.retired
-            return queued is not False
+                return self.queue_exposure(assignment) is not False
+            # Like _expose_through_hook: an override is never handed an
+            # assignment set_unit already retired, and is judged by the
+            # state, since its return value (v0.2.4 hooks may return False
+            # to decline) is not a set_unit retirement.
+            try:
+                self.event_lock.acquire_write()
+                if assignment.retired:
+                    return False
+            finally:
+                self.event_lock.release_write()
+            self.queue_exposure(assignment)
+            return assignment.exposed.value or not assignment.retired
         if getattr(self.queue_exposure, "__func__", None) is not \
                 Context.queue_exposure:
             return self._expose_through_hook(assignment, offer_holdouts)

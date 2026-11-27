@@ -1951,7 +1951,6 @@ class ContextTest(unittest.TestCase):
 
         self.assertEqual(expected,
                          context.get_variable_value("banner.size", "d"))
-        # exp_a was only checked: it is not exposed.
         self.assertEqual(["exp_b"], [e.name for e in context.exposures])
 
         context.set_override("exp_a", 1)

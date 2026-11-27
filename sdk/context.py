@@ -84,8 +84,8 @@ class Assignment:
         # holdout exposure of this assignment, so a later read of the same
         # experiment finishes them (e.g. after a failed close reopens).
         self.holdouts_pending: bool = False
-        # Every holdout pinned on this assignment is exposed, so a variable
-        # read visiting it skips them (see Context._expose_holdouts).
+        # Set once every pinned arm is exposed; pinned arms never change,
+        # so it is never cleared (see Context._expose_holdouts).
         self.holdouts_exposed: bool = False
 
 
@@ -1842,29 +1842,38 @@ class Context:
 
             if not holdouts_first:
                 accept_assignment()
-            for holdout, holdout_assignment in zip(
-                    assignment.holdouts, assignment.holdout_assignments):
-                if offer_holdouts and holdout_assignment is not None:
-                    # Named from this assignment's snapshot, like JS
-                    # holdouts[i].data.name; the shared holdout assignment
-                    # is not modified.
-                    exposure = self._accept_exposure(
-                        holdout_assignment, holdout.name, exposed_at)
-                    if exposure is not None:
-                        accepted.append(exposure)
+            if offer_holdouts:
+                self._accept_holdouts(assignment, exposed_at, accepted)
             if holdouts_first:
                 accept_assignment()
         finally:
             self.event_lock.release_write()
 
-        for exposure in accepted:
-            self.log_event(EventType.EXPOSURE, exposure)
-        if offer_holdouts and assignment.holdout_assignments is not None:
+        if offer_holdouts:
             assignment.holdouts_exposed = True
             assignment.holdouts_pending = False
+        self._log_exposures(accepted)
+        return True
+
+    def _accept_holdouts(self, assignment: Assignment, exposed_at,
+                         accepted: list):
+        # Under event_lock, after check_not_closed. Each exposure is named
+        # from this assignment's snapshot, like JS holdouts[i].data.name;
+        # the shared holdout assignment is not modified.
+        for holdout, holdout_assignment in zip(
+                assignment.holdouts, assignment.holdout_assignments):
+            if holdout_assignment is not None:
+                exposure = self._accept_exposure(
+                    holdout_assignment, holdout.name, exposed_at)
+                if exposure is not None:
+                    accepted.append(exposure)
+
+    def _log_exposures(self, accepted: list):
+        # After event_lock is released, so a logger may close or read.
+        for exposure in accepted:
+            self.log_event(EventType.EXPOSURE, exposure)
         if accepted:
             self.set_timeout()
-        return True
 
     def _expose_through_hook(self, assignment: Assignment,
                              offer_holdouts: bool = True):
@@ -1996,23 +2005,13 @@ class Context:
         try:
             self.event_lock.acquire_write()
             self.check_not_closed()
-            for holdout, holdout_assignment in zip(
-                    assignment.holdouts, assignment.holdout_assignments):
-                if holdout_assignment is not None:
-                    exposure = self._accept_exposure(
-                        holdout_assignment, holdout.name, exposed_at)
-                    if exposure is not None:
-                        accepted.append(exposure)
+            self._accept_holdouts(assignment, exposed_at, accepted)
         finally:
             self.event_lock.release_write()
 
-        # Each arm is now exposed, by this read or an earlier one.
         assignment.holdouts_exposed = True
         assignment.holdouts_pending = False
-        for exposure in accepted:
-            self.log_event(EventType.EXPOSURE, exposure)
-        if accepted:
-            self.set_timeout()
+        self._log_exposures(accepted)
 
     @staticmethod
     def _holdouts_unexposed(assignment: Assignment):

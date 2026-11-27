@@ -58,7 +58,6 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual(expected, context.get_variable_value(KEY, "d"))
         self.assertEqual(exposed, self.names(context))
         self.assertEqual(len(exposed), context.get_pending_count())
-        # A second read exposes nothing more.
         self.assertEqual(expected, context.get_variable_value(KEY, "d"))
         self.assertEqual(exposed, self.names(context))
         return context
@@ -95,8 +94,8 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
                          self.exposure_tuples(context.exposures))
 
     def test_winner_variant_without_the_key_returns_default(self):
-        # The unit gets exp_a's variant 1, which does not define the key:
-        # the default is returned and exp_b is never consulted or exposed.
+        # exp_a wins with variant 1, which lacks the key: exp_b, holdout
+        # included, is never consulted.
         context = self.assert_winner(
             [configs(1, "exp_a", {KEY: "a0"}, {"other": "x"}),
              assigned(2, "exp_b", holdout_ids=[12])],
@@ -414,7 +413,6 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual(["holdout_b", "exp_a"], offered)
         self.assertEqual(["exp_a"], self.names(context))
         self.assertTrue(context.get_assignment("exp_a").holdouts_pending)
-        # The next read offers the declined holdout again, and only it.
         context.get_variable_value(KEY, "d")
         self.assertEqual(["holdout_b", "exp_a", "holdout_b"], offered)
         self.assertEqual(["exp_a", "holdout_b"], self.names(context))

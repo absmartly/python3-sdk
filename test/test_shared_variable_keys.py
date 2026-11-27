@@ -796,6 +796,51 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         context.index_variables = Index(context.index_variables)
         context.get_variable_value(KEY, "d")
         self.assertEqual([True], held)
+        # The index the walk compares against is read under the lock too: a
+        # refresh between the two reads must make the read walk again.
+        index_reads = []
+        cls = type(context)
+
+        class Watching(cls):
+            @property
+            def index(self):
+                index_reads.append(state["in"])
+                return self.__dict__["index"]
+
+            @index.setter
+            def index(self, value):
+                self.__dict__["index"] = value
+
+        context.__class__ = Watching
+        context.get_variable_value(KEY, "d")
+        self.assertTrue(index_reads)
+        self.assertTrue(index_reads[0])
+
+    def test_exposed_override_is_not_exposed_again_after_its_removal(self):
+        # As on 0.3.0 and in JS: the cached override survives a refresh that
+        # removes its experiment, so get_treatment does not expose it twice.
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a"), assigned(2, "exp_b")]),
+            overrides={"exp_a": 1})
+        self.assertEqual(1, context.get_treatment("exp_a"))
+        for _ in range(3):
+            self.refresh(context, context_data([assigned(2, "exp_b")]))
+            self.assertEqual(1, context.get_treatment("exp_a"))
+            self.refresh(context, context_data(
+                [assigned(1, "exp_a"), assigned(2, "exp_b")]))
+            self.assertEqual(1, context.get_treatment("exp_a"))
+        self.assertEqual(
+            [self.exposure(1, "exp_a", 1, assigned=False, overridden=True)],
+            self.exposure_tuples(context.exposures))
+
+    def test_override_of_an_experiment_with_id_0_is_exposed_once(self):
+        context = self.create_context(context_data([assigned(0, "exp_a")]),
+                                      overrides={"exp_a": 1})
+        for _ in range(3):
+            self.assertEqual("exp_a_treatment",
+                             context.get_variable_value(KEY, "d"))
+            self.assertEqual(1, context.get_treatment("exp_a"))
+        self.assertEqual(1, context.get_pending_count())
 
     def test_set_unit_retiring_the_winner_before_exposure_walks_again(self):
         # exp_b wins while exp_a's unit is missing; the unit arrives as

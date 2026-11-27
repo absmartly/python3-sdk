@@ -860,6 +860,41 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual("exp_a_treatment",
                          context.get_variable_value(KEY, "d"))
 
+    def test_kept_override_keeps_its_variables_across_a_config_change(self):
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a"), assigned(2, "exp_b")]),
+            overrides={"exp_a": 1})
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        changed = with_variables(experiment(1, "exp_a"), KEY,
+                                 "exp_a_control2", "exp_a_t2")
+        self.refresh(context, context_data([changed, assigned(2, "exp_b")]))
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+
+    def test_negative_override_never_reads_a_variant_from_the_end(self):
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a"), assigned(2, "exp_b")]),
+            overrides={"exp_a": -1})
+        self.assertEqual(["d", "d", "d"],
+                         [context.get_variable_value(KEY, "d"),
+                          context.get_variable_value(KEY, "d"),
+                          context.peek_variable_value(KEY, "d")])
+
+    def test_override_to_a_missing_variant_of_a_reidentified_experiment(
+            self):
+        # The override names a variant exp_a does not have; a refresh adds
+        # that variant but also gives exp_a a new id: the kept override is
+        # not for the same experiment, so it does not take the new value.
+        two = configs(1, "exp_a", {KEY: "a0"}, {KEY: "a1"})
+        context = self.create_context(context_data(
+            [two, assigned(9, "exp_b")]), overrides={"exp_a": 2})
+        self.assertEqual("d", context.get_variable_value(KEY, "d"))
+        three = configs(7, "exp_a", {KEY: "a0"}, {KEY: "a1"}, {KEY: "a2"})
+        self.refresh(context, context_data([three, assigned(9, "exp_b")]))
+        self.assertEqual("d", context.get_variable_value(KEY, "d"))
+        self.assertEqual(["exp_a"], self.names(context))
+
     def test_override_of_an_experiment_with_id_0_is_exposed_once(self):
         context = self.create_context(context_data([assigned(0, "exp_a")]),
                                       overrides={"exp_a": 1})

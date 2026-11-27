@@ -1445,11 +1445,13 @@ class Context:
                              _holdout_set_matches(experiment, assignment)):
                         if assignment.variables is None and \
                                 experiment is not None and \
+                                assignment.id == experiment.data.id and \
                                 0 <= assignment.variant < \
                                 len(experiment.data.variants):
-                            # Kept from before the experiment was known (an
-                            # id-0 experiment): take its variables now, as
-                            # JS does on refresh.
+                            # Kept without variables (cached before an id-0
+                            # experiment was known, or overridden to a variant
+                            # it did not have yet) for the same experiment:
+                            # take its variables now, as JS followArm does.
                             assignment.variables = \
                                 experiment.variables[assignment.variant]
                         return assignment

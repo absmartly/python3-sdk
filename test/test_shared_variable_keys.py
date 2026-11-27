@@ -1108,19 +1108,51 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual(["exp_b", "exp_b", "exp_b"], attempts)
         self.assertEqual([], self.names(context))
 
-    def test_built_in_queue_tracks_no_offers(self):
-        # The per-read offer set is only for a queue_exposure override; the
-        # built-in queue accepts arms once under event_lock instead.
+    def test_hook_returning_false_is_a_decline_not_a_retirement(self):
+        # v0.2.4 hooks may return False. Without holdouts that must not look
+        # like set_unit retiring the winner: the value comes back and the
+        # hook is called once per read, as in 0.3.0.
+        from sdk.context import Context
+        calls = []
+
+        class Declining(Context):
+            def queue_exposure(self, assignment):
+                calls.append(assignment.name)
+                return False
+
         context = self.create_context(context_data(
-            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
-             assigned(2, "exp_b")],
-            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
-        seen = []
-        walk = context._variable_assignment
-        context._variable_assignment = \
-            lambda *args: seen.append(args[3]) or walk(*args)
-        context.get_variable_value(KEY, "d")
-        self.assertEqual([None], seen)
+            [strict_mismatch(1, "exp_a"), assigned(2, "exp_b")]))
+        context.__class__ = Declining
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["exp_b"], calls)
+        self.assertEqual(NORMAL_VARIANT, context.get_treatment("exp_b"))
+        self.assertEqual(["exp_b", "exp_b"], calls)
+
+    def test_hook_seeing_the_winner_retired_walks_the_key_again(self):
+        # Without holdouts: exp_a (user_id) is missing its unit, so exp_b
+        # wins. Its override, while being offered exp_b, adds user_id and
+        # retires exp_b, the winner it was offered, then does not queue it.
+        # Judged by the assignment's state, the read walks again and exp_a
+        # wins.
+        from sdk.context import Context
+
+        class SettingUnit(Context):
+            def queue_exposure(self, assignment):
+                if assignment.name == "exp_b" and \
+                        self.get_unit("user_id") is None:
+                    self.set_unit("user_id", UID)
+                    self._retire(assignment)
+                    return None
+                return super().queue_exposure(assignment)
+
+        context = self.create_context(context_data(
+            [assigned(1, "exp_a", unit_type="user_id"),
+             assigned(2, "exp_b")]))
+        context.__class__ = SettingUnit
+        self.assertEqual("exp_a_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["exp_a"], self.names(context))
 
     def test_set_unit_retiring_the_winner_before_exposure_walks_again(self):
         # exp_b wins while exp_a's unit is missing; the unit arrives as

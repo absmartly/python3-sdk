@@ -1071,9 +1071,7 @@ class Context:
     def _variable_value(self, key: str, default_value: object, expose: bool,
                         attempt: int = 1, offered=None):
         retry = attempt < _MAX_EXPOSURE_ATTEMPTS
-        if offered is None and expose and \
-                getattr(self.queue_exposure, "__func__", None) is not \
-                Context.queue_exposure:
+        if offered is None and expose:
             # Holdout arms this public read offered a queue_exposure
             # override, kept across attempts so a declined arm is offered
             # once per read (the next read offers it again).
@@ -1910,7 +1908,14 @@ class Context:
         (_expose_holdouts) and a declined one is not offered twice in a read.
         """
         if assignment.holdout_assignments is None:
-            return self.queue_exposure(assignment) is not False
+            queued = self.queue_exposure(assignment)
+            if getattr(self.queue_exposure, "__func__", None) is not \
+                    Context.queue_exposure:
+                # Judged by the state, like _expose_through_hook: an
+                # override's return value (v0.2.4 hooks may return False to
+                # decline) is not a set_unit retirement.
+                return assignment.exposed.value or not assignment.retired
+            return queued is not False
         if getattr(self.queue_exposure, "__func__", None) is not \
                 Context.queue_exposure:
             return self._expose_through_hook(assignment, offer_holdouts)

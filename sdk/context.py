@@ -1071,7 +1071,9 @@ class Context:
     def _variable_value(self, key: str, default_value: object, expose: bool,
                         attempt: int = 1, offered=None):
         retry = attempt < _MAX_EXPOSURE_ATTEMPTS
-        if offered is None and expose:
+        if offered is None and expose and \
+                getattr(self.queue_exposure, "__func__", None) is not \
+                Context.queue_exposure:
             # Holdout arms this public read offered a queue_exposure
             # override, kept across attempts so a declined arm is offered
             # once per read (the next read offers it again).
@@ -1092,10 +1094,15 @@ class Context:
             return default_value
         if expose and assignment is not None and \
                 not assignment.exposed.value and \
-                not self._expose_winner(assignment) and retry:
-            # set_unit retired the winner in between: walk it again.
-            return self._variable_value(key, default_value, expose,
-                                        attempt + 1, offered)
+                not self._expose_winner(assignment):
+            if retry:
+                # set_unit retired the winner in between: walk it again.
+                return self._variable_value(key, default_value, expose,
+                                            attempt + 1, offered)
+            # Out of attempts with the winner still retired: like an
+            # invalidated walk, return the default rather than the value of
+            # a winner that was never exposed.
+            return default_value
         for loser in deferred:
             # Losers whose shared arms were left for the winner's section:
             # once those are exposed, later reads skip them.
@@ -1179,21 +1186,20 @@ class Context:
             native = getattr(self.queue_exposure, "__func__", None) is \
                 Context.queue_exposure
             if native and winner is not None and \
-                    winner.holdout_assignments is not None and \
-                    not winner.exposed.value:
+                    winner.holdout_assignments is not None:
                 # The winner's holdouts, and any arm a loser shares with it,
                 # are accepted with the winner (see _expose_winner), so a
                 # close a logger starts on a shared arm cannot publish it
-                # without the winner. Walk order is kept: those arms are
-                # accepted in the winner's section, before its own exposure.
+                # without the winner. A shared arm is therefore published in
+                # the winner's section (still before the winner's own
+                # exposure), after the losers' other arms: holdout order
+                # within a read is not guaranteed.
                 staged = {id(arm) for arm in winner.holdout_assignments
                           if arm is not None}
             else:
                 staged = ()
             failure = None
             for candidate in pending:
-                if native and candidate is winner:
-                    continue
                 try:
                     self._expose_holdouts(candidate, offered, staged)
                 except Exception as error:

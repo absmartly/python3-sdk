@@ -1033,6 +1033,95 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual([1], refreshed)
         self.assertEqual("Y", context.get_variable_value(KEY, "d"))
 
+    def test_override_fill_skips_an_experiment_a_refresh_reidentified(self):
+        # The read passes the cache check for exp_a (id 1); a refresh moves
+        # exp_a to id 5 before the fill. The kept override is no longer for
+        # the same experiment, so the fill stores nothing.
+        two = configs(1, "exp_a", {KEY: "a0"}, {KEY: "a1"})
+        with_x = configs(1, "exp_a", {KEY: "a0"}, {KEY: "a1"}, {KEY: "X"})
+        moved = configs(5, "exp_a", {KEY: "a0"}, {KEY: "a1"}, {KEY: "Y"})
+        context = self.create_context(context_data(
+            [two, assigned(9, "exp_b")]), overrides={"exp_a": 2})
+        self.assertEqual("d", context.get_variable_value(KEY, "d"))
+        self.refresh(context, context_data([with_x, assigned(9, "exp_b")]))
+        lock = context.context_lock
+        acquire_write = lock.acquire_write
+
+        def refresh_before_the_fill():
+            lock.acquire_write = acquire_write
+            self.refresh(context, context_data(
+                [moved, assigned(9, "exp_b")]))
+            acquire_write()
+
+        lock.acquire_write = refresh_before_the_fill
+        self.assertEqual("d", context.peek_variable_value(KEY, "d"))
+        self.assertIsNone(context.get_assignment("exp_a").variables)
+
+    def test_loser_sharing_a_holdout_keeps_it_pending_if_the_winner_fails(
+            self):
+        # exp_a loses and shares holdout_b with the winner exp_b, so the
+        # arm waits for exp_b's section. A close then rejects exp_b and
+        # fails; a refresh removes the holdout from exp_b. The next read must
+        # still publish holdout_b through exp_a.
+        from sdk.context_error import ContextError
+        holdouts = [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b", holdout_ids=[12])], holdouts))
+        expose_winner = context._expose_winner
+
+        def closing(assignment):
+            context.closing.set(True)
+            try:
+                return expose_winner(assignment)
+            finally:
+                context.closing.set(False)
+
+        context._expose_winner = closing
+        with self.assertRaises(ContextError):
+            context.get_variable_value(KEY, "d")
+        context._expose_winner = expose_winner
+        self.assertEqual([], self.names(context))
+        self.refresh(context, context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")], holdouts))
+        self.assertEqual("exp_b_treatment",
+                         context.get_variable_value(KEY, "d"))
+        self.assertEqual(["holdout_b", "exp_b"], self.names(context))
+
+    def test_winner_retired_on_every_attempt_returns_the_default(self):
+        # set_unit retires the winner each time it is about to be exposed;
+        # after the last attempt the read returns the default, not the value
+        # of a winner that was never exposed.
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a"), assigned(2, "exp_b")]))
+        expose_winner = context._expose_winner
+        attempts = []
+
+        def retire_first(assignment):
+            attempts.append(assignment.name)
+            context._retire(assignment)
+            return expose_winner(assignment)
+
+        context._expose_winner = retire_first
+        self.assertEqual("d", context.get_variable_value(KEY, "d"))
+        self.assertEqual(["exp_b", "exp_b", "exp_b"], attempts)
+        self.assertEqual([], self.names(context))
+
+    def test_built_in_queue_tracks_no_offers(self):
+        # The per-read offer set is only for a queue_exposure override; the
+        # built-in queue accepts arms once under event_lock instead.
+        context = self.create_context(context_data(
+            [strict_mismatch(1, "exp_a", holdout_ids=[12]),
+             assigned(2, "exp_b")],
+            [holdout(12, "holdout_b", HOLDOUT_B_SEEDS)]))
+        seen = []
+        walk = context._variable_assignment
+        context._variable_assignment = \
+            lambda *args: seen.append(args[3]) or walk(*args)
+        context.get_variable_value(KEY, "d")
+        self.assertEqual([None], seen)
+
     def test_set_unit_retiring_the_winner_before_exposure_walks_again(self):
         # exp_b wins while exp_a's unit is missing; the unit arrives as
         # exp_b is exposed and retires it, so the read walks again and

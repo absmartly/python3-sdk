@@ -1070,11 +1070,14 @@ class Context:
 
     def _variable_value(self, key: str, default_value: object, expose: bool,
                         attempt: int = 1):
-        assignment, invalidated = self._variable_assignment(key, expose)
         retry = attempt < _MAX_EXPOSURE_ATTEMPTS
-        if expose and invalidated and retry:
-            # set_unit added a unit during the walk, so the key may resolve
-            # differently: walk it again before exposing anything.
+        assignment, invalidated = self._variable_assignment(key, expose,
+                                                            retry)
+        if invalidated and retry:
+            # set_unit added a unit or a refresh replaced the data during the
+            # walk, so the key may resolve differently: walk it again before
+            # exposing any experiment (peek too, so it never returns a value
+            # no single state would give).
             return self._variable_value(key, default_value, expose,
                                         attempt + 1)
         if expose and assignment is not None and \
@@ -1098,7 +1101,8 @@ class Context:
             return self._expose(assignment, holdouts_first=True)
         return self._expose(assignment, offer_holdouts=False)
 
-    def _variable_assignment(self, key: str, expose: bool):
+    def _variable_assignment(self, key: str, expose: bool,
+                             retry: bool = False):
         # Port of the Java SDK's getVariableAssignment: the candidates are
         # the experiments defining the key in any variant, in id order, and
         # the first one the unit is assigned to, overridden in or
@@ -1112,19 +1116,25 @@ class Context:
         # first held-out one supplies its control variant (and is exposed).
         # A raising queue_exposure hook does not stop the walk: the first
         # error is raised once every visited candidate was offered, as in
-        # Java. Returns the winner and whether set_unit added a unit during
-        # the walk, which makes the caller walk again.
+        # Java. Returns the winner and whether set_unit added a unit or a
+        # refresh replaced the data during the walk, which makes the caller
+        # walk again; a walk that will be repeated offers no holdouts.
         units_seq = self._units_seq
-        experiments = Concurrency.get_rw(
-            self.data_lock, self.index_variables, key) or []
+        try:
+            self.data_lock.acquire_read()
+            index = self.index
+            experiments = self.index_variables.get(key) or []
+        finally:
+            self.data_lock.release_read()
         winner = None
         suppressed_fallback = None
         pending = None
         for experiment in list(experiments):
             assignment = self.get_assignment(experiment.data.name)
             # A refresh removed the indexed experiment after the index was
-            # read: its placeholder (id 0) must not win, even when overridden.
-            if assignment.id == 0 and \
+            # read: neither its placeholder (id 0) nor a cached override of it
+            # may win. The identity check keeps warm reads lock-free.
+            if (assignment.id == 0 or self.index is not index) and \
                     self.get_experiment(experiment.data.name) is None:
                 continue
             if expose and assignment.holdout_assignments is not None and \
@@ -1139,11 +1149,12 @@ class Context:
                 suppressed_fallback = assignment
         else:
             winner = suppressed_fallback
-        # A unit added during the walk may have retired a candidate it
-        # already passed (a missing-unit loser that could now win), even
-        # after that candidate was checked: the caller walks again.
-        invalidated = self._units_seq != units_seq
-        if pending:
+        # A unit added during the walk may have retired a candidate it had
+        # already passed (a missing-unit loser that could now win), and a
+        # refresh may have removed one that still won from its cached
+        # override: either way the caller walks again.
+        invalidated = self._units_seq != units_seq or self.index is not index
+        if pending and not (invalidated and retry):
             native = getattr(self.queue_exposure, "__func__", None) is \
                 Context.queue_exposure
             failure = None
@@ -1158,6 +1169,10 @@ class Context:
                         failure = error
             if failure is not None:
                 raise failure
+            # A queue_exposure override may have added a unit while it was
+            # offered the holdouts.
+            invalidated = self._units_seq != units_seq or \
+                self.index is not index
         return winner, invalidated
 
     def peek_treatment(self, experiment_name: str):

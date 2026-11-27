@@ -234,9 +234,9 @@ button_color = context.get_variable_value("button.color", "red")
 When several experiments define the same variable key (in any of their variants), `get_variable_value` and `peek_variable_value` check them in experiment id order and use the first one the unit is in: assigned (including a unit outside traffic, which gets control), overridden with `set_override`, or chosen by an assignment rule. That experiment wins the key:
 
 - The value comes from the winner's variant. If that variant does not define the key, the default you passed is returned; later experiments are not consulted, so which arm the unit got never changes which experiment is used.
-- Only the winner is exposed. Experiments that were checked and lost (for example a strict audience mismatch, or a unit type that is not set) get no exposure.
-- This also applies when only one experiment defines the key: if the unit is not in it (a strict audience mismatch, or a unit type that is not set), nothing wins, the default is returned and no experiment exposure is published. A non-suppressing holdout can still publish its exposure when the candidate’s unit is set. `get_treatment` still exposes that experiment.
-- If no experiment wins, a held-out experiment defining the key supplies its control value (see [Holdouts](#holdouts)); otherwise the default is returned and nothing is exposed.
+- Only the winner is exposed. Experiments that were checked and lost (for example a strict audience mismatch, or a unit type that is not set for an experiment that needs it for traffic assignment) get no exposure. A full-on experiment does not need its unit, so it can win and be exposed with the unit unset.
+- This also applies when only one experiment defines the key: if the unit is not in it (a strict audience mismatch, or a unit type that is not set for an experiment that is not full-on), nothing wins, the default is returned and no experiment exposure is published. A non-suppressing holdout can still publish its exposure when the candidate’s unit is set. `get_treatment` still exposes that experiment.
+- If no experiment wins, a held-out experiment defining the key supplies its control value (see [Holdouts](#holdouts)); otherwise the default is returned and no experiment exposure is published (the checked experiments' holdouts can still publish theirs).
 - `peek_variable_value` resolves the same winner and exposes nothing.
 
 #### Listing Variable Keys

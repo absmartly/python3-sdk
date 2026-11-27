@@ -1069,23 +1069,39 @@ class Context:
         return self._variable_value(key, default_value, False)
 
     def _variable_value(self, key: str, default_value: object, expose: bool,
-                        attempt: int = 1):
+                        attempt: int = 1, offered=None):
         retry = attempt < _MAX_EXPOSURE_ATTEMPTS
-        assignment, invalidated = self._variable_assignment(key, expose,
-                                                            retry)
-        if invalidated and retry:
-            # set_unit added a unit or a refresh replaced the data during the
-            # walk, so the key may resolve differently: walk it again before
-            # exposing any experiment (peek too, so it never returns a value
-            # no single state would give).
-            return self._variable_value(key, default_value, expose,
-                                        attempt + 1)
+        if offered is None and expose:
+            # Holdout arms this public read offered a queue_exposure
+            # override, kept across attempts so a declined arm is offered
+            # once per read (the next read offers it again).
+            offered = set()
+        assignment, invalidated, deferred = self._variable_assignment(
+            key, expose, retry, offered)
+        if invalidated:
+            if retry:
+                # set_unit added a unit or a refresh replaced the data during
+                # the walk, so the key may resolve differently: walk it again
+                # before exposing any experiment (peek too, so it never
+                # returns a value no single state would give).
+                return self._variable_value(key, default_value, expose,
+                                            attempt + 1, offered)
+            # Out of attempts and still not one coherent state: neither
+            # payload alone gave this winner, so return the default and
+            # expose nothing.
+            return default_value
         if expose and assignment is not None and \
                 not assignment.exposed.value and \
                 not self._expose_winner(assignment) and retry:
             # set_unit retired the winner in between: walk it again.
             return self._variable_value(key, default_value, expose,
-                                        attempt + 1)
+                                        attempt + 1, offered)
+        for loser in deferred:
+            # Losers whose shared arms were left for the winner's section:
+            # once those are exposed, later reads skip them.
+            if not self._holdouts_unexposed(loser):
+                loser.holdouts_exposed = True
+                loser.holdouts_pending = False
         if assignment is not None and assignment.variables is not None and \
                 key in assignment.variables:
             return assignment.variables[key]
@@ -1102,7 +1118,7 @@ class Context:
         return self._expose(assignment, offer_holdouts=False)
 
     def _variable_assignment(self, key: str, expose: bool,
-                             retry: bool = False):
+                             retry: bool = False, offered=None):
         # Port of the Java SDK's getVariableAssignment: the candidates are
         # the experiments defining the key in any variant, in id order, and
         # the first one the unit is assigned to, overridden in or
@@ -1116,9 +1132,11 @@ class Context:
         # first held-out one supplies its control variant (and is exposed).
         # A raising queue_exposure hook does not stop the walk: the first
         # error is raised once every visited candidate was offered, as in
-        # Java. Returns the winner and whether set_unit added a unit or a
-        # refresh replaced the data during the walk, which makes the caller
-        # walk again; a walk that will be repeated offers no holdouts.
+        # Java. Returns the winner, whether set_unit added a unit or a
+        # refresh replaced the data during the walk (which makes the caller
+        # walk again or, out of attempts, return the default; an invalidated
+        # walk offers no holdouts), and the losers whose shared holdout arms
+        # were left for the winner's exposure.
         units_seq = self._units_seq
         try:
             # The write side, like Concurrency.get_rw: this lock's read side
@@ -1131,6 +1149,7 @@ class Context:
         winner = None
         suppressed_fallback = None
         pending = None
+        deferred = ()
         for experiment in list(experiments):
             assignment = self.get_assignment(experiment.data.name)
             # A refresh removed the indexed experiment after the index was
@@ -1156,26 +1175,40 @@ class Context:
         # refresh may have removed one that still won from its cached
         # override: either way the caller walks again.
         invalidated = self._units_seq != units_seq or self.index is not index
-        if pending and not (invalidated and retry):
+        if pending and not invalidated:
             native = getattr(self.queue_exposure, "__func__", None) is \
                 Context.queue_exposure
+            if native and winner is not None and \
+                    winner.holdout_assignments is not None and \
+                    not winner.exposed.value:
+                # The winner's holdouts, and any arm a loser shares with it,
+                # are accepted with the winner (see _expose_winner), so a
+                # close a logger starts on a shared arm cannot publish it
+                # without the winner. Walk order is kept: those arms are
+                # accepted in the winner's section, before its own exposure.
+                staged = {id(arm) for arm in winner.holdout_assignments
+                          if arm is not None}
+            else:
+                staged = ()
             failure = None
             for candidate in pending:
                 if native and candidate is winner:
-                    # Accepted with the winner, see _expose_winner.
                     continue
                 try:
-                    self._expose_holdouts(candidate)
+                    self._expose_holdouts(candidate, offered, staged)
                 except Exception as error:
                     if failure is None:
                         failure = error
+                if staged and not candidate.holdouts_exposed:
+                    deferred = deferred or []
+                    deferred.append(candidate)
             if failure is not None:
                 raise failure
             # A queue_exposure override may have added a unit while it was
             # offered the holdouts.
             invalidated = self._units_seq != units_seq or \
                 self.index is not index
-        return winner, invalidated
+        return winner, invalidated, deferred
 
     def peek_treatment(self, experiment_name: str):
         self.check_ready(True)
@@ -1416,6 +1449,7 @@ class Context:
 
     def get_assignment(self, experiment_name: str, exposed_at: int = None):
         checked_seq = None
+        fill = None
         try:
             self.context_lock.acquire_read()
 
@@ -1448,13 +1482,10 @@ class Context:
                                 assignment.id == experiment.data.id and \
                                 0 <= assignment.variant < \
                                 len(experiment.data.variants):
-                            # Kept without variables (cached before an id-0
-                            # experiment was known, or overridden to a variant
-                            # it did not have yet) for the same experiment:
-                            # take its variables now, as JS followArm does.
-                            assignment.variables = \
-                                experiment.variables[assignment.variant]
-                        return assignment
+                            # Filled below, under the write lock.
+                            fill = assignment
+                        else:
+                            return assignment
                 elif experiment is None:
                     if assignment.assigned is False and \
                             not assignment.rule_override:
@@ -1475,6 +1506,27 @@ class Context:
                         checked_seq = self._attrs_seq
         finally:
             self.context_lock.release_read()
+
+        if fill is not None:
+            # A kept override without variables (cached before an id-0
+            # experiment was known, or overridden to a variant it did not
+            # have yet) takes the variables of the same experiment, as JS
+            # followArm does. The experiment is read again and the variables
+            # stored under the write lock and data_lock together, so a
+            # reader that checked the cache before a refresh cannot store
+            # the replaced payload's variables.
+            try:
+                self.context_lock.acquire_write()
+                self.data_lock.acquire_read()
+                experiment = self.index.get(experiment_name, None)
+                if experiment is not None and \
+                        fill.id == experiment.data.id and \
+                        0 <= fill.variant < len(experiment.data.variants):
+                    fill.variables = experiment.variables[fill.variant]
+                return fill
+            finally:
+                self.data_lock.release_read()
+                self.context_lock.release_write()
 
         if checked_seq is not None:
             # Attributes or the assignment rules changed since the assignment
@@ -1891,13 +1943,15 @@ class Context:
         return True
 
     def _accept_holdouts(self, assignment: Assignment, exposed_at,
-                         accepted: list):
+                         accepted: list, staged=()):
         # Under event_lock, after check_not_closed. Each exposure is named
         # from this assignment's snapshot, like JS holdouts[i].data.name;
-        # the shared holdout assignment is not modified.
+        # the shared holdout assignment is not modified. Arms in `staged`
+        # are left for the winner's section.
         for holdout, holdout_assignment in zip(
                 assignment.holdouts, assignment.holdout_assignments):
-            if holdout_assignment is not None:
+            if holdout_assignment is not None and \
+                    id(holdout_assignment) not in staged:
                 exposure = self._accept_exposure(
                     holdout_assignment, holdout.name, exposed_at)
                 if exposure is not None:
@@ -1967,7 +2021,7 @@ class Context:
         return True
 
     def _offer_holdouts_through_hook(self, assignment: Assignment,
-                                     exposed_at):
+                                     exposed_at, offered=None):
         # True when every holdout pinned on the assignment is exposed. A
         # raising hook does not stop the other holdouts: the first error is
         # raised after every one was offered (Java
@@ -1985,10 +2039,14 @@ class Context:
                 self.event_lock.acquire_write()
                 if holdout_assignment.exposed.value:
                     continue
-                if holdout_assignment.hook_pending:
+                if holdout_assignment.hook_pending or (
+                        offered is not None and
+                        id(holdout_assignment) in offered):
                     finished = False
                     continue
                 holdout_assignment.hook_pending = True
+                if offered is not None:
+                    offered.add(id(holdout_assignment))
             finally:
                 self.event_lock.release_write()
             try:
@@ -2010,7 +2068,8 @@ class Context:
             raise failure
         return finished
 
-    def _expose_holdouts(self, assignment: Assignment):
+    def _expose_holdouts(self, assignment: Assignment, offered=None,
+                         staged=()):
         """Expose the holdouts pinned on a variable-key candidate, not the
         candidate itself (Java triggerApplicableHoldoutExposures).
 
@@ -2030,7 +2089,8 @@ class Context:
         exposed_at = assignment.exposedAt or self.clock.millis()
         if getattr(self.queue_exposure, "__func__", None) is not \
                 Context.queue_exposure:
-            self._offer_holdouts_through_hook(assignment, exposed_at)
+            self._offer_holdouts_through_hook(assignment, exposed_at,
+                                              offered)
             if not self._holdouts_unexposed(assignment):
                 assignment.holdouts_exposed = True
                 assignment.holdouts_pending = False
@@ -2040,12 +2100,13 @@ class Context:
         try:
             self.event_lock.acquire_write()
             self.check_not_closed()
-            self._accept_holdouts(assignment, exposed_at, accepted)
+            self._accept_holdouts(assignment, exposed_at, accepted, staged)
         finally:
             self.event_lock.release_write()
 
-        assignment.holdouts_exposed = True
-        assignment.holdouts_pending = False
+        if not staged or not self._holdouts_unexposed(assignment):
+            assignment.holdouts_exposed = True
+            assignment.holdouts_pending = False
         self._log_exposures(accepted)
 
     @staticmethod

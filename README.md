@@ -229,6 +229,16 @@ else:
 button_color = context.get_variable_value("button.color", "red")
 ```
 
+#### Shared Variable Keys
+
+When several experiments define the same variable key (in any of their variants), `get_variable_value` and `peek_variable_value` check them in experiment id order and use the first one the unit is in: assigned (including a unit outside traffic, which gets control), overridden with `set_override`, or chosen by an assignment rule. That experiment wins the key:
+
+- The value comes from the winner's variant. If that variant does not define the key, the default you passed is returned; later experiments are not consulted, so which arm the unit got never changes which experiment is used.
+- Only the winner is exposed. Experiments that were checked and lost (for example a strict audience mismatch, or a unit type that is not set for an experiment that needs it for traffic assignment) get no exposure. A full-on experiment does not need its unit, so it can win and be exposed with the unit unset.
+- This also applies when only one experiment defines the key: if the unit is not in it (a strict audience mismatch, or a unit type that is not set for an experiment that is not full-on), nothing wins, the default is returned and no experiment exposure is published. A non-suppressing holdout can still publish its exposure when the candidate’s unit is set. `get_treatment` still exposes that experiment.
+- If no experiment wins, a held-out experiment defining the key supplies its control value (see [Holdouts](#holdouts)); otherwise the default is returned and no experiment exposure is published (the checked experiments' holdouts can still publish theirs).
+- `peek_variable_value` resolves the same winner and exposes nothing.
+
 #### Listing Variable Keys
 
 `get_variable_keys()` maps each variable key to the name of one experiment that defines it, keeping the v0.2.4 shape. When several experiments define the same key, it returns the lowest-id experiment (the first one variable lookups visit). Use `get_variable_keys_all()` to get every experiment defining each key, in experiment id order, matching the JavaScript SDK's `variableKeys()`.
@@ -297,7 +307,7 @@ treatment = context.get_treatment("exp_covered_by_holdout")  # 0 when held out
 color = context.get_variable_value("button.color", "red")  # control value when held out
 ```
 
-Unless an override or a matching assignment rule chose its variant, the held-out experiment publishes no exposure of its own. The first read of a covered experiment (`get_treatment`, `get_variable_value`) instead publishes each holdout's exposure, named after the holdout, with the unit's arm as its variant. Each holdout is published once per unit type and holdout iteration, however many covered experiments are read; a new iteration publishes again. A holdout needs the covered experiment's unit: while that unit is not set, the holdout neither holds the unit out nor publishes. `peek_treatment` and `peek_variable_value` publish nothing.
+Unless an override or a matching assignment rule chose its variant, the held-out experiment publishes no exposure of its own. The first read of a covered experiment (`get_treatment`, `get_variable_value`) instead publishes each holdout's exposure, named after the holdout, with the unit's arm as its variant. Each holdout is published once per unit type and holdout iteration, however many covered experiments are read; a new iteration publishes again. A variable read checks every experiment defining the key up to the winner (see [Shared Variable Keys](#shared-variable-keys)), and each one it checks publishes its holdouts' exposures, even when it does not win; its own exposure is published only if it wins. A holdout needs the covered experiment's unit: while that unit is not set, the holdout neither holds the unit out nor publishes. `peek_treatment` and `peek_variable_value` publish nothing.
 
 An override (`set_override`) or a matching assignment rule still decides the variant of a held-out unit, and the holdout exposures are still published. Custom assignments, audiences, full-on variants and traffic do not apply to a held-out unit.
 

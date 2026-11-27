@@ -637,10 +637,10 @@ class ContextHoldoutTest(HoldoutTestCase):
                          context.get_variable_value("detached_var", "default"))
         self.assertEqual(2, context.get_pending_count())
         self.assert_published(
-            context, self.exposure(1, "exp_winner", 1, unit="user_id",
-                                   full_on=True),
+            context,
             self.holdout_exposure(11, "holdout_detached_variable", 1,
                                   unit="user_id"),
+            self.exposure(1, "exp_winner", 1, unit="user_id", full_on=True),
             unit="user_id")
 
     def test_trigger_applicable_holdout_exposures_never_live_resolves_a_pinned_null_entry_for_an_already_exposed_assignment(self):
@@ -1086,9 +1086,9 @@ class ContextHoldoutTest(HoldoutTestCase):
                          context.get_variable_value("color", "default"))
         self.assert_published(
             context,
+            self.holdout_exposure(11, "holdout_rules_suppression", 0),
             self.exposure(1, "exp_holdout_rules", 1, assigned=False,
-                          rule_override=True),
-            self.holdout_exposure(11, "holdout_rules_suppression", 0))
+                          rule_override=True))
 
     def test_shared_variable_key_prefers_rule_won_over_suppressed_experiment(self):
         context = self.create_context(context_data(

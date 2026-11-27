@@ -744,7 +744,10 @@ class ContextTest(unittest.TestCase):
         res = context.get_variable_value("banner.size", "small")
         self.assertEqual("small", res)
 
-        self.assertEqual(1, context.get_pending_count())
+        # The strict audience mismatch leaves the only candidate unassigned,
+        # so nothing wins the key and nothing is exposed (Java
+        # getVariableValueDoesNotQueuesExposure...InStrictMode).
+        self.assertEqual(0, context.get_pending_count())
         context.close()
 
     def test_get_variable_keys(self):
@@ -1900,28 +1903,28 @@ class ContextTest(unittest.TestCase):
         return self.create_test_context(config, future)
 
     def test_variable_value_walks_shared_key_experiments_by_id(self):
-        # JS _variableValue: experiments sharing a key are visited in id
-        # order; the first one whose variables hold the key wins, and each
-        # visited experiment is exposed. Payload order must not matter.
+        # Java getVariableAssignment: experiments sharing a key are visited
+        # in id order and the first assigned one wins, even when its variant
+        # lacks the key (the default is returned). Only the winner is
+        # exposed. Payload order must not matter.
         self.set_up()
         exp_a = self.make_shared_key_experiment(
             1, "exp_a", "user_id", None, "a_treatment")
         exp_b = self.make_shared_key_experiment(
             2, "exp_b", "user_id", "b_control", "b_treatment")
 
-        fell_through = 0
+        control = 0
         for i in range(20):
             uid = f"uid-{i}"
             context = self.create_shared_key_context(
                 [exp_b, exp_a], {"user_id": uid})
             a = context.peek_treatment("exp_a")
-            b = context.peek_treatment("exp_b")
             if a == 1:
-                expected, exposed = "a_treatment", ["exp_a"]
+                expected = "a_treatment"
             else:
-                fell_through += 1
-                expected = ["b_control", "b_treatment"][b]
-                exposed = ["exp_a", "exp_b"]
+                control += 1
+                expected = "d"
+            exposed = ["exp_a"]
 
             self.assertEqual(expected,
                              context.peek_variable_value("banner.size", "d"))
@@ -1930,8 +1933,8 @@ class ContextTest(unittest.TestCase):
                              context.get_variable_value("banner.size", "d"))
             self.assertEqual(exposed, [e.name for e in context.exposures])
             context.close()
-        self.assertGreater(fell_through, 0)
-        self.assertLess(fell_through, 20)
+        self.assertGreater(control, 0)
+        self.assertLess(control, 20)
 
     def test_variable_value_skips_unassigned_experiment(self):
         self.set_up()
@@ -1948,8 +1951,7 @@ class ContextTest(unittest.TestCase):
 
         self.assertEqual(expected,
                          context.get_variable_value("banner.size", "d"))
-        self.assertEqual(["exp_a", "exp_b"],
-                         [e.name for e in context.exposures])
+        self.assertEqual(["exp_b"], [e.name for e in context.exposures])
 
         context.set_override("exp_a", 1)
         self.assertEqual("a_treatment",
@@ -2005,10 +2007,11 @@ class ContextTest(unittest.TestCase):
         self.assertEqual(["exp_a"], [e.name for e in context.exposures])
         context.close()
 
-    def test_variable_value_assigned_variant_without_key_falls_through(self):
-        # (e) exp_a is overridden to a variant whose config lacks the key;
-        # `key in variables` is False, so the walk falls through to exp_b
-        # even though exp_a is assigned. Both experiments are exposed.
+    def test_variable_value_assigned_variant_without_key_returns_default(self):
+        # (e) exp_a is overridden to a variant whose config lacks the key.
+        # exp_a still wins the key, so the default is returned: falling
+        # through to exp_b would bias exp_b by exp_a's arm. Only exp_a is
+        # exposed.
         self.set_up()
         exp_a = self.make_shared_key_experiment_variants(
             1, "exp_a", "user_id",
@@ -2021,13 +2024,12 @@ class ContextTest(unittest.TestCase):
         # Override exp_a to the treatment variant, which does not define the
         # shared key.
         context.set_override("exp_a", 1)
-        expected = ["b_control", "b_treatment"][
-            context.peek_treatment("exp_b")]
 
-        self.assertEqual(expected,
+        self.assertEqual("d",
+                         context.peek_variable_value("banner.size", "d"))
+        self.assertEqual("d",
                          context.get_variable_value("banner.size", "d"))
-        self.assertEqual(["exp_a", "exp_b"],
-                         [e.name for e in context.exposures])
+        self.assertEqual(["exp_a"], [e.name for e in context.exposures])
         context.close()
 
     def test_set_override_allowed_after_close(self):

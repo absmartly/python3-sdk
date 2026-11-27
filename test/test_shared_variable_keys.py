@@ -1207,9 +1207,11 @@ class SharedVariableKeyTest(HoldoutFixture, unittest.TestCase):
         self.assertEqual(1, context.get_pending_count())
 
     def test_offered_arms_are_tracked_by_object_not_id(self):
-        # The per-read set keeps the offered arm itself: an arm a refresh
-        # creates must be offered even if it would reuse a released arm's
-        # id. Simulated by an arm whose id() collides with an offered one.
+        # Pins how the per-read set stores arms: by the arm itself, kept
+        # alive for the read, not by id(). A stale id in the set (as a
+        # released arm's id reused by a new one would leave) must not stop
+        # the arm being offered. A real read cannot easily force the reuse,
+        # so the set is seeded directly.
         from sdk.context import Context
         offered_to_hook = []
 
